@@ -1,0 +1,451 @@
+from __future__ import annotations
+
+import sqlite3
+import threading
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator
+
+from .config import DB_FILE, LANGUAGES, EnvironmentStore, flag, text
+from .records import ActiveSettings, Course, Recording, StoredSuggestion
+
+
+class LectureStore:
+    COURSE_FIELDS = {
+        "name", "language", "prompt", "corrections",
+        "format_transcript", "llm_enabled",
+    }
+
+    def __init__(
+        self,
+        path: Path = DB_FILE,
+        environment: EnvironmentStore | None = None,
+    ) -> None:
+        self.path = path
+        self.environment = environment or EnvironmentStore()
+        self._lock = threading.RLock()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._setup()
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self.path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 10000")
+        try:
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    def _setup(self) -> None:
+        with self._lock, self._connect() as db:
+            db.execute("PRAGMA journal_mode = WAL")
+            db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS courses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    language TEXT NOT NULL DEFAULT 'ko',
+                    prompt TEXT NOT NULL DEFAULT '',
+                    corrections TEXT NOT NULL DEFAULT '',
+                    format_transcript INTEGER NOT NULL DEFAULT 1,
+                    llm_enabled INTEGER NOT NULL DEFAULT 1,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS app_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS recordings (
+                    id TEXT PRIMARY KEY,
+                    course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+                    course_name TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    extension TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    language TEXT NOT NULL,
+                    prompt TEXT NOT NULL DEFAULT '',
+                    corrections TEXT NOT NULL DEFAULT '',
+                    format_transcript INTEGER NOT NULL DEFAULT 1,
+                    llm_enabled INTEGER NOT NULL DEFAULT 1,
+                    llm_model TEXT NOT NULL,
+                    output_dir TEXT NOT NULL,
+                    source_path TEXT NOT NULL DEFAULT '',
+                    audio_path TEXT NOT NULL DEFAULT '',
+                    note_path TEXT NOT NULL DEFAULT '',
+                    duration_seconds REAL NOT NULL DEFAULT 0,
+                    processing_seconds REAL NOT NULL DEFAULT 0,
+                    transcript_text TEXT NOT NULL DEFAULT '',
+                    segments_json TEXT NOT NULL DEFAULT '[]',
+                    breaks_json TEXT NOT NULL DEFAULT '[]',
+                    quality_json TEXT NOT NULL DEFAULT '{}',
+                    error TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    started_at TEXT NOT NULL DEFAULT '',
+                    completed_at TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS recordings_created_idx
+                    ON recordings(created_at DESC);
+                CREATE INDEX IF NOT EXISTS recordings_status_idx
+                    ON recordings(status, created_at);
+                CREATE TABLE IF NOT EXISTS suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    sentence_id TEXT NOT NULL,
+                    original TEXT NOT NULL,
+                    replacement TEXT NOT NULL,
+                    reason TEXT NOT NULL DEFAULT '',
+                    confidence REAL NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    decided_at TEXT NOT NULL DEFAULT '',
+                    UNIQUE(recording_id, sentence_id, original, replacement)
+                );
+                CREATE INDEX IF NOT EXISTS suggestions_recording_idx
+                    ON suggestions(recording_id, status, id);
+                """
+            )
+            db.execute(
+                "UPDATE recordings SET status = 'recoverable', "
+                "error = '앱이 종료되어 작업이 중단되었습니다.' "
+                "WHERE status = 'recording'"
+            )
+            db.execute(
+                "UPDATE recordings SET status = 'failed', "
+                "error = '앱이 종료되어 처리 작업이 중단되었습니다.' "
+                "WHERE status IN ('processing', 'cancelling')"
+            )
+            count = db.execute("SELECT COUNT(*) FROM courses").fetchone()[0]
+            if count == 0:
+                now = self.now()
+                cursor = db.execute(
+                    "INSERT INTO courses(name, updated_at) VALUES (?, ?)",
+                    ("새 강의", now),
+                )
+                db.execute(
+                    "INSERT OR REPLACE INTO app_state(key, value) VALUES ('active_course_id', ?)",
+                    (str(cursor.lastrowid),),
+                )
+
+    @staticmethod
+    def now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _course(row: sqlite3.Row) -> Course:
+        return Course(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            language=str(row["language"]),
+            prompt=str(row["prompt"]),
+            corrections=str(row["corrections"]),
+            format_transcript=bool(row["format_transcript"]),
+            llm_enabled=bool(row["llm_enabled"]),
+            updated_at=str(row["updated_at"]),
+        )
+
+    def list_courses(self) -> list[Course]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM courses ORDER BY name COLLATE NOCASE, id"
+            ).fetchall()
+        return [self._course(row) for row in rows]
+
+    def get_course(self, course_id: int) -> Course:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM courses WHERE id = ?", (course_id,)).fetchone()
+        if row is None:
+            raise KeyError("강의를 찾지 못했습니다.")
+        return self._course(row)
+
+    def active_course_id(self) -> int:
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT value FROM app_state WHERE key = 'active_course_id'"
+            ).fetchone()
+            course_id = int(row[0]) if row and row[0].isdigit() else 0
+            exists = db.execute("SELECT 1 FROM courses WHERE id = ?", (course_id,)).fetchone()
+            if exists:
+                return course_id
+            fallback = db.execute("SELECT id FROM courses ORDER BY id LIMIT 1").fetchone()
+            if fallback is None:
+                raise RuntimeError("저장된 강의가 없습니다.")
+            course_id = int(fallback[0])
+            db.execute(
+                "INSERT OR REPLACE INTO app_state(key, value) VALUES ('active_course_id', ?)",
+                (str(course_id),),
+            )
+            return course_id
+
+    def select_course(self, course_id: int) -> Course:
+        course = self.get_course(course_id)
+        with self._lock, self._connect() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO app_state(key, value) VALUES ('active_course_id', ?)",
+                (str(course.id),),
+            )
+        return course
+
+    def create_course(self, name: str) -> Course:
+        clean = text(name, 80)
+        if not clean:
+            raise ValueError("강의 이름을 입력해 주세요.")
+        try:
+            with self._lock, self._connect() as db:
+                cursor = db.execute(
+                    "INSERT INTO courses(name, updated_at) VALUES (?, ?)",
+                    (clean, self.now()),
+                )
+                course_id = int(cursor.lastrowid)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("같은 이름의 강의가 이미 있습니다.") from error
+        return self.select_course(course_id)
+
+    def update_course(self, course_id: int, **changes: Any) -> Course:
+        current = self.get_course(course_id)
+        values: dict[str, Any] = {}
+        for key, raw in changes.items():
+            if key not in self.COURSE_FIELDS:
+                continue
+            if key == "name":
+                value = text(raw, 80)
+                if not value:
+                    raise ValueError("강의 이름을 비워 둘 수 없습니다.")
+            elif key == "language":
+                value = text(raw, 10)
+                if value not in LANGUAGES:
+                    raise ValueError("지원하지 않는 언어입니다.")
+            elif key == "prompt":
+                value = text(raw, 3000)
+            elif key == "corrections":
+                value = text(raw, 5000)
+            else:
+                value = int(flag(raw, getattr(current, key)))
+            values[key] = value
+        if not values:
+            return current
+        values["updated_at"] = self.now()
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        try:
+            with self._lock, self._connect() as db:
+                cursor = db.execute(
+                    f"UPDATE courses SET {assignments} WHERE id = ?",
+                    (*values.values(), course_id),
+                )
+                if cursor.rowcount != 1:
+                    raise KeyError("강의를 찾지 못했습니다.")
+        except sqlite3.IntegrityError as error:
+            raise ValueError("같은 이름의 강의가 이미 있습니다.") from error
+        return self.get_course(course_id)
+
+    def delete_course(self, course_id: int) -> int:
+        with self._lock, self._connect() as db:
+            count = db.execute("SELECT COUNT(*) FROM courses").fetchone()[0]
+            if count <= 1:
+                raise ValueError("강의는 최소 하나가 필요합니다.")
+            cursor = db.execute("DELETE FROM courses WHERE id = ?", (course_id,))
+            if cursor.rowcount != 1:
+                raise KeyError("강의를 찾지 못했습니다.")
+            fallback = db.execute("SELECT id FROM courses ORDER BY name LIMIT 1").fetchone()
+            active_row = db.execute(
+                "SELECT value FROM app_state WHERE key = 'active_course_id'"
+            ).fetchone()
+            active = int(active_row[0]) if active_row and active_row[0].isdigit() else course_id
+            if active == course_id:
+                active = int(fallback[0])
+                db.execute(
+                    "INSERT OR REPLACE INTO app_state(key, value) VALUES ('active_course_id', ?)",
+                    (str(active),),
+                )
+        return active
+
+    def _state(self, db: sqlite3.Connection) -> dict[str, str]:
+        return {str(row["key"]): str(row["value"]) for row in db.execute("SELECT * FROM app_state")}
+
+    def get(self) -> ActiveSettings:
+        course = self.get_course(self.active_course_id())
+        with self._connect() as db:
+            state = self._state(db)
+        return ActiveSettings(
+            course_id=course.id,
+            course_name=course.name,
+            language=course.language,
+            prompt=course.prompt,
+            corrections=course.corrections,
+            format_transcript=course.format_transcript,
+            llm_enabled=course.llm_enabled,
+            output_dir=self.environment.get().output_dir,
+        )
+
+    @staticmethod
+    def _recording(row: sqlite3.Row) -> Recording:
+        data = dict(row)
+        data["course_id"] = int(data["course_id"]) if data["course_id"] is not None else None
+        data["format_transcript"] = bool(data["format_transcript"])
+        data["llm_enabled"] = bool(data["llm_enabled"])
+        data["duration_seconds"] = float(data["duration_seconds"])
+        data["processing_seconds"] = float(data["processing_seconds"])
+        return Recording(**data)
+
+    @staticmethod
+    def _suggestion(row: sqlite3.Row) -> StoredSuggestion:
+        data = dict(row)
+        data["id"] = int(data["id"])
+        data["confidence"] = float(data["confidence"])
+        return StoredSuggestion(**data)
+
+    def create_recording(self, recording_id: str, settings: ActiveSettings, title: str,
+                         source_kind: str, extension: str, source_path: str = "",
+                         status: str = "queued") -> Recording:
+        now = self.now()
+        with self._lock, self._connect() as db:
+            db.execute(
+                """INSERT INTO recordings(
+                    id, course_id, course_name, title, source_kind, extension, status,
+                    language, prompt, corrections, format_transcript, llm_enabled,
+                    llm_model, output_dir, source_path, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (recording_id, settings.course_id, settings.course_name, title, source_kind,
+                 extension, status, settings.language, settings.prompt, settings.corrections,
+                 int(settings.format_transcript), int(settings.llm_enabled), settings.llm_model,
+                 settings.output_dir, source_path, now),
+            )
+        return self.get_recording(recording_id)
+
+    def get_recording(self, recording_id: str) -> Recording:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM recordings WHERE id = ?", (recording_id,)).fetchone()
+        if row is None:
+            raise KeyError("작업을 찾지 못했습니다.")
+        return self._recording(row)
+
+    def update_recording(self, recording_id: str, **changes: Any) -> Recording:
+        allowed = {
+            "title", "status", "source_path", "audio_path", "note_path", "duration_seconds",
+            "processing_seconds", "transcript_text", "segments_json", "breaks_json",
+            "quality_json", "error", "started_at", "completed_at",
+        }
+        values = {key: value for key, value in changes.items() if key in allowed}
+        if not values:
+            return self.get_recording(recording_id)
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        with self._lock, self._connect() as db:
+            cursor = db.execute(
+                f"UPDATE recordings SET {assignments} WHERE id = ?",
+                (*values.values(), recording_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError("작업을 찾지 못했습니다.")
+        return self.get_recording(recording_id)
+
+    def list_recordings(self, limit: int = 30) -> list[Recording]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM recordings ORDER BY created_at DESC LIMIT ?",
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+        return [self._recording(row) for row in rows]
+
+    def queued_recordings(self) -> list[Recording]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM recordings WHERE status = 'queued' ORDER BY created_at"
+            ).fetchall()
+        return [self._recording(row) for row in rows]
+
+    def recording_ids(self) -> set[str]:
+        """Return every persisted work ID for conservative temp-folder cleanup."""
+        with self._connect() as db:
+            rows = db.execute("SELECT id FROM recordings").fetchall()
+        return {str(row["id"]) for row in rows}
+
+    def _delete_recording_in_states(
+        self, recording_id: str, allowed: frozenset[str], invalid_message: str
+    ) -> None:
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT status FROM recordings WHERE id = ?", (recording_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError("작업을 찾지 못했습니다.")
+            if str(row["status"]) not in allowed:
+                raise ValueError(invalid_message)
+            db.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
+
+    def discard_recording(self, recording_id: str) -> None:
+        self._delete_recording_in_states(
+            recording_id,
+            frozenset({"recording", "recoverable"}),
+            "진행 중이거나 복구 가능한 녹음만 폐기할 수 있습니다.",
+        )
+
+    def delete_recording_history(self, recording_id: str) -> None:
+        self._delete_recording_in_states(
+            recording_id,
+            frozenset({"completed", "failed", "cancelled"}),
+            "완료·실패·중단된 작업만 최근 작업에서 삭제할 수 있습니다.",
+        )
+
+    def replace_suggestions(self, recording_id: str, suggestions: list[dict[str, Any]]) -> None:
+        now = self.now()
+        with self._lock, self._connect() as db:
+            db.execute("DELETE FROM suggestions WHERE recording_id = ?", (recording_id,))
+            db.executemany(
+                """INSERT INTO suggestions(
+                    recording_id, sentence_id, original, replacement, reason,
+                    confidence, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                [
+                    (recording_id, item["sentence_id"], item["original"], item["replacement"],
+                     item.get("reason", ""), float(item["confidence"]), now)
+                    for item in suggestions
+                ],
+            )
+
+    def list_suggestions(self, recording_id: str) -> list[StoredSuggestion]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM suggestions WHERE recording_id = ? ORDER BY id",
+                (recording_id,),
+            ).fetchall()
+        return [self._suggestion(row) for row in rows]
+
+    def get_suggestion(self, suggestion_id: int) -> StoredSuggestion:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM suggestions WHERE id = ?", (suggestion_id,)).fetchone()
+        if row is None:
+            raise KeyError("수정 제안을 찾지 못했습니다.")
+        return self._suggestion(row)
+
+    def decide_suggestion(self, suggestion_id: int, status: str) -> StoredSuggestion:
+        if status not in {"accepted", "rejected"}:
+            raise ValueError("지원하지 않는 검토 결과입니다.")
+        with self._lock, self._connect() as db:
+            cursor = db.execute(
+                "UPDATE suggestions SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+                (status, self.now(), suggestion_id),
+            )
+            if cursor.rowcount != 1:
+                row = db.execute("SELECT 1 FROM suggestions WHERE id = ?", (suggestion_id,)).fetchone()
+                if row is None:
+                    raise KeyError("수정 제안을 찾지 못했습니다.")
+                raise ValueError("이미 검토한 제안입니다.")
+        return self.get_suggestion(suggestion_id)
+
+    def append_correction(self, course_id: int | None, wrong: str, correct: str) -> Course | None:
+        if course_id is None:
+            return None
+        course = self.get_course(course_id)
+        rule = f"{wrong}={correct}"
+        existing = [line.strip() for line in course.corrections.splitlines() if line.strip()]
+        if rule not in existing:
+            existing.append(rule)
+            return self.update_course(course_id, corrections="\n".join(existing))
+        return course

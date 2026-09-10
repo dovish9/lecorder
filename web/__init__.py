@@ -1,0 +1,1 @@
+"""Lecorder web application package."""

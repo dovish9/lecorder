@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#ececee" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Lecorder</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230078ff%22/><path d=%22M8 34h8l4-17 7 31 7-41 7 33 5-18 5 12h6%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%224%22/></svg>" />
+<link rel="stylesheet" href="/static/dashboard.css?v=20260910-30" />
+</head>
+<body>
+<div class="app-shell" id="appShell">
+  <aside class="source-sidebar">
+    <a class="identity" href="#/dashboard" aria-label="Lecorder 대시보드">
+      <svg class="identity-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M3 19h5l3-10 4 19 4-25 4 20 3-11 3 7h4" /></svg>
+      <span><strong>Lecorder</strong><small>이 Mac의 전사 작업실</small></span>
+    </a>
+    <nav class="source-nav" aria-label="주요 화면">
+      <a class="source-item active" href="#/dashboard" data-view="dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span>대시보드</span></a>
+      <a class="source-item" href="#/courses" data-view="courses"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg><span>강의</span></a>
+      <a class="source-item" href="#/recordings" data-view="recordings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6l1.8 2H20v10H4zM4 9h16M8 13h8M8 16h5"/></svg><span>보관함</span><b id="libraryBadge" hidden></b></a>
+    </nav>
+    <section class="sidebar-activity" id="progressCard" data-phase="idle" aria-live="polite">
+      <header><span id="progressKicker">대기 중</span><i aria-hidden="true"></i></header>
+      <strong id="progressTitle">준비되어 있습니다</strong>
+      <p id="progressMessage">새 녹음을 시작하거나 파일을 가져오세요.</p>
+      <details class="queue-panel" id="queuePanel"><summary><span>대기열</span><span><b id="queueSummary">비어 있음</b><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></span></summary><div class="queue-list" id="queueList" aria-label="현재 대기열"></div></details>
+      <details id="suggestionPanel" hidden><summary id="suggestionSummary">검토할 수정 제안</summary><ol id="suggestionList"></ol></details>
+    </section>
+  </aside>
+
+  <section class="app-workspace">
+    <header class="app-toolbar">
+      <div class="toolbar-title"><h1 id="workspaceTitle">대시보드</h1><p id="workspaceDescription">녹음과 전사 작업의 현재 상태를 확인합니다.</p></div>
+      <div class="toolbar-actions">
+        <div class="server-status has-tooltip" id="serverPill" tabindex="0" role="status" aria-live="polite" data-tooltip="Whisper와 Qwen3의 실제 연결 상태입니다."><i></i><span id="serverText">서버 확인 중</span></div>
+        <a class="toolbar-icon has-tooltip" id="guideButton" href="/guide" aria-label="사용 안내 열기" data-tooltip="사용 안내"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 3.75h7.5l3 3v13.5H6.75zM14.25 3.75v3h3M9.5 11h5M9.5 14.5h5"/></svg></a>
+        <button class="toolbar-icon has-tooltip" id="systemButton" type="button" aria-label="시스템 경로 설정 열기" data-tooltip="시스템 경로 설정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.7 3.65h4.6l.55 2.23c.48.2.93.46 1.34.77l2.18-.67 2.3 3.99-1.65 1.56a7 7 0 0 1 0 1.54l1.65 1.56-2.3 3.99-2.18-.67c-.41.31-.86.57-1.34.77l-.55 2.23H9.7l-.55-2.23a7.2 7.2 0 0 1-1.34-.77l-2.18.67-2.3-3.99 1.65-1.56a7 7 0 0 1 0-1.54L3.33 9.97l2.3-3.99 2.18.67c.41-.31.86-.57 1.34-.77z"/><circle cx="12" cy="12.3" r="2.65"/></svg></button>
+      </div>
+    </header>
+
+    <main class="workspace-body">
+      <section class="workspace-panel dashboard-workspace" data-view-panel="dashboard">
+        <header class="dashboard-heading">
+          <div><p id="dashboardDate"></p><h2>작업 현황</h2><span>진행 중인 전사와 확인할 결과를 한눈에 봅니다.</span></div>
+          <aside class="dashboard-course"><span>현재 강의</span><strong id="dashboardCourseName">강의 없음</strong><a id="dashboardCourseLink" href="#/courses">강의 설정</a></aside>
+        </header>
+        <div class="dashboard-grid">
+          <section class="dashboard-section dashboard-queue"><header><div><h3>진행 중</h3><p>녹음과 전사 대기열</p></div><a href="#/recordings">보관함에서 보기</a></header><div class="dashboard-list" id="dashboardQueue"></div></section>
+          <section class="dashboard-section"><header><div><h3>확인 필요</h3><p>오류와 검토할 수정 제안</p></div></header><div class="dashboard-list" id="dashboardAttention"></div></section>
+          <section class="dashboard-section"><header><div><h3>최근 완료</h3><p>최근 저장된 전사 결과</p></div></header><div class="dashboard-list" id="dashboardRecent"></div></section>
+        </div>
+      </section>
+
+      <section class="workspace-panel courses-workspace" data-view-panel="courses" hidden>
+        <aside class="course-browser">
+          <header><div><h2>강의</h2><span id="courseCount">0개</span></div><label class="compact-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4 4"/></svg><input id="courseSearch" type="search" placeholder="강의 검색" aria-label="강의 검색" /></label></header>
+          <form class="new-course" id="newCourseForm"><label class="sr-only" for="newCourseName">새 강의 이름</label><input id="newCourseName" type="text" maxlength="80" autocomplete="off" placeholder="새 강의 이름" /><button type="submit" aria-label="강의 추가">+</button></form>
+          <nav class="course-list" id="courseList" aria-label="강의 목록"></nav>
+        </aside>
+        <div class="course-detail-scroll">
+          <section class="course-document" aria-labelledby="courseNameLabel">
+            <header class="course-heading"><label class="sr-only" id="courseNameLabel" for="courseName">선택한 강의 이름</label><input id="courseName" type="text" maxlength="80" readonly aria-readonly="true" /><span class="save-state has-tooltip" id="saveState" role="status" tabindex="0" data-tooltip="변경 사항은 자동 저장됩니다."><i></i>저장됨</span></header>
+            <div class="settings-group"><h3>음성 인식</h3><section class="editor-section"><div class="editor-label"><h4>언어</h4><p>Whisper가 먼저 들을 언어</p></div><div class="language-control" role="radiogroup" aria-label="강의 언어"><label><input type="radio" name="language" value="ko" /><span>한국어</span></label><label><input type="radio" name="language" value="en" /><span>English</span></label><label><input type="radio" name="language" value="auto" /><span>자동 감지</span></label></div></section><section class="editor-section"><div class="editor-label"><h4>인식 힌트</h4><p>전문 용어와 고유명사</p></div><textarea id="prompt" rows="7" placeholder="예: Bayes theorem, von Neumann architecture"></textarea></section><section class="editor-section"><div class="editor-label"><h4>확정 교정</h4><p>잘못된 표현=올바른 표현</p></div><textarea id="corrections" rows="7" spellcheck="false" placeholder="베이지안 정리=베이즈 정리"></textarea></section></div>
+            <div class="settings-group"><h3>후처리</h3><div class="option-list"><label class="option-row"><span><strong>가독성 자동 정리</strong><small>Qwen3가 의미 경계에서 문단을 구성합니다.</small></span><input id="formatTranscript" type="checkbox" /></label><label class="option-row"><span><strong>Qwen3 문맥 검수</strong><small>수정 제안을 직접 승인하거나 거절합니다.</small></span><input id="llmEnabled" type="checkbox" /></label></div></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="workspace-panel recordings-workspace" data-view-panel="recordings" hidden>
+        <section class="library-browser" id="libraryBrowser">
+          <header class="library-tools"><label class="compact-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4 4"/></svg><input id="librarySearch" type="search" placeholder="녹음 검색" aria-label="녹음 검색" /></label><select id="libraryFilter" aria-label="녹음 상태"><option value="all">전체</option><option value="active">진행 중</option><option value="review">검토 필요</option><option value="completed">완료</option><option value="problem">문제 있음</option></select><select id="librarySort" aria-label="보관함 정렬"><option value="name-asc" selected>이름순</option><option value="name-desc">이름 역순</option><option value="date-desc">최근 등록순</option><option value="date-asc">오래된 등록순</option></select></header>
+          <div class="library-list" id="libraryList"></div>
+        </section>
+        <aside class="library-detail" id="libraryDetail" aria-live="polite"><div class="detail-empty"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 9h8l2 3h12v14H5zM5 12h22"/></svg><h2>녹음을 선택하세요</h2><p>원음, Markdown, 수정 제안과 처리 기록을 한곳에서 볼 수 있습니다.</p></div></aside>
+      </section>
+
+      <section class="review-workspace" id="reviewDialog" hidden aria-labelledby="reviewDialogTitle">
+        <header class="review-heading"><div><p id="reviewRecordingName">선택한 녹음</p><h2 id="reviewDialogTitle">수정 제안</h2><span id="reviewSubtitle">제안된 표현을 원음과 함께 확인합니다.</span></div><button id="closeReviewButton" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4-6 6 6 6"/></svg>상세로 돌아가기</button></header>
+        <div class="review-list" id="reviewList"></div>
+      </section>
+    </main>
+  </section>
+</div>
+
+<aside class="command-dock" id="commandDock" data-record-state="idle" aria-label="빠른 녹음 도구">
+  <details class="dock-course-picker" id="dockCoursePicker"><summary id="dockCourseButton" aria-label="녹음할 강의 선택"><svg class="dock-course-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg><span><small>강의</small><strong id="dockCourseLabel">강의를 추가하세요</strong></span><svg class="dock-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="dock-course-menu" id="dockCourseMenu" role="listbox" aria-label="녹음할 강의"></div><select id="dockCourseSelect" aria-label="녹음할 강의" hidden tabindex="-1"></select></details>
+  <span class="dock-divider" aria-hidden="true"></span>
+  <button class="dock-upload" id="dockUploadButton" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0-11-4 4m4-4 4 4M5 13v6h14v-6"/></svg><span>파일 가져오기</span></button>
+  <section class="dock-recording-session" id="dockRecordingSession" aria-label="현재 녹음">
+    <span class="dock-frequency" id="dockSoundMeter" aria-hidden="true"></span>
+    <span class="dock-recording-copy"><strong id="dockRecordingTitle"></strong><time id="dockRecordClock" datetime="PT0S">00:00:00</time></span>
+  </section>
+  <button class="dock-record" id="dockRecordButton" type="button" aria-label="녹음 시작"><svg class="dock-record-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3.5" width="8" height="12" rx="4"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7"/></svg><span class="dock-stop-mark" aria-hidden="true"></span><span id="dockRecordLabel">녹음</span></button>
+  <span class="dock-pause-drop" aria-hidden="true"><button class="dock-pause" id="dockPauseButton" type="button" aria-label="일시정지" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path class="pause-glyph" d="M9 7v10M15 7v10"/><path class="resume-glyph" d="m9 7 8 5-8 5z"/></svg></button></span>
+</aside>
+
+<dialog class="upload-dialog" id="uploadDialog" aria-labelledby="uploadDialogTitle">
+  <form class="upload-sheet" id="uploadForm">
+    <header><div><h2 id="uploadDialogTitle">파일 가져오기</h2><p>오디오나 동영상을 전사 대기열에 추가합니다.</p></div><button class="dialog-close" id="closeUploadButton" type="button" aria-label="파일 가져오기 닫기">×</button></header>
+    <div class="upload-field upload-course-field"><span id="uploadCourseFieldLabel">강의</span><details class="upload-course-picker" id="uploadCoursePicker"><summary id="uploadCourseButton" aria-labelledby="uploadCourseFieldLabel uploadCourseLabel" aria-haspopup="listbox" aria-expanded="false"><span class="upload-course-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg></span><strong id="uploadCourseLabel">강의를 선택하세요</strong><svg class="upload-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="upload-course-menu" id="uploadCourseMenu" role="listbox" aria-label="업로드할 강의"></div></details><select id="uploadCourseSelect" aria-label="업로드할 강의" hidden tabindex="-1"></select></div>
+    <label class="upload-field" for="uploadTitle"><span>저장 이름</span><input id="uploadTitle" type="text" maxlength="160" autocomplete="off" placeholder="파일 이름" /></label>
+    <input id="uploadFile" type="file" accept="audio/*,video/*,.3g2,.3gp,.aac,.aif,.aiff,.alac,.amr,.caf,.flac,.m4a,.mka,.mov,.mp3,.mp4,.ogg,.opus,.wav,.webm,.wma" hidden />
+    <button class="upload-drop-zone" id="dropZone" type="button"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 21V7m0 0-6 6m6-6 6 6M6 20v6h20v-6" /></svg><span><strong id="dropTitle">파일을 선택하거나 끌어놓으세요</strong><small id="dropDescription">오디오·동영상 파일</small></span></button>
+    <p class="upload-message" id="uploadMessage" role="status"></p>
+    <footer><button id="cancelUploadButton" type="button">취소</button><button class="primary" id="uploadButton" type="submit">대기열에 추가</button></footer>
+  </form>
+</dialog>
+
+<dialog class="guide-dialog" id="guideDialog" aria-label="Lecorder 사용 안내"><div class="guide-frame"><iframe id="guideFrame" title="Lecorder 사용 안내" loading="lazy"></iframe><button class="guide-dialog-close" id="closeGuideButton" type="button" aria-label="사용 안내 닫기">×</button></div></dialog>
+<dialog class="system-dialog" id="systemDialog" aria-label="시스템 경로 설정"><form method="dialog" class="dialog-frame" id="systemForm"><header><h2>시스템 경로 설정</h2><button class="dialog-close" id="closeSystemButton" type="button" aria-label="설정 창 닫기">×</button></header><p>경로를 저장하면 Lecorder와 whisper.cpp를 다시 시작합니다.</p><label for="projectDir"><span>Lecorder 프로젝트</span><small id="projectCheck">확인 중</small></label><input id="projectDir" name="project_dir" type="text" autocomplete="off" /><label for="whisperDir"><span>whisper.cpp 설치 폴더</span><small id="whisperCheck">확인 중</small></label><input id="whisperDir" name="whisper_cpp_dir" type="text" autocomplete="off" /><label for="outputDir"><span>오디오·Markdown 저장 폴더</span><small id="outputCheck">확인 중</small></label><input id="outputDir" name="output_dir" type="text" autocomplete="off" /><div class="dialog-actions"><p id="systemMessage" role="status"></p><button id="saveSystemButton" type="submit">경로 저장</button></div></form></dialog>
+<dialog class="pipeline-dialog" id="pipelineDialog" aria-labelledby="pipelineDialogTitle"><section class="pipeline-dialog-frame"><header><div><h2 id="pipelineDialogTitle">작업 로그</h2><p id="pipelineDialogSubtitle"></p></div><button class="dialog-close" id="closePipelineButton" type="button" aria-label="작업 로그 닫기">×</button></header><div class="pipeline-dialog-body" id="pipelineDialogBody"></div></section></dialog>
+<dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><h2 id="confirmTitle">확인</h2><p id="confirmMessage"></p><div><button id="confirmCancel" value="cancel">취소</button><button id="confirmAccept" class="danger" value="confirm">확인</button></div></form></dialog>
+<div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
+<script type="module" src="/static/dashboard.js?v=20260910-31"></script>
+</body>
+</html>

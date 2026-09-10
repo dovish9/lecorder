@@ -1,0 +1,63 @@
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+.python-version
+
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Coverage and packaging artifacts
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Lecorder runtime data and personal output
+web/data/
+output/
+recordings/
+experiments/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Audio and video recordings
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.opus
+*.webm
+*.mp4
+*.mov
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.part
+
+# Editor and operating-system metadata
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
