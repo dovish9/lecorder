@@ -2980,7 +2980,13 @@ function renderReviewItems(suggestions) {
 
 function renderStatus(data) {
   const needsLlm = data.settings.llm_enabled !== false;
-  if (!data.whisper_ready) {
+  if (!data.whisper_ready && data.whisper_state === "idle") {
+    ui.serverPill.className = "server-status has-tooltip ready";
+    ui.serverText.textContent = "Whisper 대기 · 작업 시 자동 로드";
+  } else if (data.whisper_state === "loading") {
+    ui.serverPill.className = "server-status has-tooltip warning";
+    ui.serverText.textContent = "Whisper 모델 로드 중";
+  } else if (!data.whisper_ready) {
     ui.serverPill.className = "server-status has-tooltip offline";
     ui.serverText.textContent = "Whisper 연결 안 됨";
   } else if (needsLlm && !data.ollama_model_ready) {

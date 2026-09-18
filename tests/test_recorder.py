@@ -393,16 +393,12 @@ class RecorderTests(unittest.TestCase):
             self.assertIn("WHISPER_LOW_CONFIDENCE=-0.7", saved)
             self.assertIn("OLLAMA_MODEL=custom-review:latest", saved)
 
-    def test_start_command_prepares_whisper_before_queue_worker(self) -> None:
+    def test_start_command_leaves_whisper_loading_to_runtime(self) -> None:
         script = (Path(__file__).parents[1] / "start.command").read_text(encoding="utf-8")
-        self.assertLess(script.index('echo "▶️ Whisper 시작'), script.index('echo "▶️ 대시보드와 대기열 시작"'))
-        self.assertIn("compatible_whisper_server", script)
-        self.assertIn('[[ "$EXISTING_WHISPER_COMMAND" == *"$WHISPER_VAD_MODEL"* ]]', script)
+        self.assertNotIn('exec "$WHISPER_BIN"', script)
+        self.assertIn('전사 시작 시 로드', script)
         self.assertIn('[ -x "$SCRIPT_ROOT/.venv/bin/python" ]', script)
         self.assertIn('command -v python3', script)
-        self.assertIn('WHISPER_PORT="${WHISPER_PORT:-8080}"', script)
-        self.assertIn('--host 127.0.0.1 --port "$WHISPER_PORT"', script)
-        self.assertNotIn("PYENV_ROOT", script)
 
     def test_reviewer_requests_suggestions_and_applies_only_verifiable_edits(self) -> None:
         options = Options(language="ko", course_name="통계학", prompt="모집단, 표본", llm_model="test")
@@ -639,7 +635,7 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(result.segments[1].avg_logprob, -.71)
         self.assertEqual(post.call_args.kwargs["data"]["response_format"], "verbose_json")
         self.assertEqual(post.call_args.kwargs["data"]["entropy_thold"], "2.8")
-        self.assertEqual(post.call_args.kwargs["data"]["no_context"], "false")
+        self.assertEqual(post.call_args.kwargs["data"]["no_context"], "true")
         self.assertEqual(post.call_args.kwargs["data"]["vad"], "true")
         self.assertEqual(post.call_args.kwargs["data"]["vad_min_silence_duration_ms"], "300")
         with tempfile.TemporaryDirectory() as temporary:
@@ -647,7 +643,7 @@ class RecorderTests(unittest.TestCase):
             wav.write_bytes(b"wav")
             with patch("web.backend.engine.requests.post", return_value=response) as post:
                 Transcriber._whisper(wav, Options(language="en"), None)
-        self.assertEqual(post.call_args.kwargs["data"]["no_context"], "false")
+        self.assertEqual(post.call_args.kwargs["data"]["no_context"], "true")
 
     def test_vad_result_with_implausible_early_cutoff_falls_back_safely(self) -> None:
         dropped = Mock()
@@ -677,7 +673,7 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(post.call_args_list[1].kwargs["data"]["vad"], "false")
         self.assertEqual(progress, [("vad_fallback", 1, 1)])
 
-    def test_primary_repetition_collapse_uses_unbiased_full_audio_fallback(self) -> None:
+    def test_primary_repetition_collapse_resets_context_and_vad(self) -> None:
         repeated_segments = [
             {
                 "start": index * 2, "end": index * 2 + 2,
@@ -725,12 +721,12 @@ class RecorderTests(unittest.TestCase):
         self.assertEqual(result.text, recovered.json.return_value["text"])
         self.assertEqual(progress, [("repetition_fallback", 1, 1)])
         fallback_data = post.call_args_list[1].kwargs["data"]
-        self.assertEqual(fallback_data["vad"], "true")
-        self.assertEqual(fallback_data["temperature_inc"], "0.0")
-        self.assertEqual(fallback_data["beam_size"], "-1")
-        self.assertEqual(fallback_data["no_context"], "false")
-        self.assertEqual(fallback_data["suppress_nst"], "false")
-        self.assertNotIn("prompt", fallback_data)
+        self.assertEqual(fallback_data["vad"], "false")
+        self.assertEqual(fallback_data["temperature_inc"], "0.2")
+        self.assertEqual(fallback_data["beam_size"], "5")
+        self.assertEqual(fallback_data["no_context"], "true")
+        self.assertEqual(fallback_data["suppress_nst"], "true")
+        self.assertEqual(fallback_data["prompt"], "")
 
     def test_repetition_collapse_never_saves_a_second_collapsed_result(self) -> None:
         segments = [

@@ -146,14 +146,14 @@ ollama list</code></pre>
                 <strong>최초 실행</strong>
                 <p>프로젝트 폴더에서 실행하거나 Finder에서 <code>start.command</code>를 더블클릭합니다. macOS가 차단하면 파일을 Control-클릭한 뒤 <strong>열기</strong>를 선택하세요.</p>
                 <pre><code>./start.command</code></pre>
-                <p><code>start.command</code>는 의존성과 포트를 확인하고, 필요한 경우 whisper-server를 시작한 뒤 Flask 대시보드를 엽니다. 종료할 때는 실행 터미널에서 <code>Ctrl+C</code>를 누릅니다.</p>
+                <p><code>start.command</code>는 의존성과 포트를 확인하고 Flask 대시보드를 엽니다. Whisper 모델은 전사 시에만 로드하며, 마지막 음성 인식 후 60초간 새 작업이 없으면 메모리에서 해제합니다. 종료할 때는 실행 터미널에서 <code>Ctrl+C</code>를 누릅니다.</p>
               </li>
             </ol>
             <table>
               <thead><tr><th>서비스</th><th>기본 주소</th><th>실행 주체</th></tr></thead>
               <tbody>
                 <tr><td>Lecorder</td><td><code>127.0.0.1:5055</code></td><td><code>start.command</code></td></tr>
-                <tr><td>whisper.cpp</td><td><code>127.0.0.1:8080</code></td><td><code>start.command</code></td></tr>
+                <tr><td>whisper.cpp</td><td><code>127.0.0.1:8080</code></td><td>Lecorder가 전사 시 자동 실행</td></tr>
                 <tr><td>Ollama</td><td><code>127.0.0.1:11434</code></td><td>Homebrew 서비스</td></tr>
               </tbody>
             </table>
@@ -171,13 +171,14 @@ ollama list</code></pre>
                 <tr><td><code>OLLAMA_MODEL</code></td><td>검수에 사용할 설치된 Ollama 모델. 기본값 <code>qwen3:8b-q4_K_M</code></td></tr>
               </tbody>
             </table>
-            <p><code>start.command</code>로 실행 중이면 경로 저장 후 앱과 이 스크립트가 관리하는 Whisper 프로세스가 자동으로 다시 시작됩니다. <code>python app.py</code>로 직접 실행했다면 직접 재시작해야 합니다.</p>
+            <p><code>start.command</code>로 실행 중이면 경로 저장 후 Whisper 프로세스를 정리하고 앱이 자동으로 다시 시작됩니다. 모델은 다음 전사 시 다시 로드합니다. <code>python app.py</code>로 직접 실행했다면 직접 재시작해야 합니다.</p>
             <h3>고급 설정</h3>
             <table>
               <tbody>
                 <tr><td><code>LECORDER_PORT</code></td><td>대시보드 포트, 기본 <code>5055</code></td></tr>
                 <tr><td><code>WHISPER_PORT</code></td><td>whisper-server 포트, 기본 <code>8080</code></td></tr>
-                <tr><td><code>WHISPER_URL</code></td><td>Whisper inference API 주소</td></tr>
+                <tr><td><code>WHISPER_URL</code></td><td>명시하면 외부 Whisper 서버를 사용합니다. 외부 서버의 로드·종료는 직접 관리합니다.</td></tr>
+                <tr><td><code>WHISPER_IDLE_SECONDS</code></td><td>음성 인식 후 모델 해제까지 유예 시간, 기본 <code>60</code>초</td></tr>
                 <tr><td><code>OLLAMA_URL</code></td><td>Ollama chat API 주소, 기본 <code>http://127.0.0.1:11434/api/chat</code></td></tr>
                 <tr><td><code>WHISPER_LOW_CONFIDENCE</code></td><td>재확인 대상 평균 로그확률 기준, 기본 <code>-0.65</code></td></tr>
                 <tr><td><code>WHISPER_RETRY_MAX_GROUPS</code></td><td>한 작업에서 재확인할 최대 묶음 수, 기본 <code>4</code></td></tr>
@@ -238,8 +239,8 @@ ollama list</code></pre>
               <div><b>01</b><strong>작업 접수</strong><span>업로드 파일은 작업 폴더에 먼저 복사합니다. 브라우저 녹음은 5초 조각으로 생성되어 IndexedDB에 기록된 뒤 서버로 전송되고, 종료할 때 순서대로 하나의 원본으로 결합됩니다.</span></div>
               <div><b>02</b><strong>단일 대기열</strong><span>SQLite에 작업과 당시의 강의 설정을 기록하고 단일 소비자 스레드가 등록 순서대로 처리합니다. 앱 재시작 시 <code>queued</code> 작업은 다시 대기열에 넣습니다.</span></div>
               <div><b>03</b><strong>오디오 표준화</strong><span>FFmpeg가 입력 미디어를 Whisper용 <code>16kHz · mono · PCM s16le WAV</code>로 변환합니다. 입력 확장자는 결과 원본을 저장할 때 그대로 유지합니다.</span></div>
-              <div><b>04</b><strong>Whisper 1차 전사</strong><span>large-v3에 선택 언어와 최대 3,000자의 인식 힌트를 전달합니다. 기본 전사는 VAD를 켜고, 단어 경계 분할과 verbose JSON 응답을 사용해 발화별 시작·종료 시각과 신뢰도 정보를 받습니다.</span></div>
-              <div><b>05</b><strong>1차 품질 보호</strong><span>60초 이상 파일에서 마지막 발화가 전체 길이의 절반 전에 끝나거나 인식된 발화 시간이 전체의 15%보다 짧으면 VAD 누락으로 판단합니다. 또한 신뢰도와 무관하게 긴 동일 문장이 연속 구간이나 전체 발화의 큰 비율을 차지하면 반복 붕괴로 판단합니다. 반복 붕괴 시 장문 문맥과 VAD는 유지하고 초기 힌트와 온도 폴백만 제거해 다시 읽으며, 재전사도 반복되면 잘못된 결과를 저장하지 않고 작업을 실패 처리합니다.</span></div>
+              <div><b>04</b><strong>Whisper 1차 전사</strong><span>음성을 약 120초씩 가까운 침묵 지점에서 나눕니다. 침묵을 찾지 못하면 경계에 2초 문맥을 겹칩니다. 요청마다 이전 전사의 텍스트 상태를 초기화하고, large-v3와 Silero VAD로 각 구간을 전사합니다. 인식 힌트는 UTF-8 400바이트까지 전달하며 발화 시각은 원본 기준으로 보존합니다.</span></div>
+              <div><b>05</b><strong>1차 품질 보호</strong><span>60초 이상 파일에서 마지막 발화가 전체 길이의 절반 전에 끝나거나 인식된 발화 시간이 전체의 15%보다 짧으면 VAD 누락으로 판단합니다. 또한 신뢰도와 무관하게 긴 동일 문장이 연속 구간이나 전체 발화의 큰 비율을 차지하면 반복 붕괴로 판단합니다. 반복 붕괴 시 해당 구간만 과거 문맥·VAD·힌트 없이 beam search로 다시 읽으며, 재전사도 반복되면 잘못된 결과를 저장하지 않고 작업을 실패 처리합니다.</span></div>
               <div><b>06</b><strong>저신뢰 구간 재확인</strong><span>평균 로그확률이 기본 <code>-0.65</code>보다 낮은 인접 발화를 묶고 앞뒤 여유를 포함한 최대 30초 클립으로 다시 읽습니다. 기본 최대 4묶음·90초 안에서 beam size 5로 시도하며, 신뢰도가 개선되거나 힌트 용어가 늘면서 품질이 유지되는 경우에만 원래 구간을 교체합니다. 빈 결과, 과도한 길이 변화와 반복 문장은 거절합니다.</span></div>
               <div><b>07</b><strong>확정 교정 적용</strong><span>강의에 저장된 <code>잘못된 표현=올바른 표현</code> 규칙을 발화별로 적용합니다. 이 단계는 모델 판단이 아닌 결정적 문자열 치환입니다.</span></div>
               <div><b>08</b><strong>Qwen3 선택 검수</strong><span>검수를 켠 경우 약 1,800자 단위로 나누어 단어 오인식 후보를 요청합니다. 가독성 자동 정리도 켰다면 같은 요청에서 문단 경계를 함께 판단해 중복 모델 호출을 줄입니다. 각 묶음에는 앞뒤 최대 3개 발화를 문맥으로 제공하며, 잘린 JSON은 더 작은 묶음으로 나눠 재시도합니다.</span></div>
@@ -299,7 +300,7 @@ ollama list</code></pre>
             <table>
               <tbody>
                 <tr><td>5055 포트 사용 중</td><td>다른 Lecorder 프로세스를 종료하거나 <code>LECORDER_PORT</code>를 변경합니다.</td></tr>
-                <tr><td>8080 포트 충돌</td><td><code>start.command</code>는 실행 파일·large-v3·VAD 경로가 같은 기존 Whisper만 재사용합니다. 다른 프로세스라면 종료해야 합니다.</td></tr>
+                <tr><td>8080 포트 충돌</td><td>기존 서버를 종료하거나 <code>WHISPER_PORT</code>를 바꿉니다. 직접 관리하는 외부 서버는 <code>WHISPER_URL</code>로 지정할 수 있습니다.</td></tr>
                 <tr><td>Whisper 준비 안 됨</td><td>대시보드 경로 설정에서 실행 파일과 두 모델의 확인 상태를 살핍니다.</td></tr>
                 <tr><td>Qwen3 모델 없음</td><td><code>brew services start ollama</code> 후 <code>ollama pull qwen3:8b-q4_K_M</code>을 실행합니다.</td></tr>
                 <tr><td>출력 폴더 오류</td><td>Lecorder가 폴더를 자동 생성하지 않으므로, 먼저 폴더를 만든 뒤 경로 설정에서 선택합니다.</td></tr>

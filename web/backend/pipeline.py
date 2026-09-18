@@ -350,12 +350,13 @@ class RecordingPipeline:
             def progress(stage: str, index: int, total: int) -> None:
                 cancellation.check()
                 self.state.set(
-                    "processing" if stage in {"vad_fallback", "repetition_fallback"} else
+                    "processing" if stage in {"transcribing", "vad_fallback", "repetition_fallback"} else
                     "refining" if stage == "retry" else "polishing",
-                    ("반복 붕괴 감지 · 안전 설정으로 전체 재전사 중"
+                    ("반복 감지 · 해당 음성 구간만 안전 설정으로 재전사 중"
                      if stage == "repetition_fallback" else
-                     "VAD 음성 누락 확인 · 전체 음성으로 재전사 중"
+                     "VAD 음성 누락 확인 · 해당 구간의 원본 음성으로 재전사 중"
                      if stage == "vad_fallback" else
+                     f"음성 구간 전사 중 ({index}/{total})" if stage == "transcribing" else
                      f"저신뢰 구간 재확인 중 ({index}/{total})" if stage == "retry" else
                     f"Qwen3 검수 중 ({index}/{total})"),
                     job_id=recording.id, title=recording.title, course_id=recording.course_id,

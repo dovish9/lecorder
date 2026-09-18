@@ -6,13 +6,17 @@ import re
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
+import wave
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
 import requests
 
 from .config import OLLAMA_URL, WHISPER_URL
+from .whisper_runtime import whisper_runtime
 from .review import (
     EDIT_SCHEMA,
     REVIEW_SCHEMA,
@@ -63,11 +67,12 @@ class Transcriber:
         conversion_started = time.monotonic()
         self._convert(source, wav, cancellation)
         conversion_seconds = time.monotonic() - conversion_started
-        whispered = self._whisper(wav, options, incoming, progress, cancellation)
-        if options.retry_low_confidence:
-            whispered = self._retry_low_confidence(
-                wav, options, whispered, incoming, progress, cancellation
-            )
+        with whisper_runtime.session(cancellation):
+            whispered = self._whisper_chunked(wav, options, incoming, progress, cancellation)
+            if options.retry_low_confidence:
+                whispered = self._retry_low_confidence(
+                    wav, options, whispered, incoming, progress, cancellation
+                )
         corrected_segments = tuple(
             TranscriptSegment(
                 segment.index, segment.start, segment.end,
@@ -148,6 +153,83 @@ class Transcriber:
             subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     @staticmethod
+    def _chunk_boundaries(wav: Path, duration: float, cancellation=None) -> list[tuple[float, bool]]:
+        """Prefer nearby quiet intervals so cuts do not duplicate partial words."""
+        command = [shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-i", str(wav),
+                   "-af", "silencedetect=noise=-35dB:d=0.25", "-f", "null", "-"]
+        completed = (cancellation.run(command, stdout=subprocess.DEVNULL) if cancellation else
+                     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+        silences = []
+        silence_start = None
+        for match in re.finditer(r"silence_(start|end): ([0-9.]+)", completed.stderr.decode(errors="replace")):
+            value = float(match[2])
+            if match[1] == "start":
+                silence_start = value
+            elif silence_start is not None:
+                silences.append((silence_start + value) / 2)
+                silence_start = None
+        boundaries = [(0.0, True)]
+        while duration - boundaries[-1][0] > 132:
+            target = min(boundaries[-1][0] + 120, duration - 30)
+            candidates = [point for point in silences
+                          if abs(point - target) <= 12 and point <= duration - 15]
+            boundaries.append((min(candidates, key=lambda p: abs(p - target)), True)
+                              if candidates else (target, False))
+        boundaries.append((duration, True))
+        return boundaries
+
+    @staticmethod
+    def _whisper_chunked(wav: Path, options: Options, incoming=None, progress=None,
+                         cancellation=None) -> WhisperResult:
+        """Bound decoder history and retry cost; retain two seconds at cut edges."""
+        with wave.open(str(wav), "rb") as audio:
+            rate = audio.getframerate()
+            frames = audio.getnframes()
+            duration = frames / rate
+            if duration <= 132:
+                return Transcriber._whisper(wav, options, incoming, progress, cancellation)
+            output = []
+            results = []
+            boundaries = Transcriber._chunk_boundaries(wav, duration, cancellation)
+            total = len(boundaries) - 1
+            with tempfile.TemporaryDirectory(prefix="whisper-chunks-", dir=wav.parent) as folder:
+                for index in range(total):
+                    if cancellation:
+                        cancellation.check()
+                    if progress:
+                        progress("transcribing", index + 1, total)
+                    start, quiet_start = boundaries[index]
+                    end, quiet_end = boundaries[index + 1]
+                    clip_start = max(0, start - (0 if quiet_start else 2))
+                    clip_end = min(duration, end + (0 if quiet_end else 2))
+                    audio.setpos(int(clip_start * rate))
+                    clip = Path(folder) / "chunk.wav"
+                    with wave.open(str(clip), "wb") as target:
+                        target.setparams(audio.getparams())
+                        target.writeframes(audio.readframes(int((clip_end - clip_start) * rate)))
+                    result = Transcriber._whisper(clip, options, incoming, progress, cancellation)
+                    results.append(result)
+                    for segment in result.segments:
+                        midpoint = clip_start + (segment.start + segment.end) / 2
+                        if start <= midpoint < end or (index == total - 1 and midpoint == end):
+                            output.append(replace(
+                                segment, index=len(output) + 1,
+                                start=max(start, clip_start + segment.start),
+                                end=min(end, clip_start + segment.end),
+                            ))
+            return WhisperResult(
+                " ".join(s.text for s in output), duration, tuple(output),
+                vad_fallback=any(r.vad_fallback for r in results),
+                repetition_detected=any(r.repetition_detected for r in results),
+                repetition_ratio=max(r.repetition_ratio for r in results),
+                repetition_fallback_seconds=sum(r.repetition_fallback_seconds for r in results),
+                whisper_primary_seconds=sum(r.whisper_primary_seconds for r in results),
+                vad_fallback_seconds=sum(r.vad_fallback_seconds for r in results),
+                settings={**results[0].settings, "chunk_seconds": "120", "chunk_count": str(total),
+                          "chunk_boundary_policy": "silence-with-overlap-fallback"},
+            )
+
+    @staticmethod
     def _whisper(wav: Path, options: Options, incoming: dict[str, str] | None,
                  progress: Callable[[str, int, int], None] | None = None,
                  cancellation: CancellationToken | None = None) -> WhisperResult:
@@ -156,9 +238,10 @@ class Transcriber:
         defaults = {"temperature": "0.0", "temperature_inc": "0.2", "entropy_thold": "2.8",
                     "logprob_thold": "-1.0", "no_speech_thold": "0.6", "max_len": "240",
                     "split_on_word": "true", "suppress_nst": "true",
-                    # Long-form transcription needs previous-text conditioning. Forcing
-                    # no_context on English can make every chunk select the same phrase.
-                    "no_context": "false",
+                    # whisper.cpp clears accumulated history at the start of a
+                    # request only when no_context is true. Otherwise other files
+                    # and retries inherit the preceding request's decoder text.
+                    "no_context": "true", "max_context": "224",
                     "no_language_probabilities": "true", "beam_size": "-1", "best_of": "2",
                     "vad": "true", "vad_threshold": "0.5",
                     "vad_min_speech_duration_ms": "250",
@@ -166,12 +249,14 @@ class Transcriber:
                     "vad_samples_overlap": "0.2"}
         for key, item in defaults.items():
             data.setdefault(key, item)
-        data.update({"language": options.language, "response_format": "verbose_json"})
-        if options.prompt:
-            data["prompt"] = options.prompt
+        data.update({"language": options.language, "response_format": "verbose_json",
+                     "no_context": "true"})
+        # Bound hints conservatively below the decoder context budget. Always send
+        # an empty prompt too: stock servers may retain omitted request options.
+        data["prompt"] = options.prompt.encode("utf-8")[:400].decode("utf-8", errors="ignore")
         settings = {
             key: str(data[key]) for key in (
-                "language", "entropy_thold", "no_context", "beam_size", "best_of",
+                "language", "entropy_thold", "no_context", "max_context", "beam_size", "best_of",
                 "vad", "vad_threshold", "vad_min_speech_duration_ms",
                 "vad_min_silence_duration_ms", "vad_speech_pad_ms", "vad_samples_overlap",
             ) if key in data
@@ -238,18 +323,19 @@ class Transcriber:
             progress("repetition_fallback" if repetition_detected else "vad_fallback", 1, 1)
         fallback_data = dict(data)
         if repetition_detected:
-            # A repetition collapse can have excellent log probabilities. Retry from
-            # the audio alone, but retain VAD so a long lecture does not turn into an
-            # unnecessarily expensive full-audio pass.
+            # Break both feedback sources: previous text and concatenated VAD audio.
+            # Only the current bounded chunk is retried.
             fallback_data.update({
-                "no_context": "false",
+                "no_context": "true",
+                "max_context": "0",
+                "vad": "false",
                 "temperature": "0.0",
-                "temperature_inc": "0.0",
+                "temperature_inc": "0.2",
                 "entropy_thold": "2.4",
-                "beam_size": "-1",
-                "suppress_nst": "false",
+                "beam_size": "5",
+                "suppress_nst": "true",
             })
-            fallback_data.pop("prompt", None)
+            fallback_data["prompt"] = ""
         else:
             fallback_data["vad"] = "false"
         fallback, fallback_seconds = request_with(fallback_data)
@@ -262,6 +348,8 @@ class Transcriber:
                 f"(1차 반복률 {repetition_ratio:.1%}, 재전사 반복률 {fallback_ratio:.1%})."
             )
         fallback_settings = dict(settings)
+        fallback_settings.update({f"fallback_{key}": str(fallback_data[key])
+                                  for key in ("no_context", "max_context", "vad", "beam_size")})
         fallback_settings["whisper_fallback_reason"] = (
             "repetition" if repetition_detected else "vad_coverage"
         )
@@ -336,6 +424,27 @@ class Transcriber:
             for segment in segments
             if segment.text.strip()
         ]
+        # A short chunk can collapse inside one segment or repeat fewer than
+        # twelve segments. Require sustained exact repetition, not normal restatement.
+        for key in keys:
+            words = key.split()
+            for width in range(1, min(32, len(words) // 4) + 1):
+                for at in range(len(words) - width * 4 + 1):
+                    phrase = words[at:at + width]
+                    if len(" ".join(phrase)) >= 12 and words[at:at + width * 4] == phrase * 4:
+                        return True, 1.0
+        for previous_segment, segment in zip(segments, segments[1:]):
+            if (segment.text.strip() == previous_segment.text.strip()
+                    and len(segment.text.strip()) >= 20
+                    and segment.end - segment.start < 0.5):
+                return True, 2 / max(2, len(keys))
+        run = 0
+        previous = ""
+        for key in keys:
+            run = run + 1 if key == previous else 1
+            previous = key
+            if len(key) >= 20 and run >= 4:
+                return True, run / len(keys)
         total = len(keys)
         if total < 12:
             return False, 0.0
@@ -437,7 +546,7 @@ class Transcriber:
             "retry_max_groups": str(max_groups),
             "retry_max_seconds": str(max_seconds),
             "retry_beam_size": "5",
-            "retry_no_context": "false",
+            "retry_no_context": "true",
         })
         if not groups:
             return WhisperResult(
@@ -496,7 +605,7 @@ class Transcriber:
                 data = dict(incoming or {})
                 data.update({
                     "beam_size": "5", "temperature": "0.0", "temperature_inc": "0.0",
-                    "entropy_thold": "2.4", "no_context": "false",
+                    "entropy_thold": "2.4", "no_context": "true",
                     "retry_low_confidence": "false",
                 })
                 retry_options = Options(
@@ -508,7 +617,9 @@ class Transcriber:
                 candidate = Transcriber._whisper(
                     clip, retry_options, data, cancellation=cancellation
                 )
-            except (OSError, subprocess.SubprocessError, requests.RequestException, ValueError):
+            except (OSError, subprocess.SubprocessError, requests.RequestException, ValueError, RuntimeError):
+                if cancellation:
+                    cancellation.check()
                 continue
             finally:
                 clip.unlink(missing_ok=True)

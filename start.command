@@ -22,7 +22,6 @@ fi
 WHISPER_BIN="$WHISPER_HOME/build/bin/whisper-server"
 WHISPER_MODEL="${WHISPER_MODEL_PATH:-$WHISPER_HOME/models/ggml-large-v3.bin}"
 WHISPER_VAD_MODEL="${WHISPER_VAD_MODEL_PATH:-$WHISPER_HOME/models/ggml-silero-v6.2.0.bin}"
-LIBRARIES="$WHISPER_HOME/build/src:$WHISPER_HOME/build/ggml/src:$WHISPER_HOME/build/ggml/src/ggml-blas:$WHISPER_HOME/build/ggml/src/ggml-metal"
 APP_PORT="${LECORDER_PORT:-5055}"
 WHISPER_PORT="${WHISPER_PORT:-8080}"
 if [ -x "$SCRIPT_ROOT/.venv/bin/python" ]; then
@@ -32,7 +31,6 @@ elif command -v python3 >/dev/null 2>&1; then
 else
     PYTHON_BIN=""
 fi
-WHISPER_PID=""
 APP_PID=""
 CLEANED=0
 
@@ -50,18 +48,18 @@ stop() {
     trap - EXIT INT TERM HUP
     echo ""
     echo "🛑 Lecorder 종료 중..."
-    for PID in "$APP_PID" "$WHISPER_PID"; do
+    for PID in "$APP_PID"; do
         if active "$PID"; then kill -TERM "$PID" 2>/dev/null || true; fi
     done
     for _ in $(seq 1 50); do
         ANY_ACTIVE=0
-        for PID in "$APP_PID" "$WHISPER_PID"; do
+        for PID in "$APP_PID"; do
             if active "$PID"; then ANY_ACTIVE=1; fi
         done
         [ "$ANY_ACTIVE" -eq 0 ] && break
         sleep 0.1
     done
-    for PID in "$APP_PID" "$WHISPER_PID"; do
+    for PID in "$APP_PID"; do
         if active "$PID"; then kill -KILL "$PID" 2>/dev/null || true; fi
         [ -z "$PID" ] || wait "$PID" 2>/dev/null || true
     done
@@ -80,17 +78,6 @@ wait_for() {
         sleep 0.25
     done
     fail "$LABEL 서버가 시작되지 않았습니다."
-}
-
-compatible_whisper_server() {
-    EXISTING_WHISPER_PID="$(/usr/sbin/lsof -nP -tiTCP:"$WHISPER_PORT" -sTCP:LISTEN 2>/dev/null | head -n 1)"
-    [ -n "$EXISTING_WHISPER_PID" ] || return 1
-    EXISTING_WHISPER_COMMAND="$(ps -o command= -p "$EXISTING_WHISPER_PID" 2>/dev/null || true)"
-    [[ "$EXISTING_WHISPER_COMMAND" == *"$WHISPER_BIN"* ]] || return 1
-    [[ "$EXISTING_WHISPER_COMMAND" == *"$WHISPER_MODEL"* ]] || return 1
-    [[ "$EXISTING_WHISPER_COMMAND" == *"$WHISPER_VAD_MODEL"* ]] || return 1
-    /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:$WHISPER_PORT/health" 2>/dev/null \
-        | /usr/bin/grep -q '"status":"ok"'
 }
 
 trap stop EXIT
@@ -114,22 +101,8 @@ elif [ ! -f "$WHISPER_MODEL" ]; then
     echo "⚠️ large-v3 모델 없음: 대시보드의 시스템 경로를 확인하세요."
 elif [ ! -f "$WHISPER_VAD_MODEL" ]; then
     echo "⚠️ Silero VAD 모델 없음: $WHISPER_VAD_MODEL"
-elif /usr/bin/nc -z 127.0.0.1 "$WHISPER_PORT" >/dev/null 2>&1; then
-    if compatible_whisper_server; then
-        echo "ℹ️ 동일한 large-v3·VAD 설정으로 실행 중인 Whisper 서버를 사용합니다."
-    else
-        fail "$WHISPER_PORT 포트를 호환되지 않거나 확인할 수 없는 프로세스가 사용 중입니다. 해당 프로세스를 종료한 뒤 다시 실행하세요."
-    fi
 else
-    echo "▶️ Whisper 시작: $(basename "$WHISPER_MODEL")"
-    (
-        cd "$WHISPER_HOME" || exit 1
-        export DYLD_LIBRARY_PATH="$LIBRARIES${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-        exec "$WHISPER_BIN" -m "$WHISPER_MODEL" -vm "$WHISPER_VAD_MODEL" \
-            --host 127.0.0.1 --port "$WHISPER_PORT"
-    ) &
-    WHISPER_PID=$!
-    wait_for "$WHISPER_PORT" "Whisper"
+    echo "ℹ️ Whisper는 전사 시작 시 로드하고 유휴 상태에서 자동 해제합니다."
 fi
 
 echo "▶️ 대시보드와 대기열 시작"
@@ -138,7 +111,7 @@ APP_PID=$!
 wait_for "$APP_PORT" "대시보드"
 
 if /usr/bin/nc -z 127.0.0.1 11434 >/dev/null 2>&1; then
-    echo "✅ Whisper + Ollama 준비됨"
+    echo "✅ 대시보드 + Ollama 준비됨 (Whisper 대기)"
 else
     echo "⚠️ Ollama 꺼짐: Qwen3 교정 구간은 Whisper 원문으로 저장됩니다."
 fi

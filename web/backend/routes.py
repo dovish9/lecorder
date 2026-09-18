@@ -16,6 +16,7 @@ from .output_files import prepare_webm_playback, rename_output_files
 from .pipeline import RecordingPipeline
 from .records import Recording
 from .state import JobState
+from .whisper_runtime import whisper_runtime
 from .storage import resolve_storage_file, storage_catalog
 from .store import LectureStore
 from .transcription import SUPPORTED_MEDIA
@@ -28,7 +29,10 @@ def schedule_managed_restart(delay: float = 0.8) -> bool:
     """Ask start.command to restart the app and its managed Whisper process."""
     if not flag(os.getenv("LECORDER_MANAGED_RESTART")):
         return False
-    timer = threading.Timer(delay, lambda: os._exit(RESTART_EXIT_CODE))
+    def restart():
+        whisper_runtime.close()
+        os._exit(RESTART_EXIT_CODE)
+    timer = threading.Timer(delay, restart)
     timer.daemon = True
     timer.start()
     return True
@@ -101,6 +105,7 @@ def create_app(
         ollama, model = ollama_ready(current.llm_model)
         return {
             "whisper_ready": port_ready(WHISPER_PORT),
+            "whisper_state": whisper_runtime.state,
             "ollama_ready": ollama,
             "ollama_model_ready": model,
             "settings": current.public(),
@@ -128,9 +133,7 @@ def create_app(
     @app.get("/health")
     def health():
         ready = port_ready(WHISPER_PORT)
-        return jsonify(proxy="ready", whisper="ready" if ready else "offline"), (
-            200 if ready else 503
-        )
+        return jsonify(proxy="ready", whisper="ready" if ready else whisper_runtime.state), 200
 
     @app.post("/api/courses")
     def create_course():
