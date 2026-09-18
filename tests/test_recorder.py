@@ -15,7 +15,8 @@ from unittest.mock import Mock, patch
 from web.backend.config import EnvironmentStore
 from web.backend.engine import Transcriber
 from web.backend.files import OutputFiles
-from web.backend.markdown import render_note
+from web.backend.markdown import markdown_target, render_note
+from web.backend.output_files import rename_output_files
 from web.backend.pipeline import RecordingPipeline
 from web.backend.records import Recording
 from web.backend.review import (
@@ -72,6 +73,91 @@ class RecorderTests(unittest.TestCase):
         environment = EnvironmentStore(root / ".env", project)
         environment.update(project_dir=str(project), whisper_cpp_dir=str(whisper), output_dir=str(output))
         return environment, output
+
+    def test_opening_store_does_not_interrupt_live_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, _ = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            states = ("recording", "processing", "cancelling", "queued", "completed")
+            for status in states:
+                store.create_recording(status, store.get(), status, "upload", ".wav", "", status)
+            reader = LectureStore(store.path, environment)
+            reader.get()
+            for status in states:
+                self.assertEqual(reader.get_recording(status).status, status)
+            reader.recover_interrupted()
+            for old, new in zip(states, ("recoverable", "failed", "failed", "queued", "completed")):
+                self.assertEqual(reader.get_recording(old).status, new)
+
+    def test_worker_start_recovers_abandoned_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, _ = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            store.create_recording("interrupted", store.get(), "test", "upload", ".wav", "", "processing")
+            with patch("web.backend.pipeline.threading.Thread") as worker:
+                RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work")
+                worker.return_value.start.assert_called_once()
+            self.assertEqual(store.get_recording("interrupted").status, "failed")
+
+    def test_suggestion_counts_are_grouped_and_include_empty_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, _ = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            for name in ("one", "two", "empty"):
+                store.create_recording(name, store.get(), name, "upload", ".wav", "", "completed")
+            store.replace_suggestions("one", [
+                {"sentence_id": f"s{i:05d}", "original": "before", "replacement": "after", "confidence": .9}
+                for i in range(1, 4)
+            ])
+            items = store.list_suggestions("one")
+            store.decide_suggestion(items[0].id, "accepted")
+            store.decide_suggestion(items[1].id, "rejected")
+            store.replace_suggestions("two", [
+                {"sentence_id": "s00001", "original": "before", "replacement": "after", "confidence": .9}
+            ])
+            self.assertEqual(store.suggestion_counts(["one", "empty"]), {
+                "one": {"pending": 1, "accepted": 1, "rejected": 1},
+                "empty": {"pending": 0, "accepted": 0, "rejected": 0},
+            })
+            self.assertEqual(store.suggestion_counts([]), {})
+
+    def test_rename_rewrites_audio_references_once_and_can_roll_back(self) -> None:
+        for name in ("lecture", "강의 자료"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                audio = root / f"{name}.wav"
+                note = root / f"{name}.md"
+                audio.write_bytes(b"audio")
+                original = f'audio: "{audio.name}"\n[00:01]({markdown_target(audio.name)}#t=1)'
+                note.write_text(original)
+                destinations, rollback = rename_output_files([audio, note], f"new prefix-{name}")
+                self.assertEqual(destinations[0].read_bytes(), b"audio")
+                self.assertEqual(destinations[1].read_text(),
+                                 f'audio: "new prefix-{audio.name}"\n[00:01]({markdown_target("new prefix-" + audio.name)}#t=1)')
+                rollback()
+                self.assertEqual(note.read_text(), original)
+                self.assertTrue(audio.exists())
+
+    def test_rename_failure_rolls_back_only_files_actually_moved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            audio, note = root / "old.wav", root / "old.md"
+            audio.write_bytes(b"original audio")
+            note.write_text("original note")
+            original_rename = Path.rename
+            def fail_second(source, destination):
+                if source == note:
+                    destination.write_text("unrelated concurrent file")
+                    raise OSError("simulated rename failure")
+                return original_rename(source, destination)
+            with patch.object(Path, "rename", fail_second), self.assertRaises(OSError):
+                rename_output_files([audio, note], "new")
+            self.assertEqual(audio.read_bytes(), b"original audio")
+            self.assertEqual(note.read_text(), "original note")
+            self.assertEqual((root / "new.md").read_text(), "unrelated concurrent file")
 
     def test_managed_restart_is_only_scheduled_under_start_command(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
@@ -257,7 +343,7 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('audio.preload = "auto"', script)
         self.assertIn('"/api/storage/audio/prepare"', script)
         self.assertIn('audio.currentTime = Math.max(0, target)', script)
-        self.assertIn('player.seekTo(seconds, {autoplay: true, reveal: true})', script)
+        self.assertIn('player.seekTo(seconds, {autoplay: true, reveal: false})', script)
         self.assertIn('rewind.innerHTML = \'<svg', script)
         self.assertIn('forward.innerHTML = \'<svg', script)
         self.assertIn('<text x="12" y="12">5</text>', script)
@@ -818,6 +904,49 @@ class RecorderTests(unittest.TestCase):
             2,
         )
 
+    def test_intake_assigns_unique_titles_before_processing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, output = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            pipeline = RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work", start_worker=False)
+            client = create_app(store, JobState(), FakeTranscriber(), environment, pipeline).test_client()
+            (output / "Lecture.mp3").write_bytes(b"original")
+            (output / "Lecture (2).md").write_text("original note")
+            browser = client.post("/api/recordings", json={"title": "Lecture", "extension": ".webm"})
+            self.assertEqual(browser.status_code, 201)
+            self.assertEqual(browser.get_json()["recording"]["title"], "Lecture (3)")
+            upload = client.post("/api/upload", data={"title": "Lecture", "file": (io.BytesIO(b"audio"), "lecture.wav")})
+            self.assertEqual(upload.status_code, 202)
+            recording = upload.get_json()["recording"]
+            self.assertEqual(recording["title"], "Lecture (4)")
+            self.assertEqual(pipeline.state.get()["title"], "Lecture (4)")
+            pipeline.process_next()
+            saved = store.get_recording(recording["id"])
+            self.assertEqual(saved.title, "Lecture (4)")
+            self.assertEqual(Path(saved.audio_path).name, "Lecture (4).wav")
+            self.assertEqual(Path(saved.note_path).name, "Lecture (4).md")
+            self.assertEqual((output / "Lecture.mp3").read_bytes(), b"original")
+            self.assertEqual((output / "Lecture (2).md").read_text(), "original note")
+
+    def test_concurrent_intake_reserves_distinct_titles(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, output = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            pipeline = RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work", start_worker=False)
+            settings = store.get()
+            barrier = threading.Barrier(4)
+            def begin(index):
+                barrier.wait()
+                if index % 2:
+                    return pipeline.create_upload(settings, "Lecture", ".wav", io.BytesIO(b"audio")).title
+                return pipeline.begin_chunked(settings, "Lecture", ".webm").title
+            with ThreadPoolExecutor(max_workers=4) as workers:
+                titles = list(workers.map(begin, range(4)))
+            self.assertEqual(set(titles), {"Lecture", "Lecture (2)", "Lecture (3)", "Lecture (4)"})
+
     def test_output_names_never_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
@@ -1057,6 +1186,58 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(Path(failed.audio_path), (output / "원자적 저장.wav").resolve())
             self.assertEqual((output / "원자적 저장.wav").read_bytes(), b"audio")
             self.assertFalse((output / "원자적 저장.md").exists())
+
+    def test_retranscribe_terminal_jobs_preserves_history_and_files(self) -> None:
+        for status in ("completed", "failed", "cancelled"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                environment, output = self.environment(root)
+                store = LectureStore(root / "test.db", environment)
+                engine = FakeTranscriber()
+                state = JobState()
+                pipeline = RecordingPipeline(store, state, engine, root / "work", start_worker=False)
+                audio = output / "original.wav"
+                audio.write_bytes(b"original audio")
+                note = output / "original.md"
+                note.write_text("Previous transcript")
+                old = store.create_recording("original", store.get(), "original", "upload", ".wav", "missing.wav", status)
+                old = store.update_recording(old.id, audio_path=str(audio), note_path=str(note),
+                                             transcript_text="Previous transcript", quality_json='{"attempts":[{"error":"old"}]}')
+                token = CancellationToken()
+                token.cancel()
+                pipeline._cancellations[old.id] = token
+                client = create_app(store, state, engine, environment, pipeline).test_client()
+                response = client.post(f"/api/recordings/{old.id}/retranscribe")
+                self.assertEqual(response.status_code, 202)
+                new_id = response.get_json()["recording"]["id"]
+                self.assertNotEqual(new_id, old.id)
+                self.assertEqual(store.get_recording(new_id).status, "queued")
+                pipeline.process_next()
+                new = store.get_recording(new_id)
+                self.assertEqual(new.status, "completed")
+                self.assertEqual(store.get_recording(old.id), old)
+                self.assertEqual(audio.read_bytes(), b"original audio")
+                self.assertEqual(note.read_text(), "Previous transcript")
+                self.assertNotEqual(new.note_path, str(note))
+                self.assertEqual(new.language, old.language)
+
+    def test_retranscribe_rejects_active_or_missing_source_without_new_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, output = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            state = JobState()
+            engine = FakeTranscriber()
+            pipeline = RecordingPipeline(store, state, engine, root / "work", start_worker=False)
+            old = store.create_recording("original", store.get(), "original", "upload", ".wav", "missing.wav", "processing")
+            client = create_app(store, state, engine, environment, pipeline).test_client()
+            self.assertEqual(client.post(f"/api/recordings/{old.id}/retranscribe").status_code, 400)
+            store.update_recording(old.id, status="completed")
+            response = client.post(f"/api/recordings/{old.id}/retranscribe")
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("원본", response.get_json()["error"])
+            self.assertEqual(len(store.list_recordings()), 1)
+            self.assertEqual(client.post("/api/recordings/absent/retranscribe").status_code, 404)
 
     def test_failed_attempt_log_survives_retry_and_later_cancellation(self) -> None:
         class FailingTranscriber(FakeTranscriber):

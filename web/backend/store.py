@@ -112,16 +112,6 @@ class LectureStore:
                     ON suggestions(recording_id, status, id);
                 """
             )
-            db.execute(
-                "UPDATE recordings SET status = 'recoverable', "
-                "error = '앱이 종료되어 작업이 중단되었습니다.' "
-                "WHERE status = 'recording'"
-            )
-            db.execute(
-                "UPDATE recordings SET status = 'failed', "
-                "error = '앱이 종료되어 처리 작업이 중단되었습니다.' "
-                "WHERE status IN ('processing', 'cancelling')"
-            )
             count = db.execute("SELECT COUNT(*) FROM courses").fetchone()[0]
             if count == 0:
                 now = self.now()
@@ -133,6 +123,20 @@ class LectureStore:
                     "INSERT OR REPLACE INTO app_state(key, value) VALUES ('active_course_id', ?)",
                     (str(cursor.lastrowid),),
                 )
+
+    def recover_interrupted(self) -> None:
+        """Recover abandoned jobs once, when the processing worker starts."""
+        with self._lock, self._connect() as db:
+            db.execute(
+                "UPDATE recordings SET status = 'recoverable', "
+                "error = '앱이 종료되어 작업이 중단되었습니다.' "
+                "WHERE status = 'recording'"
+            )
+            db.execute(
+                "UPDATE recordings SET status = 'failed', "
+                "error = '앱이 종료되어 처리 작업이 중단되었습니다.' "
+                "WHERE status IN ('processing', 'cancelling')"
+            )
 
     @staticmethod
     def now() -> str:
@@ -266,13 +270,8 @@ class LectureStore:
                 )
         return active
 
-    def _state(self, db: sqlite3.Connection) -> dict[str, str]:
-        return {str(row["key"]): str(row["value"]) for row in db.execute("SELECT * FROM app_state")}
-
     def get(self) -> ActiveSettings:
         course = self.get_course(self.active_course_id())
-        with self._connect() as db:
-            state = self._state(db)
         return ActiveSettings(
             course_id=course.id,
             course_name=course.name,
@@ -353,6 +352,16 @@ class LectureStore:
             ).fetchall()
         return [self._recording(row) for row in rows]
 
+    def recording_titles(self, output_dir: Path) -> set[str]:
+        """Include unfinished jobs whose output files do not exist yet."""
+        folder = output_dir.expanduser().resolve()
+        with self._connect() as db:
+            rows = db.execute("SELECT DISTINCT title, output_dir FROM recordings").fetchall()
+        return {
+            row["title"] for row in rows
+            if Path(row["output_dir"]).expanduser().resolve() == folder
+        }
+
     def queued_recordings(self) -> list[Recording]:
         with self._connect() as db:
             rows = db.execute(
@@ -408,6 +417,25 @@ class LectureStore:
                     for item in suggestions
                 ],
             )
+
+    def suggestion_counts(self, recording_ids: list[str]) -> dict[str, dict[str, int]]:
+        counts = {
+            recording_id: dict.fromkeys(("pending", "accepted", "rejected"), 0)
+            for recording_id in recording_ids
+        }
+        if not counts:
+            return counts
+        placeholders = ",".join("?" for _ in counts)
+        with self._connect() as db:
+            rows = db.execute(
+                f"SELECT recording_id, status, COUNT(*) AS count FROM suggestions "
+                f"WHERE recording_id IN ({placeholders}) GROUP BY recording_id, status",
+                list(counts),
+            ).fetchall()
+        for row in rows:
+            if row["status"] in counts[row["recording_id"]]:
+                counts[row["recording_id"]][row["status"]] = int(row["count"])
+        return counts
 
     def list_suggestions(self, recording_id: str) -> list[StoredSuggestion]:
         with self._connect() as db:

@@ -168,7 +168,7 @@ const app = {
   libraryEntries: [],
   selectedLibraryKey: null,
   previewAudioPlayer: null,
-  previewEntryKey: null,
+  previewEntryFingerprint: null,
   pipelineLogInvoker: null,
   job: {},
 };
@@ -1180,6 +1180,7 @@ async function startDockRecording() {
       body: JSON.stringify({title: app.recordingTitle, extension}),
     });
     app.recordingId = prepared.recording.id;
+    app.recordingTitle = prepared.recording.title;
     app.chunkIndex = 0;
     app.chunkUploadChain = Promise.resolve();
     app.failedChunks = [];
@@ -1300,7 +1301,7 @@ function renderStorage(data) {
   if (fingerprint === app.storageFingerprint) return;
   app.storageFingerprint = fingerprint;
   app.storageItems = items;
-  renderLibrary({preserveDetail: true});
+  renderLibrary();
   renderDashboard();
 }
 
@@ -1426,7 +1427,7 @@ function libraryState(entry) {
   return recordingStatusLabels[entry.recording.status] || entry.recording.status;
 }
 
-function renderLibrary({preserveDetail = false} = {}) {
+function renderLibrary() {
   app.libraryEntries = sortLibraryEntries(deriveLibraryEntries(), ui.librarySort.value);
   const query = ui.librarySearch.value.trim().toLocaleLowerCase("ko");
   const filter = ui.libraryFilter.value;
@@ -1473,7 +1474,8 @@ function renderLibrary({preserveDetail = false} = {}) {
     if (app.activeView === "recordings") window.history.replaceState(null, "", "#/recordings");
   }
   ui.workspacePanels.find((panel) => panel.dataset.viewPanel === "recordings")?.classList.toggle("detail-open", Boolean(selected));
-  if (selected && preserveDetail && app.previewAudioPlayer && app.previewEntryKey === selected.key) return;
+  // Polls for other recordings must not replace the open document or audio player.
+  if (selected && app.previewEntryFingerprint === JSON.stringify(selected)) return;
   if (selected) renderLibraryDetail(selected);
   else renderLibraryEmpty();
 }
@@ -1481,7 +1483,7 @@ function renderLibrary({preserveDetail = false} = {}) {
 function renderLibraryEmpty() {
   app.previewAudioPlayer?.destroy();
   app.previewAudioPlayer = null;
-  app.previewEntryKey = null;
+  app.previewEntryFingerprint = null;
   ui.libraryDetail.innerHTML = '<div class="detail-empty"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 9h8l2 3h12v14H5zM5 12h22"/></svg><h2>녹음을 선택하세요</h2><p>원음, Markdown, 수정 제안과 처리 기록을 한곳에서 볼 수 있습니다.</p></div>';
 }
 
@@ -1713,7 +1715,7 @@ function seekPreviewAudio(player, seconds) {
     showToast("연결된 오디오 파일이 없어 이 타임스탬프를 재생할 수 없습니다.", "error");
     return;
   }
-  player.seekTo(seconds, {autoplay: true, reveal: true});
+  player.seekTo(seconds, {autoplay: true, reveal: false});
 }
 
 function appendMarkdownInline(container, source, audio) {
@@ -2038,8 +2040,10 @@ function createDetailMenu(entry, title) {
   if (recording && ["queued", "processing"].includes(recording.status)) {
     panel.append(detailMenuButton("처리 중단", (button) => cancelTranscription(recording, button)));
   }
-  if (recording && ["recording", "recoverable", "failed"].includes(recording.status) && recording.id !== app.recordingId) {
-    panel.append(detailMenuButton(recording.status === "failed" ? "다시 처리" : "녹음 복구", (button) => retryRecording(recording, button)));
+  if (final) {
+    panel.append(detailMenuButton("다시 전사하기", (button) => retryRecording(recording, button)));
+  } else if (interrupted) {
+    panel.append(detailMenuButton("녹음 복구", (button) => retryRecording(recording, button)));
   }
   if (final || interrupted) panel.append(detailMenuButton("기록 삭제", (button) => deleteRecordingHistory(recording, button), {danger: true}));
   if (final || (!recording && entry.storage?.files?.length)) {
@@ -2053,7 +2057,7 @@ function renderLibraryDetail(entry) {
   stopReviewAudio();
   app.previewAudioPlayer?.destroy();
   app.previewAudioPlayer = null;
-  app.previewEntryKey = entry.key;
+  app.previewEntryFingerprint = JSON.stringify(entry);
   ui.libraryDetail.replaceChildren();
   const back = document.createElement("a");
   back.className = "detail-mobile-back";
@@ -2490,7 +2494,10 @@ async function retryRecording(recording, button) {
       await restoreRecordingSession(session);
       showToast("브라우저에 보관된 조각까지 전송해 녹음을 복구했습니다.", "success");
     } else {
-      await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/retry`, {method: "POST"});
+      const retranscribe = ["completed", "failed", "cancelled"].includes(recording.status);
+      const action = retranscribe ? "retranscribe" : "retry";
+      await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/${action}`, {method: "POST"});
+      if (retranscribe) showToast("다시 전사할 작업을 대기열에 추가했습니다.", "success");
     }
     await refreshStatus();
   } catch (error) {

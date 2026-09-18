@@ -59,13 +59,11 @@ def create_app(
             return jsonify(error="현재 실행 중인 앱이 이 요청 방식을 지원하지 않습니다."), 405
         return error
 
-    def recording_payload(recording: Recording) -> dict[str, Any]:
+    def recording_payload(recording: Recording, counts: dict[str, int] | None = None) -> dict[str, Any]:
         data = recording.public()
-        suggestions = lectures.list_suggestions(recording.id)
-        data["suggestion_counts"] = {
-            name: sum(item.status == name for item in suggestions)
-            for name in ("pending", "accepted", "rejected")
-        }
+        data["suggestion_counts"] = (
+            counts if counts is not None else lectures.suggestion_counts([recording.id])[recording.id]
+        )
         return data
 
     def suggestions_payload(recording: Recording) -> list[dict[str, Any]]:
@@ -103,6 +101,8 @@ def create_app(
     def runtime_payload() -> dict[str, Any]:
         current = lectures.get()
         ollama, model = ollama_ready(current.llm_model)
+        recordings = lectures.list_recordings(30)
+        counts = lectures.suggestion_counts([item.id for item in recordings])
         return {
             "whisper_ready": port_ready(WHISPER_PORT),
             "whisper_state": whisper_runtime.state,
@@ -110,7 +110,7 @@ def create_app(
             "ollama_model_ready": model,
             "settings": current.public(),
             "job": state.get(),
-            "recordings": [recording_payload(item) for item in lectures.list_recordings(30)],
+            "recordings": [recording_payload(item, counts[item.id]) for item in recordings],
         }
 
     def bootstrap_payload() -> dict[str, Any]:
@@ -491,6 +491,16 @@ def create_app(
             return jsonify(error=error.args[0]), 404
         except FileNotFoundError as error:
             return jsonify(error=str(error)), 404
+
+    @app.post("/api/recordings/<recording_id>/retranscribe")
+    def retranscribe_recording(recording_id: str):
+        try:
+            recording = workflow.retranscribe(recording_id)
+            return jsonify(ok=True, recording=recording_payload(recording)), 202
+        except KeyError as error:
+            return jsonify(error=error.args[0]), 404
+        except ValueError as error:
+            return jsonify(error=str(error)), 400
 
     @app.post("/api/recordings/<recording_id>/retry")
     def retry_recording(recording_id: str):

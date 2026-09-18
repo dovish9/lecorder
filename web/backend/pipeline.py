@@ -43,6 +43,7 @@ class RecordingPipeline:
         self._lock = threading.RLock()
         self.cleanup_orphans()
         if start_worker:
+            self.store.recover_interrupted()
             self._worker = threading.Thread(target=self._run, name="lecture-transcription", daemon=True)
             self._worker.start()
             for recording in self.store.queued_recordings():
@@ -126,6 +127,17 @@ class RecordingPipeline:
             if hidden:
                 hidden.unlink(missing_ok=True)
 
+    def _create_named_recording(self, recording_id: str, settings: ActiveSettings,
+                                title: str, source_kind: str, extension: str,
+                                source: Path, status: str) -> Recording:
+        # Reserve the title in the DB before another intake can choose it.
+        with self._lock:
+            files = OutputFiles(Path(settings.output_dir))
+            title = files.available_title(title, self.store.recording_titles(files.folder))
+            return self.store.create_recording(
+                recording_id, settings, title, source_kind, extension, str(source), status
+            )
+
     def create_upload(self, settings: ActiveSettings, title: str, extension: str,
                       stream: BinaryIO) -> Recording:
         recording_id = self.new_id()
@@ -137,14 +149,14 @@ class RecordingPipeline:
                 shutil.copyfileobj(stream, destination, length=1024 * 1024)
             if source.stat().st_size == 0:
                 raise ValueError("녹음 파일이 비어 있습니다.")
-            recording = self.store.create_recording(
-                recording_id, settings, title, "upload", extension, str(source), "queued"
+            recording = self._create_named_recording(
+                recording_id, settings, title, "upload", extension, source, "queued"
             )
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
-        self.state.set("queued", f"{title} 작업을 대기열에 추가했습니다.",
-                       job_id=recording.id, title=title, course_id=settings.course_id)
+        self.state.set("queued", f"{recording.title} 작업을 대기열에 추가했습니다.",
+                       job_id=recording.id, title=recording.title, course_id=settings.course_id)
         self.enqueue(recording.id)
         return recording
 
@@ -153,9 +165,13 @@ class RecordingPipeline:
         folder = self.folder(recording_id)
         (folder / "chunks").mkdir(parents=True, exist_ok=False)
         source = folder / f"source{extension}"
-        return self.store.create_recording(
-            recording_id, settings, title, "browser", extension, str(source), "recording"
-        )
+        try:
+            return self._create_named_recording(
+                recording_id, settings, title, "browser", extension, source, "recording"
+            )
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
 
     def save_chunk(self, recording_id: str, index: int, stream: BinaryIO) -> int:
         recording = self.store.get_recording(recording_id)
@@ -265,6 +281,29 @@ class RecordingPipeline:
     def delete_history(self, recording_id: str) -> None:
         self.store.delete_recording_history(recording_id)
         shutil.rmtree(self.folder(recording_id), ignore_errors=True)
+
+    def retranscribe(self, recording_id: str) -> Recording:
+        """Queue a fresh attempt without changing earlier results or cancellation tokens."""
+        with self._lock:
+            previous = self.store.get_recording(recording_id)
+            if previous.status not in {"completed", "failed", "cancelled"}:
+                raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
+            source = next((Path(value) for value in (previous.source_path, previous.audio_path)
+                           if value and Path(value).is_file()), None)
+            if source is None:
+                raise ValueError("다시 전사할 원본 음성 파일을 찾지 못했습니다.")
+            settings = ActiveSettings(
+                course_id=previous.course_id, course_name=previous.course_name,
+                language=previous.language, prompt=previous.prompt,
+                corrections=previous.corrections, format_transcript=previous.format_transcript,
+                llm_enabled=previous.llm_enabled, llm_model=previous.llm_model,
+                output_dir=previous.output_dir,
+            )
+            try:
+                with source.open("rb") as stream:
+                    return self.create_upload(settings, previous.title, source.suffix.lower(), stream)
+            except OSError as error:
+                raise ValueError("원본 음성 파일을 읽거나 작업용 사본을 만들 수 없습니다.") from error
 
     def retry(self, recording_id: str) -> Recording:
         recording = self.store.get_recording(recording_id)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import uuid
@@ -34,8 +35,10 @@ def rename_output_files(
         if target.suffix.lower() == ".md"
     }
 
+    moved: list[tuple[Path, Path]] = []
+
     def rollback() -> None:
-        for target, destination in reversed(list(zip(targets, destinations, strict=True))):
+        for target, destination in reversed(moved):
             if target != destination and destination.exists():
                 destination.rename(target)
         for target, source in markdown_sources.items():
@@ -46,16 +49,23 @@ def rename_output_files(
         for target, destination in zip(targets, destinations, strict=True):
             if target != destination:
                 target.rename(destination)
+                moved.append((target, destination))
         if audio_names:
             old_audio, new_audio = audio_names
             old_target = markdown_target(old_audio)
             new_target = markdown_target(new_audio)
+            # Replace in one pass: a new filename may itself contain the old name.
+            # Link destinations need URL escaping; frontmatter uses the raw name.
+            pattern = re.compile(
+                rf"(?P<link>(?<=\]\(){re.escape(old_target)})(?=[#)])"
+                rf"|{re.escape(old_audio)}"
+            )
             for target, destination in zip(targets, destinations, strict=True):
                 if destination.suffix.lower() != ".md":
                     continue
                 source = markdown_sources[target]
                 destination.write_text(
-                    source.replace(old_target, new_target).replace(old_audio, new_audio),
+                    pattern.sub(lambda match: new_target if match.group("link") else new_audio, source),
                     encoding="utf-8",
                 )
     except (OSError, UnicodeError):

@@ -26,7 +26,7 @@ class Course:
 
 @dataclass(frozen=True)
 class ActiveSettings:
-    course_id: int
+    course_id: int | None
     course_name: str
     language: str
     prompt: str
