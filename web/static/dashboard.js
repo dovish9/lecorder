@@ -2485,6 +2485,7 @@ async function cancelTranscription(recording, button) {
 async function retryRecording(recording, button) {
   button.disabled = true;
   try {
+    await flushCourseSave();
     let session = null;
     if (["recording", "recoverable"].includes(recording.status)) {
       const sessions = await recordingSessions().catch(() => []);

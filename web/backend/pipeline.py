@@ -283,7 +283,7 @@ class RecordingPipeline:
         shutil.rmtree(self.folder(recording_id), ignore_errors=True)
 
     def retranscribe(self, recording_id: str) -> Recording:
-        """Queue a fresh attempt without changing earlier results or cancellation tokens."""
+        """Re-run the same job, preserving its output until replacement succeeds."""
         with self._lock:
             previous = self.store.get_recording(recording_id)
             if previous.status not in {"completed", "failed", "cancelled"}:
@@ -292,18 +292,21 @@ class RecordingPipeline:
                            if value and Path(value).is_file()), None)
             if source is None:
                 raise ValueError("다시 전사할 원본 음성 파일을 찾지 못했습니다.")
-            settings = ActiveSettings(
-                course_id=previous.course_id, course_name=previous.course_name,
-                language=previous.language, prompt=previous.prompt,
-                corrections=previous.corrections, format_transcript=previous.format_transcript,
-                llm_enabled=previous.llm_enabled, llm_model=previous.llm_model,
-                output_dir=previous.output_dir,
-            )
+            folder = self.folder(recording_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            working = folder / f"source{previous.extension}"
             try:
-                with source.open("rb") as stream:
-                    return self.create_upload(settings, previous.title, source.suffix.lower(), stream)
+                if source.resolve() != working.resolve():
+                    shutil.copy2(source, working)
             except OSError as error:
                 raise ValueError("원본 음성 파일을 읽거나 작업용 사본을 만들 수 없습니다.") from error
+            recording = self.store.queue_retranscription(recording_id, working)
+            self._cancellations[recording_id] = CancellationToken()
+            self._cancel_stages.pop(recording_id, None)
+            self.enqueue(recording_id)
+            self.state.set("queued", f"{recording.title} 다시 전사 대기 중",
+                           job_id=recording.id, title=recording.title, course_id=recording.course_id)
+            return recording
 
     def retry(self, recording_id: str) -> Recording:
         recording = self.store.get_recording(recording_id)
@@ -311,16 +314,7 @@ class RecordingPipeline:
             return self.finalize_chunked(recording_id, recording.duration_seconds, allow_partial=True)
         if recording.status != "failed":
             raise ValueError("실패한 작업만 다시 처리할 수 있습니다.")
-        source = Path(recording.source_path)
-        if not source.is_file():
-            raise ValueError("재시도할 원본 파일을 찾지 못했습니다.")
-        # _fail stores the diagnostic in quality_json before this active error is
-        # cleared, so retrying a job does not erase the previous attempt's log.
-        recording = self.store.update_recording(
-            recording_id, status="queued", error="", completed_at=""
-        )
-        self.enqueue(recording_id)
-        return recording
+        return self.retranscribe(recording_id)
 
     def _run(self) -> None:
         while True:
@@ -336,9 +330,7 @@ class RecordingPipeline:
                     )
             finally:
                 with self._lock:
-                    self._queued.discard(recording_id)
-                    self._cancellations.pop(recording_id, None)
-                    self._cancel_stages.pop(recording_id, None)
+                    self._finish_queue_entry(recording_id)
                 self._queue.task_done()
 
     def process_next(self) -> None:
@@ -347,10 +339,19 @@ class RecordingPipeline:
             self.process(recording_id)
         finally:
             with self._lock:
-                self._queued.discard(recording_id)
-                self._cancellations.pop(recording_id, None)
-                self._cancel_stages.pop(recording_id, None)
+                self._finish_queue_entry(recording_id)
             self._queue.task_done()
+
+    def _finish_queue_entry(self, recording_id: str) -> None:
+        try:
+            if self.store.get_recording(recording_id).status == "queued":
+                self._queue.put(recording_id)
+                return
+        except KeyError:
+            pass
+        self._queued.discard(recording_id)
+        self._cancellations.pop(recording_id, None)
+        self._cancel_stages.pop(recording_id, None)
 
     def process(self, recording_id: str) -> None:
         with self._lock:
@@ -374,6 +375,19 @@ class RecordingPipeline:
         hidden_note: Path | None = None
         destination_audio: Path | None = None
         destination_note: Path | None = None
+        note_backup: Path | None = None
+        published_audio = False
+        published_note = False
+
+        def rollback_outputs() -> None:
+            if published_note and destination_note:
+                if note_backup and note_backup.exists():
+                    note_backup.replace(destination_note)
+                else:
+                    destination_note.unlink(missing_ok=True)
+            if published_audio and destination_audio:
+                destination_audio.unlink(missing_ok=True)
+
         try:
             cancellation.check()
             if not source.is_file():
@@ -411,10 +425,18 @@ class RecordingPipeline:
                 job_id=recording.id, title=recording.title, course_id=recording.course_id,
             )
             files = OutputFiles(Path(recording.output_dir))
-            destination_audio, destination_note = files.pair(recording.title, recording.extension)
-            hidden_audio = files.folder / f".lecture-{recording.id}{recording.extension}"
+            if recording.audio_path or recording.note_path:
+                destination_audio = (Path(recording.audio_path) if recording.audio_path else
+                                     Path(recording.note_path).with_suffix(recording.extension))
+                destination_note = (Path(recording.note_path) if recording.note_path else
+                                    destination_audio.with_suffix(".md"))
+            else:
+                destination_audio, destination_note = files.pair(recording.title, recording.extension)
+            if not destination_audio.is_file():
+                hidden_audio = files.folder / f".lecture-{recording.id}{recording.extension}"
             hidden_note = files.folder / f".lecture-{recording.id}.md"
-            self._store_playable_audio(recording, source, hidden_audio, cancellation)
+            if hidden_audio:
+                self._store_playable_audio(recording, source, hidden_audio, cancellation)
             segments = [segment.public() for segment in result.segments]
             breaks = set(result.paragraph_breaks)
             pipeline_details = {
@@ -444,22 +466,27 @@ class RecordingPipeline:
                 "paragraph_break_count": len(result.paragraph_breaks),
                 "settings": result.pipeline_settings,
             }
-            recording = self.store.update_recording(
-                recording.id, audio_path=str(destination_audio), note_path=str(destination_note),
+            recording = replace(
+                recording, audio_path=str(destination_audio), note_path=str(destination_note),
                 duration_seconds=result.duration_seconds or recording.duration_seconds,
                 transcript_text=result.text, segments_json=json.dumps(segments, ensure_ascii=False),
                 breaks_json=json.dumps(sorted(breaks)),
                 quality_json=json.dumps(pipeline_details),
             )
             hidden_note.write_text(render_note(recording, segments, breaks), encoding="utf-8")
-            cancellation.check()
-            hidden_audio.replace(destination_audio)
-            cancellation.check()
-            hidden_note.replace(destination_note)
-            cancellation.check()
-            self.store.replace_suggestions(
-                recording.id, [suggestion.public() for suggestion in result.suggestions]
-            )
+            if destination_note.exists():
+                note_backup = destination_note.with_name(f".lecture-{recording.id}-previous.md")
+                shutil.copy2(destination_note, note_backup)
+
+            def publish() -> None:
+                nonlocal published_audio, published_note
+                cancellation.check()
+                if hidden_audio:
+                    hidden_audio.replace(destination_audio)
+                    published_audio = True
+                hidden_note.replace(destination_note)
+                published_note = True
+
             pipeline_details["saving_seconds"] = round(time.monotonic() - saving_started, 3)
             elapsed = time.monotonic() - started
             pipeline_details["total_seconds"] = round(elapsed, 3)
@@ -470,11 +497,12 @@ class RecordingPipeline:
             )
             with self._lock:
                 cancellation.check()
-                recording = self.store.update_recording(
-                    recording.id, status="completed", source_path="", processing_seconds=elapsed,
+                recording = replace(
+                    recording, status="completed", source_path="", processing_seconds=elapsed,
                     completed_at=self.store.now(), error=review_warning,
                     quality_json=json.dumps(pipeline_details),
                 )
+                self.store.commit_result(recording, [item.public() for item in result.suggestions], publish)
             shutil.rmtree(self.folder(recording.id), ignore_errors=True)
             self.state.set(
                 "warning" if review_warning else "complete",
@@ -483,26 +511,26 @@ class RecordingPipeline:
                 course_id=recording.course_id,
             )
         except TranscriptionCancelled:
-            for destination in (destination_audio, destination_note):
-                if destination:
-                    destination.unlink(missing_ok=True)
+            rollback_outputs()
             phase = self._cancel_stages.get(recording_id, "processing")
             self._complete_cancellation(recording_id, started, phase)
         except subprocess.CalledProcessError as error:
+            rollback_outputs()
             detail = error.stderr.decode("utf-8", errors="replace")[-500:] if error.stderr else ""
             self._fail(recording_id, f"오디오 변환 실패: {detail or error}", started)
         except requests.RequestException as error:
+            rollback_outputs()
             self._fail(recording_id, f"Whisper 연결 또는 처리 실패: {error}", started)
         except Exception as error:
-            for destination in (destination_audio, destination_note):
-                if destination:
-                    destination.unlink(missing_ok=True)
+            rollback_outputs()
             self._fail(recording_id, str(error), started)
         finally:
             if hidden_audio:
                 hidden_audio.unlink(missing_ok=True)
             if hidden_note:
                 hidden_note.unlink(missing_ok=True)
+            if note_backup:
+                note_backup.unlink(missing_ok=True)
 
     def _complete_cancellation(self, recording_id: str, started: float | None,
                                stage: str) -> Recording:
@@ -545,16 +573,21 @@ class RecordingPipeline:
             "total_seconds": round(elapsed, 3),
             "attempts": previous_attempts,
         }
-        self.store.replace_suggestions(recording_id, [])
+        keep_note = bool(recording.note_path and Path(recording.note_path).is_file())
+        if not keep_note:
+            self.store.replace_suggestions(recording_id, [])
         recording = self.store.update_recording(
             recording_id, status="cancelled", source_path="", audio_path=str(destination),
-            note_path="", processing_seconds=elapsed, transcript_text="", segments_json="[]",
-            breaks_json="[]", quality_json=json.dumps(details),
+            note_path=recording.note_path if keep_note else "", processing_seconds=elapsed,
+            transcript_text=recording.transcript_text if keep_note else "",
+            segments_json=recording.segments_json if keep_note else "[]",
+            breaks_json=recording.breaks_json if keep_note else "[]", quality_json=json.dumps(details),
             error="사용자가 전사 작업을 중단했습니다.", completed_at=self.store.now(),
         )
         shutil.rmtree(self.folder(recording_id), ignore_errors=True)
         self.state.set(
-            "cancelled", f"중단 완료 · {destination.name}만 저장했습니다.",
+            "cancelled", ("중단 완료 · 기존 음성과 전사 결과를 보존했습니다." if keep_note
+                          else f"중단 완료 · {destination.name}만 저장했습니다."),
             job_id=recording.id, title=recording.title, course_id=recording.course_id,
         )
         return recording

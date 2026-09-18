@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 from contextlib import contextmanager
+from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -325,6 +327,26 @@ class LectureStore:
             raise KeyError("작업을 찾지 못했습니다.")
         return self._recording(row)
 
+    def queue_retranscription(self, recording_id: str, source: Path) -> Recording:
+        """Snapshot the linked course's current settings for this new attempt."""
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT * FROM recordings WHERE id = ?", (recording_id,)).fetchone()
+            if row is None:
+                raise KeyError("작업을 찾지 못했습니다.")
+            if row["status"] not in {"completed", "failed", "cancelled"}:
+                raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
+            course = db.execute("SELECT * FROM courses WHERE id = ?", (row["course_id"],)).fetchone()
+            changes = dict(status="queued", source_path=str(source), error="", started_at="", completed_at="")
+            # Deleted courses retain the job's snapshot; never borrow the selected course.
+            if course is not None:
+                changes.update(course_name=course["name"])
+                for name in ("language", "prompt", "corrections", "format_transcript", "llm_enabled"):
+                    changes[name] = course[name]
+            assignments = ", ".join(f"{key} = ?" for key in changes)
+            db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
+                       (*changes.values(), recording_id))
+        return self.get_recording(recording_id)
+
     def update_recording(self, recording_id: str, **changes: Any) -> Recording:
         allowed = {
             "title", "status", "source_path", "audio_path", "note_path", "duration_seconds",
@@ -403,20 +425,36 @@ class LectureStore:
         )
 
     def replace_suggestions(self, recording_id: str, suggestions: list[dict[str, Any]]) -> None:
-        now = self.now()
         with self._lock, self._connect() as db:
-            db.execute("DELETE FROM suggestions WHERE recording_id = ?", (recording_id,))
-            db.executemany(
-                """INSERT INTO suggestions(
-                    recording_id, sentence_id, original, replacement, reason,
-                    confidence, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
-                [
-                    (recording_id, item["sentence_id"], item["original"], item["replacement"],
-                     item.get("reason", ""), float(item["confidence"]), now)
-                    for item in suggestions
-                ],
-            )
+            self._replace_suggestions(db, recording_id, suggestions)
+
+    def _replace_suggestions(self, db: sqlite3.Connection, recording_id: str,
+                             suggestions: list[dict[str, Any]]) -> None:
+        now = self.now()
+        db.execute("DELETE FROM suggestions WHERE recording_id = ?", (recording_id,))
+        db.executemany(
+            """INSERT INTO suggestions(
+                recording_id, sentence_id, original, replacement, reason,
+                confidence, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+            [
+                (recording_id, item["sentence_id"], item["original"], item["replacement"],
+                 item.get("reason", ""), float(item["confidence"]), now)
+                for item in suggestions
+            ],
+        )
+
+    def commit_result(self, recording: Recording, suggestions: list[dict[str, Any]],
+                      publish: Callable[[], None]) -> None:
+        """Publish files while committing transcript and review data together."""
+        values = asdict(recording)
+        values.pop("id")
+        with self._lock, self._connect() as db:
+            assignments = ", ".join(f"{key} = ?" for key in values)
+            db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
+                       (*values.values(), recording.id))
+            self._replace_suggestions(db, recording.id, suggestions)
+            publish()
 
     def suggestion_counts(self, recording_ids: list[str]) -> dict[str, dict[str, int]]:
         counts = {

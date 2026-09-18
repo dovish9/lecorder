@@ -1171,14 +1171,11 @@ class RecorderTests(unittest.TestCase):
             recording = pipeline.create_upload(
                 store.get(), "원자적 저장", ".wav", io.BytesIO(b"audio")
             )
-            update = store.update_recording
+            def fail_final_update(recording, suggestions, publish):
+                publish()
+                raise RuntimeError("database commit failed")
 
-            def fail_final_update(recording_id: str, **changes):
-                if changes.get("status") == "completed":
-                    raise RuntimeError("database commit failed")
-                return update(recording_id, **changes)
-
-            with patch.object(store, "update_recording", side_effect=fail_final_update):
+            with patch.object(store, "commit_result", side_effect=fail_final_update):
                 pipeline.process_next()
 
             failed = store.get_recording(recording.id)
@@ -1187,7 +1184,7 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual((output / "원자적 저장.wav").read_bytes(), b"audio")
             self.assertFalse((output / "원자적 저장.md").exists())
 
-    def test_retranscribe_terminal_jobs_preserves_history_and_files(self) -> None:
+    def test_retranscribe_terminal_jobs_replaces_existing_result(self) -> None:
         for status in ("completed", "failed", "cancelled"):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -1210,16 +1207,139 @@ class RecorderTests(unittest.TestCase):
                 response = client.post(f"/api/recordings/{old.id}/retranscribe")
                 self.assertEqual(response.status_code, 202)
                 new_id = response.get_json()["recording"]["id"]
-                self.assertNotEqual(new_id, old.id)
+                self.assertEqual(new_id, old.id)
                 self.assertEqual(store.get_recording(new_id).status, "queued")
                 pipeline.process_next()
                 new = store.get_recording(new_id)
                 self.assertEqual(new.status, "completed")
-                self.assertEqual(store.get_recording(old.id), old)
+                self.assertEqual(len(store.list_recordings()), 1)
                 self.assertEqual(audio.read_bytes(), b"original audio")
-                self.assertEqual(note.read_text(), "Previous transcript")
-                self.assertNotEqual(new.note_path, str(note))
+                self.assertIn("정리된 전사문", note.read_text())
+                self.assertEqual(new.note_path, str(note))
+                self.assertEqual(set(item.name for item in output.iterdir()), {"original.wav", "original.md"})
                 self.assertEqual(new.language, old.language)
+
+    def test_retranscription_failure_and_cancel_preserve_previous_result(self) -> None:
+        for mode in ("failure", "cancel", "publish_failure", "queued_cancel"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                environment, output = self.environment(root)
+                store = LectureStore(root / "test.db", environment)
+                engine = FakeTranscriber()
+                pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
+                audio, note = output / "original.wav", output / "original.md"
+                audio.write_bytes(b"original audio")
+                note.write_text("Previous transcript")
+                old = store.create_recording("original", store.get(), "original", "upload", ".wav", "", "completed")
+                store.update_recording(old.id, audio_path=str(audio), note_path=str(note), transcript_text="Previous transcript")
+                store.replace_suggestions(old.id, [{"sentence_id":"s00001", "original":"old", "replacement":"new", "confidence":.9}])
+                suggestions = store.list_suggestions(old.id)
+                pipeline.retranscribe(old.id)
+                if mode == "queued_cancel":
+                    pipeline.cancel(old.id)
+                    pipeline.process_next()
+                elif mode == "publish_failure":
+                    # Raise after successful publication, while the DB transaction is open.
+                    original_commit = store.commit_result
+                    def fail_commit(recording, items, publish):
+                        def publish_then_fail():
+                            publish()
+                            raise OSError("commit failure")
+                        original_commit(recording, items, publish_then_fail)
+                    with patch.object(store, "commit_result", side_effect=fail_commit):
+                        pipeline.process_next()
+                else:
+                    error = TranscriptionCancelled() if mode == "cancel" else RuntimeError("failed")
+                    with patch.object(engine, "transcribe", side_effect=error):
+                        pipeline.process_next()
+                saved = store.get_recording(old.id)
+                self.assertEqual(saved.status, "cancelled" if mode in {"cancel", "queued_cancel"} else "failed")
+                self.assertEqual(saved.note_path, str(note))
+                self.assertEqual(saved.transcript_text, "Previous transcript")
+                self.assertEqual(store.list_suggestions(old.id), suggestions)
+                self.assertEqual(note.read_text(), "Previous transcript")
+                self.assertEqual(audio.read_bytes(), b"original audio")
+                self.assertEqual(set(item.name for item in output.iterdir()), {"original.wav", "original.md"})
+
+    def test_retranscribe_at_worker_completion_is_not_lost(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, output = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            pipeline = RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work", start_worker=False)
+            audio = output / "original.wav"
+            audio.write_bytes(b"audio")
+            row = store.create_recording("original", store.get(), "original", "upload", ".wav", "", "completed")
+            store.update_recording(row.id, audio_path=str(audio))
+            # Previous attempt has published its status, but its worker has not cleaned up yet.
+            pipeline._queued.add(row.id)
+            pipeline.retranscribe(row.id)
+            with pipeline._lock:
+                pipeline._finish_queue_entry(row.id)
+            pipeline.process_next()
+            self.assertEqual(store.get_recording(row.id).status, "completed")
+            self.assertTrue(pipeline._queue.empty())
+            self.assertNotIn(row.id, pipeline._queued)
+            self.assertEqual(set(path.name for path in output.iterdir()), {"original.wav", "original.md"})
+
+    def test_retranscription_snapshots_latest_linked_course_settings(self) -> None:
+        for status in ("completed", "failed", "cancelled"):
+            for language in ("en", "ko", "auto"):
+                with self.subTest(status=status, language=language), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    environment, output = self.environment(root)
+                    store = LectureStore(root / "test.db", environment)
+                    engine = FakeTranscriber()
+                    pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
+                    old_language = "en" if language == "ko" else "ko"
+                    course = store.update_course(store.active_course_id(), language=old_language)
+                    audio = output / "original.wav"
+                    audio.write_bytes(b"audio")
+                    row = store.create_recording("original", store.get(), "original", "upload", ".wav", "", status)
+                    store.update_recording(row.id, audio_path=str(audio))
+                    store.update_course(course.id, name="updated course", language=language,
+                                        prompt="new hint", corrections="old -> new",
+                                        format_transcript=False, llm_enabled=False)
+                    store.create_course("unrelated selected course")
+                    self.assertEqual(store.get_recording(row.id).language, old_language)
+                    client = create_app(store, JobState(), engine, environment, pipeline).test_client()
+                    response = client.post(f"/api/recordings/{row.id}/retranscribe")
+                    self.assertEqual(response.status_code, 202)
+                    self.assertEqual(response.get_json()["recording"]["language"], language)
+                    # Later edits must not change an already queued attempt.
+                    store.update_course(course.id, language=old_language)
+                    pipeline.process_next()
+                    options = engine.calls[-1]
+                    self.assertEqual(options.language, language)
+                    self.assertEqual(options.course_name, "updated course")
+                    self.assertEqual(options.prompt, "new hint")
+                    self.assertEqual(options.corrections, "old -> new")
+                    self.assertFalse(options.format_text)
+                    self.assertFalse(options.use_llm)
+                    saved = store.get_recording(row.id)
+                    self.assertEqual(saved.language, language)
+                    self.assertEqual(saved.audio_path, str(audio))
+                    self.assertEqual(saved.title, "original")
+
+    def test_retranscription_with_deleted_course_keeps_original_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment, output = self.environment(root)
+            store = LectureStore(root / "test.db", environment)
+            engine = FakeTranscriber()
+            pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
+            course = store.update_course(store.active_course_id(), language="en", prompt="original hint")
+            audio = output / "original.wav"
+            audio.write_bytes(b"audio")
+            row = store.create_recording("original", store.get(), "original", "upload", ".wav", "", "failed")
+            store.update_recording(row.id, audio_path=str(audio))
+            store.create_course("other")
+            store.delete_course(course.id)
+            pipeline.retry(row.id)
+            pipeline.process_next()
+            self.assertEqual(engine.calls[-1].language, "en")
+            self.assertEqual(engine.calls[-1].prompt, "original hint")
+            self.assertIsNone(store.get_recording(row.id).course_id)
 
     def test_retranscribe_rejects_active_or_missing_source_without_new_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
