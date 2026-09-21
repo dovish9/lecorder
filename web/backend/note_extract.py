@@ -74,7 +74,7 @@ def prepare_pages(originals, folder, token):
 def ocr(image, token, engine=None):
     engine = engine or os.getenv("LECORDER_OCR_ENGINE", "vision")
     if engine == "vision":
-        helper = SCRIPT_ROOT / "dependencies/vision-ocr"
+        helper = SCRIPT_ROOT / "dependencies/vision/bin/vision-ocr"
         if not helper.is_file():
             raise ValueError(
                 "Vision OCR 도구가 없습니다. scripts/setup.sh를 실행하세요."

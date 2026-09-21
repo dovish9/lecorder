@@ -420,13 +420,13 @@ class NoteLibrary:
                 )
             return self.get(note_id)
 
-    def bind(self, note_id, course_id):
+    def bind(self, note_id, course_id, *, allow_pending=False):
         if not note_id:
             return None
         note = self.get(note_id)
         if note["deleted"] or note["course_id"] != course_id:
             raise ValueError("선택한 강의에 속한 강의노트가 아닙니다.")
-        if note["status"] not in {"ready", "partial"}:
+        if note["status"] not in ({"ready", "partial", "queued", "extracting"} if allow_pending else {"ready", "partial"}):
             raise ValueError("노트의 키워드 준비가 끝나지 않았습니다.")
         # Snapshot contains only published extraction, never mutable study output.
         return note["revision_id"]

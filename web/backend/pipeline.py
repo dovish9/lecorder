@@ -325,7 +325,7 @@ class RecordingPipeline:
                 raise ValueError("검수가 끝난 후 다시 전사하세요.")
             if retain_note and previous.note_revision_id:
                 lecture_note_id = self.notes._revision(previous.note_revision_id)['note_id']
-            revision = self.notes.bind(lecture_note_id, previous.course_id)
+            revision = self.notes.bind(lecture_note_id, previous.course_id, allow_pending=True)
             source = next((Path(value) for value in (previous.source_path, previous.audio_path)
                            if value and Path(value).is_file()), None)
             if source is None:
@@ -340,6 +340,12 @@ class RecordingPipeline:
                 raise ValueError("원본 음성 파일을 읽거나 작업용 사본을 만들 수 없습니다.") from error
             recording = self.store.queue_retranscription(recording_id, working)
             recording = self._bind_note(recording, revision)
+            if revision:
+                note_revision = self.notes._revision(revision)
+                if note_revision['status'] in {'queued', 'extracting'} or note_revision['study_status'] in {'pending', 'analyzing'}:
+                    recording = self.store.update_recording(recording_id, note_snapshot_json=json.dumps({
+                        "waiting_for_analysis": True, "keywords": [], "pages": [],
+                    }))
             self._cancellations[recording_id] = CancellationToken()
             self._cancel_stages.pop(recording_id, None)
             self.enqueue(recording_id)
@@ -369,8 +375,10 @@ class RecordingPipeline:
                     )
             finally:
                 with self._lock:
-                    self._finish_queue_entry(recording_id)
+                    deferred = self._finish_queue_entry(recording_id)
                 self._queue.task_done()
+                if deferred:
+                    time.sleep(1)
 
     def process_next(self) -> None:
         recording_id = self._queue.get_nowait()
@@ -381,16 +389,17 @@ class RecordingPipeline:
                 self._finish_queue_entry(recording_id)
             self._queue.task_done()
 
-    def _finish_queue_entry(self, recording_id: str) -> None:
+    def _finish_queue_entry(self, recording_id: str) -> bool:
         try:
             if self.store.get_recording(recording_id).status == "queued":
                 self._queue.put(recording_id)
-                return
+                return True
         except KeyError:
             pass
         self._queued.discard(recording_id)
         self._cancellations.pop(recording_id, None)
         self._cancel_stages.pop(recording_id, None)
+        return False
 
     def process(self, recording_id: str) -> None:
         with self._lock:
@@ -404,6 +413,17 @@ class RecordingPipeline:
                 return
             if recording.status != "queued":
                 raise ValueError("대기 중인 작업만 처리할 수 있습니다.")
+            if json.loads(recording.note_snapshot_json).get("waiting_for_analysis"):
+                # Wait before acquiring the speech inference slot, so note analysis can finish.
+                with self.notes.lock:
+                    revision = self.notes._revision(recording.note_revision_id)
+                    if revision['status'] in {'queued', 'extracting'} or revision['study_status'] in {'pending', 'analyzing'}:
+                        return
+                    if revision['status'] not in {'ready', 'partial'} or revision['study_status'] != 'completed':
+                        self.store.update_recording(recording_id, status="failed",
+                            error="선택한 강의노트 분석이 실패하거나 중단되어 재전사를 시작하지 않았습니다. 노트를 다시 분석하거나 다른 노트를 선택하세요.")
+                        return
+                    recording = self._bind_note(recording, recording.note_revision_id)
             cancellation = self._cancellations.setdefault(recording_id, CancellationToken())
             recording = self.store.update_recording(
                 recording_id, status="processing", started_at=self.store.now(), error=""

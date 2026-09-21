@@ -1,4 +1,4 @@
-import {showCourseNotes, chooseNote, openNote} from "./notes.js?v=20260921-note-math2";
+import {showCourseNotes, chooseNote, openNote} from "./notes.js?v=20260922-note-wait";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,
@@ -2791,7 +2791,7 @@ function renderQueue(recordings) {
     const title = document.createElement("strong");
     title.textContent = recording.title;
     const meta = document.createElement("small");
-    const position = isQueued ? "전사 대기" : recordingStatusLabels[recording.status] || "처리 중";
+    const position = isQueued ? (recording.waiting_for_note ? "강의노트 분석 완료 대기" : "전사 대기") : recordingStatusLabels[recording.status] || "처리 중";
     const noteStage = {extracting: "원문 추출", study: "학습 정리", detail: `${recording.number}쪽 상세 해설`}[recording.stage];
     const completed = recording.stage === "extracting" ? recording.extracted_pages : recording.analyzed_pages;
     const progress = !isQueued && recording.page_count ? ` · ${completed}/${recording.page_count}쪽 처리` : "";
@@ -2802,7 +2802,10 @@ function renderQueue(recordings) {
     const state = document.createElement("b");
     state.textContent = isQueued ? "대기" : isNote ? "분석 중" : recording.status === "cancelling" ? "중단 중" : "처리 중";
     link.append(marker, copy, state);
-    if (!isNote && recording.status === "processing" && app.job?.job_id === recording.id) {
+    if (isNote && recording.status === "processing") {
+      link.classList.add("has-pipeline");
+      link.append(createNoteQueuePipeline(recording));
+    } else if (!isNote && recording.status === "processing" && app.job?.job_id === recording.id) {
       link.classList.add("has-pipeline");
       link.append(createQueuePipeline(recording, app.job));
     }
@@ -2818,11 +2821,35 @@ function createQueuePipeline(recording, job) {
     ...(recording.llm_enabled ? [{phase: "polishing", label: "Qwen3"}] : []),
     {phase: "saving", label: "저장"},
   ];
+  return createStagePipeline(stages, phase, job.message || phaseLabels[phase] || "처리 중");
+}
+
+function createNoteQueuePipeline(note) {
+  if (note.stage === "detail") {
+    return createStagePipeline([{phase: "detail", label: "상세 해설"}], "detail", `${note.number}쪽 상세 해설 생성 중`);
+  }
+  const stages = [
+    {phase: "extracting", label: "원문 추출"},
+    {phase: "keywords", label: "키워드"},
+    {phase: "study", label: "학습 정리"},
+  ];
+  const total = Number(note.page_count) || 0;
+  const extracting = note.stage === "extracting";
+  const done = Number(extracting ? note.extracted_pages : note.analyzed_pages) || 0;
+  const phase = extracting && total > 0 && done >= total ? "keywords" : note.stage;
+  const message = phase === "keywords" ? "전사에 사용할 키워드 추출 중"
+    : extracting ? (total ? `원문 추출 · ${done}/${total}쪽 처리` : "문서 변환·페이지 준비 중")
+    : total && done >= total ? "페이지 분석 처리 종료 · 개요 정리 중"
+    : `학습 정리 · ${done}/${total}쪽 처리`;
+  return createStagePipeline(stages, phase, message);
+}
+
+function createStagePipeline(stages, phase, messageText) {
   const currentIndex = Math.max(0, stages.findIndex((stage) => stage.phase === phase));
   const pipeline = document.createElement("section");
   pipeline.className = "queue-pipeline";
   pipeline.style.setProperty("--queue-stage-count", stages.length);
-  pipeline.setAttribute("aria-label", `현재 처리 단계: ${phaseLabels[phase] || phase}`);
+  pipeline.setAttribute("aria-label", `현재 처리 단계: ${stages[currentIndex].label}`);
   const list = document.createElement("ol");
   stages.forEach((stage, index) => {
     const item = document.createElement("li");
@@ -2836,7 +2863,7 @@ function createQueuePipeline(recording, job) {
     list.append(item);
   });
   const message = document.createElement("p");
-  message.textContent = job.message || phaseLabels[phase] || "처리 중";
+  message.textContent = messageText;
   pipeline.append(list, message);
   return pipeline;
 }

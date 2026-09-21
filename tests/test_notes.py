@@ -32,6 +32,73 @@ class NoteTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_retranscription_waits_for_selected_revision_and_survives_reload(self):
+        note = self.ready()
+        revision = note['revision_id']
+        self.notes._update(revision, study_status='pending')
+        engine = fixtures.FakeTranscriber()
+        pipeline = RecordingPipeline(self.store, JobState(), engine, self.root / 'work', False)
+        audio = self.output / 'original.wav'
+        audio.write_bytes(b'audio')
+        row = self.store.create_recording('wait', self.store.get(), 'original', 'upload', '.wav', '', 'completed')
+        self.store.update_recording(row.id, audio_path=str(audio), transcript_text='previous')
+        queued = pipeline.retranscribe(row.id, note['id'], retain_note=False)
+        self.assertTrue(queued.public()['waiting_for_note'])
+        pipeline.process_next()
+        self.assertEqual(engine.calls, [])
+        self.assertEqual(self.store.get_recording(row.id).status, 'queued')
+        # Another process can restore the dependency entirely from the database.
+        pipeline = RecordingPipeline(self.store, JobState(), engine, self.root / 'work', False)
+        pipeline.enqueue(row.id)
+        self.notes._update(revision, study_status='analyzing')
+        pipeline.process_next()
+        self.assertEqual(engine.calls, [])
+        self.notes._update(revision, study_status='completed', keywords='[{"term":"updated","included":true}]')
+        pipeline.process_next()
+        self.assertEqual(len(engine.calls), 1)
+        self.assertEqual(engine.calls[0].note_keywords, ('updated',))
+        self.assertEqual(self.store.get_recording(row.id).audio_path, str(audio))
+        self.assertFalse(self.store.get_recording(row.id).public()['waiting_for_note'])
+
+    def test_extracting_note_wait_does_not_block_other_jobs_and_can_cancel(self):
+        note = self.register()
+        engine = fixtures.FakeTranscriber()
+        pipeline = RecordingPipeline(self.store, JobState(), engine, self.root / 'work', False)
+        audio = self.output / 'original.wav'; audio.write_bytes(b'audio')
+        row = self.store.create_recording('blocked', self.store.get(), 'blocked', 'upload', '.wav', '', 'completed')
+        markdown = self.output / 'original.md'; markdown.write_text('previous')
+        self.store.update_recording(row.id, audio_path=str(audio), note_path=str(markdown), transcript_text='previous')
+        pipeline.retranscribe(row.id, note['id'], retain_note=False)
+        other = pipeline.create_upload(self.store.get(), 'other', '.wav', io.BytesIO(b'audio'))
+        pipeline.process_next()
+        self.assertEqual(engine.calls, [])
+        pipeline.process_next()
+        self.assertEqual(self.store.get_recording(other.id).status, 'completed')
+        pipeline.cancel(row.id)
+        pipeline.process_next()
+        self.assertEqual(len(engine.calls), 1)
+        self.assertEqual(self.store.get_recording(row.id).status, 'cancelled')
+        self.assertEqual(self.store.get_recording(row.id).transcript_text, 'previous')
+
+    def test_failed_note_dependency_preserves_previous_result(self):
+        for terminal in ('failed', 'cancelled'):
+            with self.subTest(terminal=terminal):
+                note = self.ready()
+                self.notes._update(note['revision_id'], study_status='pending')
+                engine = fixtures.FakeTranscriber()
+                pipeline = RecordingPipeline(self.store, JobState(), engine, self.root / ('work-' + terminal), False)
+                audio = self.output / (terminal + '.wav'); audio.write_bytes(b'audio')
+                row = self.store.create_recording(terminal, self.store.get(), terminal, 'upload', '.wav', '', 'completed')
+                self.store.update_recording(row.id, audio_path=str(audio), transcript_text='previous')
+                pipeline.retranscribe(row.id, note['id'], retain_note=False)
+                self.notes._update(note['revision_id'], study_status=terminal)
+                pipeline.process_next()
+                saved = self.store.get_recording(row.id)
+                self.assertEqual(saved.status, 'failed')
+                self.assertEqual(saved.transcript_text, 'previous')
+                self.assertEqual(audio.read_bytes(), b'audio')
+                self.assertEqual(engine.calls, [])
+
     def test_queue_tracks_analysis_stages_and_hides_terminal_jobs(self):
         note = self.register()
         revision = note['revision_id']

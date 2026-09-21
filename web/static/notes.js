@@ -76,7 +76,9 @@ export async function chooseNote(
         `${note.title} · ${statuses[note.status] || note.status}`,
         note.id,
       );
-      option.disabled = !["ready", "partial"].includes(note.status);
+      const waiting = ["queued", "extracting"].includes(note.status) || ["pending", "analyzing"].includes(note.study_status);
+      option.disabled = !(recordingTitle ? ["ready", "partial", "queued", "extracting"] : ["ready", "partial"]).includes(note.status);
+      if (recordingTitle && waiting) option.textContent = `${note.title} · 분석 완료 후 전사`;
       option.selected =
         (note.revision_id === revisionId || note.id === revisionId) &&
         !option.disabled;
@@ -87,7 +89,7 @@ export async function chooseNote(
       label,
       node(
         "p",
-        "선택한 노트의 키워드는 음성 인식에, 원문은 Qwen 검수에 사용됩니다.",
+        recordingTitle ? "선택한 노트가 분석 대기·진행 중이면 완료 후 전사합니다. 분석 실패·중단 시 전사도 시작하지 않습니다." : "선택한 노트의 키워드는 음성 인식에, 원문은 Qwen 검수에 사용됩니다.",
       ),
     );
     let submitted = false;

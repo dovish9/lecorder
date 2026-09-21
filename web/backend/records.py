@@ -94,6 +94,10 @@ class Recording:
             "quality_json",
             "note_snapshot_json",
         }
+        try:
+            data["waiting_for_note"] = self.status == "queued" and bool(json.loads(self.note_snapshot_json).get("waiting_for_analysis"))
+        except (ValueError, TypeError, AttributeError):
+            data["waiting_for_note"] = False
         for key in private_fields:
             data.pop(key)
         try:

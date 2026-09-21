@@ -30,8 +30,8 @@ def checks():
         office = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
         output["soffice"] = str(office) if office.is_file() else None
     output["vision"] = (
-        str(root / "dependencies/vision-ocr")
-        if (root / "dependencies/vision-ocr").is_file()
+        str(root / "dependencies/vision/bin/vision-ocr")
+        if (root / "dependencies/vision/bin/vision-ocr").is_file()
         else None
     )
     output["kiwi"] = {

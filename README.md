@@ -12,7 +12,7 @@ bash scripts/build-whisper.sh
 cp .env.example .env
 ```
 
-`--pptx`는 LibreOffice를 설치합니다. PDF·이미지만 사용한다면 생략할 수 있습니다. `.env`의 `LECORDER_OUTPUT_DIR`에는 출력 폴더를 지정하세요. Whisper 소스·모델은 `dependencies/whisper.cpp`, Vision 실행 파일은 `dependencies/vision-ocr`에 설치되며 별도의 Whisper 경로 설정은 필요 없습니다. iCloud 밖에 보관하려면 실제 `whisper.cpp`를 `~/Local Storage/whisper.cpp`로 옮기고 `dependencies/whisper.cpp`에 해당 폴더의 심볼릭 링크를 두어도 됩니다. 설치·실행 경로는 그대로 유지됩니다.
+`--pptx`는 LibreOffice를 설치합니다. PDF·이미지만 사용한다면 생략할 수 있습니다. `.env`의 `LECORDER_OUTPUT_DIR`에는 출력 폴더를 지정하세요. Whisper 소스·모델은 `dependencies/whisper.cpp`, Vision 실행 파일은 `dependencies/vision/bin/vision-ocr`에 설치되며 별도의 Whisper 경로 설정은 필요 없습니다. iCloud 밖에 보관하려면 실제 `whisper.cpp`를 `~/Local Storage/whisper.cpp`로 옮기고 `dependencies/whisper.cpp`에 해당 폴더의 심볼릭 링크를 두어도 됩니다. 설치·실행 경로는 그대로 유지됩니다.
 
 ```bash
 ollama pull qwen3.5:9b
