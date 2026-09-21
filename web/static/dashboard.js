@@ -1,4 +1,4 @@
-import {showCourseNotes, chooseNote} from "./notes.js?v=vision-20260921-recording-note";
+import {showCourseNotes, chooseNote, openNote} from "./notes.js?v=20260921-note-queue";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,
@@ -2757,8 +2757,9 @@ function createPipelineDetail(recording) {
 }
 
 function renderQueue(recordings) {
-  const active = recordings.filter((item) => ["processing", "cancelling"].includes(item.status));
-  const queued = recordings
+  const jobs = [...recordings, ...(app.noteJobs || []).map(note => ({...note, kind: "note"}))];
+  const active = jobs.filter((item) => ["processing", "cancelling"].includes(item.status));
+  const queued = jobs
     .filter((item) => item.status === "queued")
     .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
   ui.queueSummary.textContent = active.length
@@ -2775,9 +2776,14 @@ function renderQueue(recordings) {
   }
   items.forEach((recording) => {
     const isQueued = recording.status === "queued";
+    const isNote = recording.kind === "note";
     const link = document.createElement("a");
     link.className = `queue-item ${isQueued ? "queued" : "active"}`;
-    link.href = `#/recordings/job/${encodeURIComponent(recording.id)}`;
+    link.href = isNote ? `#/courses` : `#/recordings/job/${encodeURIComponent(recording.id)}`;
+    if (isNote) link.addEventListener("click", (event) => {
+      event.preventDefault();
+      void openNote(recording.note_id).catch(error => showToast(error.message, "error"));
+    });
     const marker = document.createElement("i");
     marker.setAttribute("aria-hidden", "true");
     const copy = document.createElement("span");
@@ -2785,13 +2791,18 @@ function renderQueue(recordings) {
     const title = document.createElement("strong");
     title.textContent = recording.title;
     const meta = document.createElement("small");
-    const position = isQueued ? `${queued.indexOf(recording) + 1}번째 대기` : recordingStatusLabels[recording.status] || "처리 중";
-    meta.textContent = `${recording.course_name} · ${position}`;
+    const position = isQueued ? "전사 대기" : recordingStatusLabels[recording.status] || "처리 중";
+    const noteStage = {extracting: "원문 추출", study: "학습 정리", detail: `${recording.number}쪽 상세 해설`}[recording.stage];
+    const completed = recording.stage === "extracting" ? recording.extracted_pages : recording.analyzed_pages;
+    const progress = !isQueued && recording.page_count ? ` · ${completed}/${recording.page_count}쪽 처리` : "";
+    meta.textContent = isNote
+      ? `${recording.course_name || "강의노트"} · ${noteStage}${progress}`
+      : `${recording.course_name} · ${position}`;
     copy.append(title, meta);
     const state = document.createElement("b");
-    state.textContent = isQueued ? "대기" : recording.status === "cancelling" ? "중단 중" : "처리 중";
+    state.textContent = isQueued ? "대기" : isNote ? "분석 중" : recording.status === "cancelling" ? "중단 중" : "처리 중";
     link.append(marker, copy, state);
-    if (recording.status === "processing" && app.job?.job_id === recording.id) {
+    if (!isNote && recording.status === "processing" && app.job?.job_id === recording.id) {
       link.classList.add("has-pipeline");
       link.append(createQueuePipeline(recording, app.job));
     }
@@ -3108,6 +3119,7 @@ function renderStatus(data) {
   ui.progressTitle.textContent = data.job.title || "준비되어 있습니다";
   ui.progressMessage.textContent = data.job.message || "강의를 선택하고 작업을 시작하세요.";
   renderSuggestions(data.job.suggestions || []);
+  app.noteJobs = data.note_jobs || [];
   renderRecordings(data.recordings || []);
 }
 

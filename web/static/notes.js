@@ -237,7 +237,7 @@ function upload(courseId) {
   d.showModal();
 }
 
-async function openNote(id) {
+export async function openNote(id) {
   const d = modal("강의노트");
   d.classList.add("note-viewer");
   const state = node("p", null, "note-muted");

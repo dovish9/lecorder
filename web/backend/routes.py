@@ -121,6 +121,7 @@ def create_app(
             "ollama_model_ready": model,
             "settings": current.public(),
             "job": state.get(),
+            "note_jobs": workflow.notes.queue_items(),
             "recordings": [recording_payload(item, counts[item.id]) for item in recordings],
         }
 

@@ -31,6 +31,30 @@ class NoteTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_queue_tracks_analysis_stages_and_hides_terminal_jobs(self):
+        note = self.register()
+        revision = note['revision_id']
+        self.assertEqual(self.notes.queue_items()[0]['status'], 'queued')
+        self.notes._update(revision, status='extracting', page_count=2)
+        self.notes._page(revision, {'number': 1, 'text': 'private source', 'analysis_status': 'completed'})
+        item = self.notes.queue_items()[0]
+        self.assertEqual((item['stage'], item['status'], item['extracted_pages']), ('extracting', 'processing', 1))
+        self.assertNotIn('private source', json.dumps(item))
+        self.notes._update(revision, status='ready', study_status='pending')
+        self.assertEqual(self.notes.queue_items()[0]['stage'], 'study')
+        self.assertEqual(self.notes.queue_items()[0]['status'], 'queued')
+        self.notes._update(revision, study_status='analyzing')
+        self.assertEqual(self.notes.queue_items()[0]['analyzed_pages'], 1)
+        for status in ('completed', 'failed', 'cancelled'):
+            self.notes._update(revision, study_status=status)
+            self.assertEqual(self.notes.queue_items(), [])
+        self.notes._detail(revision, 1, {'detail_status': 'pending'})
+        self.assertEqual(self.notes.queue_items()[0]['stage'], 'detail')
+        self.notes._detail(revision, 1, {'detail_status': 'analyzing'})
+        self.assertEqual(self.notes.queue_items()[0]['status'], 'processing')
+        self.notes._detail(revision, 1, {'detail_status': 'completed'})
+        self.assertEqual(self.notes.queue_items(), [])
+
     def register(self):
         return self.notes.register(
             self.store.active_course_id(),

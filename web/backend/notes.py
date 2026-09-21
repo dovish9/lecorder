@@ -130,6 +130,49 @@ class NoteLibrary:
             ).fetchall()
         return [self.get(row["id"]) for row in rows]
 
+    def queue_items(self):
+        """Small status payload; never send document text through status polling."""
+        with self.store._connect() as db:
+            rows = db.execute("""
+                SELECT n.id AS note_id, n.title, c.name AS course_name,
+                       r.id AS revision_id, r.status, r.study_status, r.page_count,
+                       r.created_at,
+                       (SELECT COUNT(*) FROM note_pages p WHERE p.revision_id=r.id)
+                           AS extracted_pages,
+                       (SELECT COUNT(*) FROM note_pages p WHERE p.revision_id=r.id
+                        AND json_extract(p.payload, '$.analysis_status') IN ('completed','failed'))
+                           AS analyzed_pages
+                FROM lecture_notes n JOIN note_revisions r ON r.id=n.revision_id
+                LEFT JOIN courses c ON c.id=n.course_id
+                WHERE n.deleted=0 AND (r.status IN ('queued','extracting')
+                    OR (r.status IN ('ready','partial') AND r.study_status IN ('pending','analyzing')))
+                ORDER BY r.created_at
+            """).fetchall()
+            details = db.execute("""
+                SELECT n.id AS note_id, n.title, c.name AS course_name,
+                       d.revision_id, d.number, r.created_at,
+                       json_extract(d.payload, '$.detail_status') AS status
+                FROM note_details d JOIN lecture_notes n ON n.revision_id=d.revision_id
+                JOIN note_revisions r ON r.id=d.revision_id
+                LEFT JOIN courses c ON c.id=n.course_id
+                WHERE n.deleted=0 AND json_extract(d.payload, '$.detail_status') IN ('pending','analyzing')
+                ORDER BY r.created_at, d.number
+            """).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            extracting = item['status'] in {'queued', 'extracting'}
+            item['stage'] = 'extracting' if extracting else 'study'
+            item['status'] = ('queued' if item['status'] == 'queued' else 'processing') if extracting else (
+                'queued' if item['study_status'] == 'pending' else 'processing')
+            items.append(item)
+        for row in details:
+            item = dict(row)
+            item['stage'] = 'detail'
+            item['status'] = 'queued' if item['status'] == 'pending' else 'processing'
+            items.append(item)
+        return items
+
     def pages(self, revision_id):
         with self.store._connect() as db:
             rows = db.execute(
@@ -495,6 +538,8 @@ class NoteLibrary:
             token.check()
             if number is None:
                 self._update(revision_id, study_status="analyzing")
+            else:
+                self._detail(revision_id, number, {"detail_status": "analyzing"})
             failures = 0
             for page in self.pages(revision_id):
                 if (
