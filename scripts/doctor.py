@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from web.backend.config import EnvironmentStore, WHISPER_URL
+from web.backend.config import EnvironmentStore, WHISPER_URL, OLLAMA_URL, NOTE_VISION_MODEL
 import requests
 
 
@@ -34,6 +34,10 @@ def checks():
         if (root / "dependencies/vision-ocr").is_file()
         else None
     )
+    output["kiwi"] = {
+        "helper": (root / "dependencies/kiwi-helper").is_file(),
+        "model": (root / "dependencies/Kiwi/models/cong/base/cong.mdl").is_file(),
+    }
     output["python"] = {
         name: bool(importlib.util.find_spec(name)) for name in ("flask", "requests")
     }
@@ -45,6 +49,13 @@ def checks():
             language: language in result.stdout.splitlines()
             for language in ("kor", "eng")
         }
+    try:
+        response = requests.get(OLLAMA_URL.rsplit("/", 1)[0] + "/tags", timeout=2)
+        response.raise_for_status()
+        installed = {m["name"] for m in response.json().get("models", [])}
+        output["note_vision"] = {"model": NOTE_VISION_MODEL, "installed": NOTE_VISION_MODEL in installed}
+    except (requests.RequestException, ValueError, KeyError):
+        output["note_vision"] = {"model": NOTE_VISION_MODEL, "installed": None, "status": "Ollama unavailable"}
     home = Path(EnvironmentStore().get().whisper_cpp_dir)
     output["whisper"] = {
         name: (home / path).is_file()

@@ -135,6 +135,7 @@ chmod +x start.command</code></pre>
                 <p>Ollama를 Homebrew 서비스로 시작하면 지금 실행되는 동시에 macOS 로그인 후에도 자동으로 시작됩니다. 그다음 Lecorder의 기본 검수 모델을 내려받습니다.</p>
                 <pre><code>brew services start ollama
 ollama pull qwen3:8b-q4_K_M
+ollama pull qwen3.5:9b
 
 # 설치 상태 확인
 brew services list | grep ollama
@@ -167,6 +168,7 @@ ollama list</code></pre>
               <tbody>
                 <tr><td><code>LECORDER_DIR</code></td><td><code>app.py</code>와 <code>web/backend</code>가 있는 프로젝트 폴더. 기본값 <code>.</code></td></tr>
                 <tr><td><code>LECORDER_OUTPUT_DIR</code></td><td>완성된 원본 미디어와 Markdown을 저장할 기존 폴더. 기본값 <code>output</code></td></tr>
+                <tr><td><code>NOTE_VISION_MODEL</code></td><td>강의노트 이미지 분석 모델. 기본값 <code>qwen3.5:9b</code></td></tr>
                 <tr><td><code>OLLAMA_MODEL</code></td><td>검수에 사용할 설치된 Ollama 모델. 기본값 <code>qwen3:8b-q4_K_M</code></td></tr>
               </tbody>
             </table>
@@ -222,7 +224,7 @@ ollama list</code></pre>
             <h2><small>05</small>사용 흐름</h2>
             <div class="flow detailed">
               <div><b>01</b><strong>강의 선택</strong><span><strong>강의</strong> 화면에서 프로필을 만들고 한국어·영어·자동 감지 중 언어를 선택합니다.</span></div>
-              <div><b>02</b><strong>강의노트 등록</strong><span>PDF·이미지·PPTX를 강의에 등록합니다. 추출 키워드의 포함·제외를 선택하고, 녹음을 시작한 뒤 하단 컨트롤 위에서 노트 하나 또는 사용 안 함을 선택합니다. 업로드·다시 전사하기에서도 노트를 선택할 수 있습니다.</span></div>
+              <div><b>02</b><strong>강의노트 등록</strong><span>PDF·이미지·PPTX를 강의에 등록합니다. 추출 키워드의 포함·제외를 선택하고, 녹음을 시작한 뒤 하단 컨트롤 위에서 노트 하나 또는 사용 안 함을 선택합니다. 업로드·다시 전사하기에서도 노트를 선택할 수 있습니다. 개요에서는 전체 내용을, 학습 정리에서는 페이지 이미지와 Markdown 설명을 함께 봅니다. 키워드 출처는 해당 학습 정리로 이동하고, 원문 탭에서 OCR 결과를 확인합니다.</span></div>
               <div><b>03</b><strong>처리 방식 선택</strong><span><strong>가독성 자동 정리</strong>는 Qwen3가 찾은 의미 경계로 문단을 구성하고, <strong>Qwen3 문맥 검수</strong>는 단어 수정 후보를 만듭니다. 두 옵션은 강의별로 기억됩니다.</span></div>
               <div><b>04</b><strong>녹음 또는 업로드</strong><span><strong>녹음</strong> 화면에서 마이크를 녹음하거나 지원되는 오디오·동영상 파일을 업로드합니다. 작업을 시작할 때 현재 강의 설정이 해당 작업에 복사됩니다.</span></div>
               <div><b>05</b><strong>대기열 확인</strong><span>전사는 한 번에 하나씩 처리됩니다. 앞 작업이 처리 중이어도 다음 녹음이나 업로드를 대기열에 추가할 수 있습니다.</span></div>

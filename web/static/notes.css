@@ -447,3 +447,88 @@
   overflow-wrap: anywhere;
   color: var(--muted);
 }
+
+.note-overview {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4px 12px 24px;
+}
+.note-study {
+  min-width: 0;
+}
+.note-markdown {
+  font-size: 13px;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+.note-markdown > :first-child {
+  margin-top: 0;
+}
+.note-markdown h2,
+.note-markdown h3 {
+  font-size: 15px;
+  margin: 28px 0 12px;
+  line-height: 1.5;
+}
+.note-markdown h4 {
+  font-size: 13px;
+  margin: 22px 0 10px;
+}
+.note-markdown p {
+  line-height: 1.85;
+  margin: 12px 0;
+}
+.note-markdown ul,
+.note-markdown ol {
+  padding-left: 22px;
+}
+.note-markdown code {
+  background: var(--surface);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.note-markdown pre {
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 6px;
+}
+.note-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 8px 0;
+}
+.note-table {
+  overflow-x: auto;
+}
+.note-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.note-markdown th,
+.note-markdown td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.note-markdown th {
+  background: var(--surface);
+}
+.note-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+}
+
+@media (min-width: 701px) {
+  .note-split .note-preview {
+    position: sticky;
+    top: 0;
+    max-height: calc(100dvh - 250px);
+    overflow: auto;
+  }
+}

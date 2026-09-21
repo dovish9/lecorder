@@ -12,10 +12,11 @@ bash scripts/build-whisper.sh
 cp .env.example .env
 ```
 
-`--pptx`는 LibreOffice를 설치합니다. PDF·이미지만 사용한다면 생략할 수 있습니다. `.env`의 `LECORDER_OUTPUT_DIR`에는 출력 폴더를 지정하세요. Whisper 소스·모델은 `dependencies/whisper.cpp`, Vision 실행 파일은 `dependencies/vision-ocr`에 설치되며 별도의 Whisper 경로 설정은 필요 없습니다.
+`--pptx`는 LibreOffice를 설치합니다. PDF·이미지만 사용한다면 생략할 수 있습니다. `.env`의 `LECORDER_OUTPUT_DIR`에는 출력 폴더를 지정하세요. Whisper 소스·모델은 `dependencies/whisper.cpp`, Vision 실행 파일은 `dependencies/vision-ocr`에 설치되며 별도의 Whisper 경로 설정은 필요 없습니다. iCloud 밖에 보관하려면 실제 `whisper.cpp`를 `~/Local Storage/whisper.cpp`로 옮기고 `dependencies/whisper.cpp`에 해당 폴더의 심볼릭 링크를 두어도 됩니다. 설치·실행 경로는 그대로 유지됩니다.
 
 ```bash
 ollama pull qwen3:8b-q4_K_M
+ollama pull qwen3.5:9b
 ollama serve
 ./start.command
 ```
@@ -26,11 +27,13 @@ Ollama가 이미 실행 중이면 다시 시작하지 않습니다. 모델 다�
 
 강의 화면에서 PDF·PPTX 한 개 또는 PNG·JPEG·HEIC 이미지 묶음을 등록합니다. 이미지는 등록 전에 순서를 변경할 수 있습니다. 원본 합계 100MB, 최대 500페이지를 지원합니다. PPTX는 슬라이드 본문만 PDF로 변환합니다.
 
-원본을 먼저 보존하고 페이지별 내장 텍스트와 OCR을 저장합니다. 키워드 준비가 끝나면 학습 정리를 기다리지 않고 전사에 사용할 수 있습니다. 화면에서 원문, 키워드, 학습 정리를 확인하고 추출 키워드를 포함·제외할 수 있습니다. 분석 중에는 키워드 선택을 저장할 수 없으며, 상세 해설은 페이지에서 요청합니다.
+원본을 먼저 보존하고 페이지별 내장 텍스트와 OCR을 저장합니다. 한국어 키워드는 소스 빌드한 Kiwi로 명사를 추출해 조사를 분리하고, 붙어 있는 복합 명사는 보존합니다. 키워드가 준비되면 학습 정리를 기다리지 않고 전사에 사용할 수 있습니다.
 
-요약·학습 포인트·공식 설명은 출처 페이지에 연결됩니다. 불확실한 필기와 수식은 원본 이미지를 확인해야 합니다. OCR로만 얻은 수식을 신뢰할 수 있는 공식으로 승격하거나 없는 공식을 만들어 설명하지 않습니다. Qwen이 읽지 못한 수식의 LaTeX 복원이나 그림의 의미 해석은 지원하지 않습니다.
+강의노트는 **개요 / 학습 정리 / 키워드 / 원문**으로 나뉩니다. 학습 정리는 왼쪽 페이지 이미지와 오른쪽 Markdown 설명을 함께 표시하고, 키워드 출처는 해당 학습 정리 페이지로 이동합니다. 원문 탭은 추출 결과를 확인하는 디버깅 화면입니다. 수식 렌더링은 프로젝트에 포함된 KaTeX로 로컬 처리합니다.
 
-추출이 불확실한 페이지의 요약·학습 포인트는 생성 설명 대신 검증 가능한 원문 발췌로 표시합니다. 따라서 영어 원문은 영어로 남을 수 있습니다. 깨진 분수·다중 행 수식은 공식 설명 대상으로 채택하지 않습니다. 이전 분석 버전에는 다시 분석 안내를 표시하며, 재분석해도 과거 전사의 버전은 보존합니다.
+학습 정리는 기본 `qwen3.5:9b` 비전 모델에 이미지와 추출 텍스트를 함께 전달합니다. 개요는 페이지별 설명을 작은 묶음으로 종합하며, 출처 번호는 모델 대신 코드가 연결합니다. 판독 불확실한 부분은 별도로 표시하며, 생성 설명은 원본을 대조할 수 있습니다. 추론 결과의 사실 정확성을 코드로 보증하는 것은 아닙니다. 분석 실패 시 원본·키워드·완료된 페이지 설명은 보존합니다. 이전 결과는 자동 덮어쓰지 않으며 **다시 분석**으로 새 버전을 생성합니다.
+
+Kiwi는 `scripts/build-kiwi.sh`에서 고정된 소스 커밋과 모델을 내려받아 Homebrew CMake로 빌드합니다. Python Kiwi 패키지는 설치하지 않습니다. 소스·모델·실행 파일은 `dependencies/Kiwi`, `dependencies/kiwi-build`, `dependencies/kiwi-helper`에 저장됩니다. [Kiwi 공식 소스와 Apache 2.0 라이선스](https://github.com/bab2min/Kiwi)를 사용하며, 빌드 스크립트에 기준 커밋을 기록했습니다.
 
 기본 OCR은 macOS Vision입니다. `LECORDER_OCR_ENGINE=tesseract`로 변경할 수 있습니다. 둘 다 한국어·영어를 사용합니다. Vision 헬퍼는 설치 스크립트에서 빌드합니다.
 

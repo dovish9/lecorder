@@ -9,10 +9,11 @@ import time
 import uuid
 from pathlib import Path
 from .note_extract import SUPPORTED_NOTES, IMAGE_EXTENSIONS, prepare_pages, extract_page
-from .note_analysis import candidates, analyze_page
+from .note_analysis import candidates
+from .note_study import analyze_visual_page as analyze_page, build_overview
 from .transcription import CancellationToken, TranscriptionCancelled
 
-ANALYZER_VERSION = "notes-v2-source-grounded"
+ANALYZER_VERSION = "notes-v3-vision-kiwi"
 
 
 class NoteLibrary:
@@ -497,7 +498,7 @@ class NoteLibrary:
             failures = 0
             for page in self.pages(revision_id):
                 if (
-                    not page["text"]
+                    not page.get("image")
                     or (number is not None and page["number"] != number)
                     or (number is None and page.get("analysis"))
                 ):
@@ -509,7 +510,9 @@ class NoteLibrary:
                         json.loads(revision["keywords"]),
                         token,
                         detailed=number is not None,
+                        image_path=self.folder / revision["note_id"] / page["image"],
                     )
+                    page.pop("analysis_error", None)
                     page["detail" if number is not None else "analysis"] = result
                     page[
                         "detail_status" if number is not None else "analysis_status"
@@ -536,43 +539,13 @@ class NoteLibrary:
                     )
             if number is None:
                 pages = self.pages(revision_id)
-                overview = []
-                for offset in range(0, len(pages), 8):
-                    group = [p for p in pages[offset : offset + 8] if p.get("analysis")]
-                    if not group:
-                        continue
-                    source = "\n".join(
-                        f"{p['number']}쪽: {p['analysis']['summary']}" for p in group
-                    )
-                    try:
-                        result = analyze_page(
-                            {
-                                "number": group[0]["number"],
-                                "text": source,
-                                "needs_review": any(
-                                    p.get("needs_review") for p in group
-                                ),
-                            },
-                            [],
-                            token,
-                        )
-                        overview.append(
-                            {
-                                "pages": [p["number"] for p in group],
-                                "summary": result["summary"],
-                                "points": result["points"],
-                            }
-                        )
-                    except TranscriptionCancelled:
-                        raise
-                    except Exception:
-                        overview.append(
-                            {
-                                "pages": [p["number"] for p in group],
-                                "summary": source,
-                                "points": [],
-                            }
-                        )
+                try:
+                    overview = build_overview(pages, token)
+                except TranscriptionCancelled:
+                    raise
+                except Exception as error:
+                    failures += 1
+                    overview = [{"pages": [], "error": str(error)}]
                 with self.lock:
                     token.check()
                     self._update(

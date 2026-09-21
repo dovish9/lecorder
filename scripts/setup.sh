@@ -10,4 +10,5 @@ PYTHON="$(brew --prefix python@3.13)/bin/python3.13"
 .venv/bin/python -m pip install -r requirements.txt
 mkdir -p dependencies
 xcrun swiftc scripts/native/vision.swift -module-cache-path dependencies/swift-cache -O -framework Vision -framework AppKit -o dependencies/vision-ocr
+bash scripts/build-kiwi.sh
 .venv/bin/python scripts/doctor.py

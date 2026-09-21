@@ -8,10 +8,9 @@ from web.backend.notes import NoteLibrary
 from web.backend.note_extract import merge_text
 from web.backend.note_analysis import (
     candidates,
-    analyze_page,
     hint_terms,
-    formula_candidates,
 )
+from web.backend.note_study import analyze_visual_page, parse_response, build_overview
 from web.backend.transcription import CancellationToken, Options
 from web.backend.engine import Transcriber
 from web.backend.review_jobs import relevant_context, ReviewQueue
@@ -43,7 +42,7 @@ class NoteTests(unittest.TestCase):
         page = {
             "number": 1,
             "text": "Electric field and Coulomb force",
-            "image": "",
+            "image": "page-1.png",
             "error": "",
             "analysis": None,
         }
@@ -245,40 +244,15 @@ class NoteTests(unittest.TestCase):
             ["표본", "Coulomb", "potential"],
         )
 
-    def test_damaged_layout_equations_are_not_formula_candidates(self):
-        self.assertEqual(
-            formula_candidates(
-                "𝑈 = 88                            (𝑆10,3)\n𝑈 = −𝛼                 (𝑆10,4)\nV(r) = - & dr'"
-            ),
-            [],
-        )
-        self.assertEqual(formula_candidates("F = ma")[0]["text"], "F = ma")
-
-    def test_uncertain_summary_cannot_invent_relationships(self):
-        page = {
-            "number": 6,
-            "needs_review": True,
-            "text": "모평균은 분포의 균형점으로서 중심위치를 나타냄",
-            "embedded": "모평균은 분포의 균형점으로서 중심위치를 나타냄",
-        }
-        response = Mock()
-        response.json.return_value = {
-            "message": {
-                "content": json.dumps(
-                    {
-                        "summary": "모평균은 밀도곡선이다.",
-                        "points": ["모평균은 상대도수이다."],
-                        "keywords": [],
-                        "formulas": [],
-                    }
-                )
-            }
-        }
-        with patch("web.backend.note_analysis.requests.post", return_value=response):
-            result = analyze_page(page, [], CancellationToken())
-        self.assertTrue(result["source_excerpt"])
-        self.assertEqual(result["summary"], page["text"])
-        self.assertEqual(result["points"], [])
+    def test_visual_analysis_requires_image_and_validates_response(self):
+        with self.assertRaises(ValueError):
+            analyze_visual_page({"number": 1, "text": "source"}, [], CancellationToken())
+        answer = {"summary": "모평균", "markdown": "## 모평균\n분포의 균형점이다.", "uncertainties": []}
+        self.assertEqual(parse_response({"message": {"content": "", "thinking": json.dumps(answer)}}), answer)
+        with self.assertRaises(ValueError):
+            parse_response({"message": {"content": "", "thinking": "internal free text"}})
+        with self.assertRaises(ValueError):
+            parse_response({"done_reason": "length", "message": {"content": json.dumps(answer)}})
 
     def test_merge_retains_ocr_only_handwritten_text(self):
         self.assertEqual(
@@ -288,32 +262,6 @@ class NoteTests(unittest.TestCase):
             ),
             "Electric field\n필기: 시험 범위",
         )
-
-    def test_analysis_rejects_invented_formula_ids_and_bad_json(self):
-        response = Mock()
-        response.json.return_value = {
-            "message": {
-                "content": json.dumps(
-                    {
-                        "summary": "요약",
-                        "points": ["핵심"],
-                        "keywords": ["invented"],
-                        "formulas": [{"id": "invented", "meaning": "fake"}],
-                    }
-                )
-            }
-        }
-        with patch("web.backend.note_analysis.requests.post", return_value=response):
-            result = analyze_page(
-                {"number": 1, "text": "F = ma"}, [], CancellationToken()
-            )
-        self.assertEqual(result["formulas"], [])
-        response.json.return_value = {"done_reason": "length"}
-        with patch(
-            "web.backend.note_analysis.requests.post", return_value=response
-        ) as post, self.assertRaises(ValueError):
-            analyze_page({"number": 1, "text": "source"}, [], CancellationToken())
-        self.assertEqual(post.call_count, 2)
 
     def test_review_failure_does_not_change_completed_transcript(self):
         from unittest.mock import create_autospec
@@ -390,7 +338,7 @@ class NoteTests(unittest.TestCase):
             self.notes.cancel(note["id"])
             self.notes.tokens[revision_id].check()
 
-        with patch("web.backend.notes.analyze_page", side_effect=cancel):
+        with patch("web.backend.notes.build_overview", side_effect=cancel):
             self.notes.study(revision_id)
         result = self.notes.get(note["id"])
         self.assertEqual(result["study_status"], "cancelled")
@@ -458,20 +406,25 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(client.get(url, headers=headers).status_code, 200)
 
     def test_schema_type_error_retries_only_once(self):
-        invalid = {
-            "summary": "summary",
-            "points": "not an array",
-            "keywords": [],
-            "formulas": [],
-        }
+        image = self.root / "page.png"
+        image.write_bytes(b"fixture")
+        invalid = {"summary": "summary", "markdown": "body", "uncertainties": "not an array"}
         response = Mock()
         response.json.return_value = {"message": {"content": json.dumps(invalid)}}
-        with patch(
-            "web.backend.note_analysis.requests.post", return_value=response
-        ) as post:
+        with patch("web.backend.note_study.requests.post", return_value=response) as post:
             with self.assertRaises(ValueError):
-                analyze_page({"number": 1, "text": "source"}, [], CancellationToken())
+                analyze_visual_page({"number": 1, "text": "source"}, [], CancellationToken(), image_path=image)
         self.assertEqual(post.call_count, 2)
+        self.assertIn("images", post.call_args.kwargs["json"]["messages"][1])
+
+    def test_overview_reduction_keeps_all_source_pages(self):
+        pages = [{"number": i, "analysis": {"summary": str(i), "markdown": "body", "keywords": []}} for i in range(1, 15)]
+        def generate(*args, **kwargs):
+            return {"summary": "summary", "markdown": "overview", "uncertainties": []}
+        with patch("web.backend.note_study._generate", side_effect=generate) as call:
+            result = build_overview(pages, CancellationToken())
+        self.assertEqual(result[0]["pages"], list(range(1, 15)))
+        self.assertEqual(call.call_count, 4)
 
     def test_ocr_position_merge_preserves_additional_annotation(self):
         boxes = [
