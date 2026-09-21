@@ -4,8 +4,8 @@ import re
 import subprocess
 from .config import SCRIPT_ROOT
 
-HELPER = SCRIPT_ROOT / "dependencies/kiwi-helper"
-MODEL = SCRIPT_ROOT / "dependencies/Kiwi/models/cong/base"
+HELPER = SCRIPT_ROOT / "dependencies/kiwi/bin/kiwi-helper"
+MODEL = SCRIPT_ROOT / "dependencies/kiwi/models/cong/base"
 
 
 def noun_terms(texts):

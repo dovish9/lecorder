@@ -1,4 +1,4 @@
-import { markdown } from "./note-markdown.js?v=20260921";
+import { markdown } from "./note-markdown.js?v=20260921-math2";
 /* Lecture-note UI. All model/document text is rendered as text, never HTML. */
 const statuses = {
   queued: "대기 중",

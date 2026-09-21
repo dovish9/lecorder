@@ -1,5 +1,19 @@
 import katex from "./vendor/katex/katex.mjs";
 
+// Repair legacy model output without decoding arbitrary escapes (\nu, \beta, etc.).
+export function normalizeMarkdown(text) {
+  return String(text || "").replace(/(?:\\n){2,}/g, "\n\n").replace(
+    /\$\$[\s\S]*?\$\$|\$[^$\n]+\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g,
+    value => {
+      value = value.replace(/\u0008/g, "\\b").replace(/\f/g, "\\f")
+        .replace(/\t(?=ext\b|heta\b|imes\b|au\b)/g, "\\t")
+        .replace(/\r(?=ight\b|ho\b)/g, "\\r");
+      return /\\begin\{(?:cases|aligned|align\*?|array|[pbvBV]?matrix)\}/.test(value)
+      ? value : value.replace(/\\{2,}(?=[A-Za-z])/g, "\\");
+    },
+  );
+}
+
 // Small, deliberately HTML-free Markdown renderer for locally generated notes.
 // No model-provided HTML, URLs, styles or image requests are executed.
 function inline(host, text) {
@@ -38,7 +52,8 @@ function inline(host, text) {
 export function markdown(text) {
   const host = document.createElement("article");
   host.className = "note-markdown";
-  const lines = String(text || "")
+  const lines = normalizeMarkdown(text)
+    .replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]/g, value => value.replace(/\n/g, " "))
     .replace(/\r\n/g, "\n")
     .split("\n");
   let paragraph = [],

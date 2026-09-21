@@ -70,8 +70,8 @@ APP_PORT = int(os.getenv("LECORDER_PORT", "5055"))
 WHISPER_PORT = int(os.getenv("WHISPER_PORT", "8080"))
 WHISPER_URL = os.getenv("WHISPER_URL", f"http://127.0.0.1:{WHISPER_PORT}/inference")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-NOTE_VISION_MODEL = os.getenv("NOTE_VISION_MODEL", "qwen3.5:9b")
-DEFAULT_LLM_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b-q4_K_M")
+DEFAULT_LLM_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
+NOTE_VISION_MODEL = os.getenv("NOTE_VISION_MODEL", DEFAULT_LLM_MODEL)
 
 
 @dataclass(frozen=True)

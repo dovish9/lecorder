@@ -1,4 +1,4 @@
-import {showCourseNotes, chooseNote, openNote} from "./notes.js?v=20260921-note-queue";
+import {showCourseNotes, chooseNote, openNote} from "./notes.js?v=20260921-note-math2";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,

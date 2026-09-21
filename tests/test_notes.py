@@ -1,3 +1,4 @@
+import threading
 import io
 import json
 import tempfile
@@ -313,6 +314,19 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(after.review_status, "failed")
         self.assertEqual(Path(after.note_path).read_bytes(), note)
         self.assertEqual(after.transcript_text, before.transcript_text)
+
+    def test_review_retry_uses_current_model_without_changing_old_runs(self):
+        from web.backend.config import DEFAULT_LLM_MODEL
+        row = self.store.create_recording("legacy", self.store.get(), "lecture", "upload", ".wav", "", "completed")
+        self.store.update_recording(row.id, llm_model="legacy-model", review_status="failed")
+        with self.store._connect() as db:
+            db.execute("INSERT INTO review_runs(id,recording_id,started_at,status,settings) VALUES (?,?,?,?,?)",
+                       ("old", row.id, self.store.now(), "failed", '{"model":"legacy-model"}'))
+        worker = ReviewQueue(self.store, fixtures.FakeTranscriber(), threading.RLock(), False)
+        worker.retry(row.id)
+        self.assertEqual(self.store.get_recording(row.id).llm_model, DEFAULT_LLM_MODEL)
+        with self.store._connect() as db:
+            self.assertEqual(json.loads(db.execute("SELECT settings FROM review_runs WHERE id='old'").fetchone()[0])["model"], "legacy-model")
 
     def test_keyword_revision_preserves_study_overview(self):
         note = self.ready()

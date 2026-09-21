@@ -54,7 +54,7 @@
           <div><dt>대시보드</dt><dd>127.0.0.1:5055</dd></div>
           <div><dt>음성 인식</dt><dd>whisper.cpp · large-v3</dd></div>
           <div><dt>음성 감지</dt><dd>Silero VAD v6.2.0</dd></div>
-          <div><dt>선택 검수</dt><dd>Ollama · qwen3:8b-q4_K_M</dd></div>
+          <div><dt>선택 검수</dt><dd>Ollama · qwen3.5:9b</dd></div>
           <div><dt>결과물</dt><dd>원본 미디어 + Markdown</dd></div>
         </dl>
       </header>
@@ -134,13 +134,12 @@ chmod +x start.command</code></pre>
                 <strong>Ollama 자동 실행과 Qwen3 설치</strong>
                 <p>Ollama를 Homebrew 서비스로 시작하면 지금 실행되는 동시에 macOS 로그인 후에도 자동으로 시작됩니다. 그다음 Lecorder의 기본 검수 모델을 내려받습니다.</p>
                 <pre><code>brew services start ollama
-ollama pull qwen3:8b-q4_K_M
 ollama pull qwen3.5:9b
 
 # 설치 상태 확인
 brew services list | grep ollama
 ollama list</code></pre>
-                <p class="check"><code>brew services list</code>에서 Ollama가 <strong>started</strong>이고, <code>ollama list</code>에 <code>qwen3:8b-q4_K_M</code>이 보이면 준비된 상태입니다.</p>
+                <p class="check"><code>brew services list</code>에서 Ollama가 <strong>started</strong>이고, <code>ollama list</code>에 <code>qwen3.5:9b</code>이 보이면 준비된 상태입니다.</p>
                 <p class="tip">Qwen3 검수를 사용하지 않을 경우 Ollama 설치와 모델 다운로드는 생략할 수 있습니다. 해당 강의에서 <strong>Qwen3 문맥 검수</strong>도 끄세요.</p>
               </li>
               <li>
@@ -168,8 +167,8 @@ ollama list</code></pre>
               <tbody>
                 <tr><td><code>LECORDER_DIR</code></td><td><code>app.py</code>와 <code>web/backend</code>가 있는 프로젝트 폴더. 기본값 <code>.</code></td></tr>
                 <tr><td><code>LECORDER_OUTPUT_DIR</code></td><td>완성된 원본 미디어와 Markdown을 저장할 기존 폴더. 기본값 <code>output</code></td></tr>
-                <tr><td><code>NOTE_VISION_MODEL</code></td><td>강의노트 이미지 분석 모델. 기본값 <code>qwen3.5:9b</code></td></tr>
-                <tr><td><code>OLLAMA_MODEL</code></td><td>검수에 사용할 설치된 Ollama 모델. 기본값 <code>qwen3:8b-q4_K_M</code></td></tr>
+                <tr><td><code>NOTE_VISION_MODEL</code></td><td>강의노트 전용 모델 재정의. 생략하면 <code>OLLAMA_MODEL</code> 사용</td></tr>
+                <tr><td><code>OLLAMA_MODEL</code></td><td>검수·강의노트 분석에 사용할 설치된 Ollama 모델. 기본값 <code>qwen3.5:9b</code></td></tr>
               </tbody>
             </table>
             <p><code>start.command</code>로 실행 중이면 경로 저장 후 Whisper 프로세스를 정리하고 앱이 자동으로 다시 시작됩니다. 모델은 다음 전사 시 다시 로드합니다. <code>python app.py</code>로 직접 실행했다면 직접 재시작해야 합니다.</p>
@@ -303,7 +302,7 @@ ollama list</code></pre>
                 <tr><td>5055 포트 사용 중</td><td>다른 Lecorder 프로세스를 종료하거나 <code>LECORDER_PORT</code>를 변경합니다.</td></tr>
                 <tr><td>8080 포트 충돌</td><td>기존 서버를 종료하거나 <code>WHISPER_PORT</code>를 바꿉니다. 직접 관리하는 외부 서버는 <code>WHISPER_URL</code>로 지정할 수 있습니다.</td></tr>
                 <tr><td>Whisper 준비 안 됨</td><td>대시보드 경로 설정에서 실행 파일과 두 모델의 확인 상태를 살핍니다.</td></tr>
-                <tr><td>Qwen3 모델 없음</td><td><code>brew services start ollama</code> 후 <code>ollama pull qwen3:8b-q4_K_M</code>을 실행합니다.</td></tr>
+                <tr><td>Qwen3 모델 없음</td><td><code>brew services start ollama</code> 후 <code>ollama pull qwen3.5:9b</code>을 실행합니다.</td></tr>
                 <tr><td>출력 폴더 오류</td><td>Lecorder가 폴더를 자동 생성하지 않으므로, 먼저 폴더를 만든 뒤 경로 설정에서 선택합니다.</td></tr>
               </tbody>
             </table>

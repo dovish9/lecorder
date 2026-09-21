@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from web.backend.config import EnvironmentStore, WHISPER_URL, OLLAMA_URL, NOTE_VISION_MODEL
+from web.backend.config import EnvironmentStore, WHISPER_URL, OLLAMA_URL, NOTE_VISION_MODEL, DEFAULT_LLM_MODEL
 import requests
 
 
@@ -35,8 +35,8 @@ def checks():
         else None
     )
     output["kiwi"] = {
-        "helper": (root / "dependencies/kiwi-helper").is_file(),
-        "model": (root / "dependencies/Kiwi/models/cong/base/cong.mdl").is_file(),
+        "helper": (root / "dependencies/kiwi/bin/kiwi-helper").is_file(),
+        "model": (root / "dependencies/kiwi/models/cong/base/cong.mdl").is_file(),
     }
     output["python"] = {
         name: bool(importlib.util.find_spec(name)) for name in ("flask", "requests")
@@ -54,8 +54,10 @@ def checks():
         response.raise_for_status()
         installed = {m["name"] for m in response.json().get("models", [])}
         output["note_vision"] = {"model": NOTE_VISION_MODEL, "installed": NOTE_VISION_MODEL in installed}
+        output["review_model"] = {"model": DEFAULT_LLM_MODEL, "installed": DEFAULT_LLM_MODEL in installed}
     except (requests.RequestException, ValueError, KeyError):
         output["note_vision"] = {"model": NOTE_VISION_MODEL, "installed": None, "status": "Ollama unavailable"}
+        output["review_model"] = {"model": DEFAULT_LLM_MODEL, "installed": None}
     home = Path(EnvironmentStore().get().whisper_cpp_dir)
     output["whisper"] = {
         name: (home / path).is_file()

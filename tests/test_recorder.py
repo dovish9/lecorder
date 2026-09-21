@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from web.backend.config import EnvironmentStore
+from web.backend.config import DEFAULT_LLM_MODEL, EnvironmentStore
 from web.backend.engine import Transcriber
 from web.backend.files import OutputFiles
 from web.backend.markdown import markdown_target, render_note
@@ -499,15 +499,15 @@ class RecorderTests(unittest.TestCase):
         options = Options(language="ko", course_name="통계학", recognition_hint="모집단, 표본", llm_model="test")
         self.assertIn("과목명: 통계학", reviewer_prompt(options))
         self.assertIn("제안 누락이 잘못된 제안보다 낫다", reviewer_prompt(options))
-        self.assertIn("population, 파퓰레이션, 모집단은 서로 교체하지 않는다", reviewer_prompt(options))
-        self.assertIn("들어갈→포함될, 예측→추정", reviewer_prompt(options))
+        self.assertIn("한국어와 영어 표기를 서로 바꾸지 않는다", reviewer_prompt(options))
+        self.assertIn("의미만 비슷한 교체", reviewer_prompt(options))
         absolute_phonetic_rule = "뜻·문맥·철자·전문용어 여부·confidence와 관계없이 무조건 제안하지 않는다"
         self.assertIn(absolute_phonetic_rule, reviewer_prompt(options))
         self.assertIn(absolute_phonetic_rule, combined_review_prompt(options))
         self.assertIn("technical_term도 발음 조건을 예외로 면제하지 않는다", reviewer_prompt(options))
         self.assertIn("technical_term도 발음 조건을 예외로 면제하지 않는다", combined_review_prompt(options))
-        self.assertIn("글자 수나 발화 수를 맞추기 위해 나누지 않고", combined_review_prompt(options))
-        self.assertIn("JSON의 edits와 break_after만 반환한다", combined_review_prompt(options))
+        self.assertIn("개수나 길이를 맞추려고 나누지 않는다", combined_review_prompt(options))
+        self.assertIn("JSON에는 edits와 break_after만", combined_review_prompt(options))
         review_response = Mock()
         review_response.raise_for_status.return_value = None
         review_response.json.return_value = {"message": {"content": json.dumps({
@@ -1308,7 +1308,7 @@ class RecorderTests(unittest.TestCase):
                     audio = output / "original.wav"
                     audio.write_bytes(b"audio")
                     row = store.create_recording("original", store.get(), "original", "upload", ".wav", "", status)
-                    store.update_recording(row.id, audio_path=str(audio))
+                    store.update_recording(row.id, audio_path=str(audio), llm_model="legacy-model")
                     store.update_course(course.id, name="updated course", language=language,
                                         prompt="new hint", corrections="old -> new",
                                         format_transcript=False, llm_enabled=False)
@@ -1324,6 +1324,7 @@ class RecorderTests(unittest.TestCase):
                     options = engine.calls[-1]
                     self.assertEqual(options.language, language)
                     self.assertEqual(options.course_name, "updated course")
+                    self.assertEqual(options.llm_model, DEFAULT_LLM_MODEL)
                     self.assertEqual(options.recognition_hint, "")
                     self.assertFalse(hasattr(options, "corrections"))
                     self.assertFalse(options.format_text)

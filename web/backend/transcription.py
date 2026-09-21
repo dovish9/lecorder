@@ -7,6 +7,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from .config import DEFAULT_LLM_MODEL
+
 
 SUPPORTED_MEDIA = frozenset({
     ".3g2", ".3gp", ".aac", ".aif", ".aiff", ".alac", ".amr", ".caf",
@@ -26,7 +28,7 @@ class Options:
     note_keywords: tuple[str, ...] = ()
     format_text: bool = True
     use_llm: bool = True
-    llm_model: str = "qwen3:8b-q4_K_M"
+    llm_model: str = DEFAULT_LLM_MODEL
     retry_low_confidence: bool = True
 
 

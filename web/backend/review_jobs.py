@@ -7,6 +7,7 @@ import threading
 import uuid
 from dataclasses import replace, asdict
 from pathlib import Path
+from .config import DEFAULT_LLM_MODEL
 from .markdown import render_note, transcript_text
 from .transcription import Options, CancellationToken
 
@@ -89,7 +90,7 @@ class ReviewQueue:
                 raise ValueError("완료된 전사의 검수만 다시 시작할 수 있습니다.")
             self._restore_backup(row)
             self.store.update_recording(
-                recording_id, review_status="queued", review_error=""
+                recording_id, review_status="queued", review_error="", llm_model=DEFAULT_LLM_MODEL
             )
             self.enqueue(recording_id)
 

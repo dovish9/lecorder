@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from .config import DB_FILE, LANGUAGES, EnvironmentStore, flag, text
+from .config import DEFAULT_LLM_MODEL, DB_FILE, LANGUAGES, EnvironmentStore, flag, text
 from .records import ActiveSettings, Course, Recording, StoredSuggestion
 
 
@@ -359,7 +359,8 @@ class LectureStore:
             if row["status"] not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
             course = db.execute("SELECT * FROM courses WHERE id = ?", (row["course_id"],)).fetchone()
-            changes = dict(status="queued", source_path=str(source), error="", started_at="", completed_at="")
+            changes = dict(status="queued", source_path=str(source), error="", started_at="", completed_at="",
+                           llm_model=DEFAULT_LLM_MODEL)
             # Deleted courses retain the job's snapshot; never borrow the selected course.
             if course is not None:
                 changes.update(course_name=course["name"])
@@ -375,7 +376,7 @@ class LectureStore:
             "title", "status", "source_path", "audio_path", "note_path", "duration_seconds",
             "processing_seconds", "transcript_text", "segments_json", "breaks_json",
             "quality_json", "error", "started_at", "completed_at",
-            "note_revision_id", "note_snapshot_json", "review_status", "review_error",
+            "note_revision_id", "note_snapshot_json", "review_status", "review_error", "llm_model",
         }
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:
