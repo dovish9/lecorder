@@ -166,7 +166,6 @@ ollama list</code></pre>
               <thead><tr><th>환경 변수</th><th>의미</th></tr></thead>
               <tbody>
                 <tr><td><code>LECORDER_DIR</code></td><td><code>app.py</code>와 <code>web/backend</code>가 있는 프로젝트 폴더. 기본값 <code>.</code></td></tr>
-                <tr><td><code>WHISPER_CPP_DIR</code></td><td><code>build/bin/whisper-server</code>와 두 모델이 있는 whisper.cpp 폴더. 기본값 <code>../whisper.cpp</code></td></tr>
                 <tr><td><code>LECORDER_OUTPUT_DIR</code></td><td>완성된 원본 미디어와 Markdown을 저장할 기존 폴더. 기본값 <code>output</code></td></tr>
                 <tr><td><code>OLLAMA_MODEL</code></td><td>검수에 사용할 설치된 Ollama 모델. 기본값 <code>qwen3:8b-q4_K_M</code></td></tr>
               </tbody>
@@ -223,12 +222,12 @@ ollama list</code></pre>
             <h2><small>05</small>사용 흐름</h2>
             <div class="flow detailed">
               <div><b>01</b><strong>강의 선택</strong><span><strong>강의</strong> 화면에서 프로필을 만들고 한국어·영어·자동 감지 중 언어를 선택합니다.</span></div>
-              <div><b>02</b><strong>인식 규칙 입력</strong><span>과목명·인명·전문용어는 인식 힌트에, 반복 오인식은 <code>잘못된 표현=올바른 표현</code> 형태로 확정 교정에 적습니다. 설정은 입력 중 SQLite에 자동 저장됩니다.</span></div>
+              <div><b>02</b><strong>강의노트 등록</strong><span>PDF·이미지·PPTX를 강의에 등록합니다. 추출 키워드의 포함·제외를 선택하고, 녹음을 시작한 뒤 하단 컨트롤 위에서 노트 하나 또는 사용 안 함을 선택합니다. 업로드·다시 전사하기에서도 노트를 선택할 수 있습니다.</span></div>
               <div><b>03</b><strong>처리 방식 선택</strong><span><strong>가독성 자동 정리</strong>는 Qwen3가 찾은 의미 경계로 문단을 구성하고, <strong>Qwen3 문맥 검수</strong>는 단어 수정 후보를 만듭니다. 두 옵션은 강의별로 기억됩니다.</span></div>
               <div><b>04</b><strong>녹음 또는 업로드</strong><span><strong>녹음</strong> 화면에서 마이크를 녹음하거나 지원되는 오디오·동영상 파일을 업로드합니다. 작업을 시작할 때 현재 강의 설정이 해당 작업에 복사됩니다.</span></div>
               <div><b>05</b><strong>대기열 확인</strong><span>전사는 한 번에 하나씩 처리됩니다. 앞 작업이 처리 중이어도 다음 녹음이나 업로드를 대기열에 추가할 수 있습니다.</span></div>
               <div><b>06</b><strong>결과와 이력 확인</strong><span><strong>저장소</strong>는 실제 출력 폴더를 읽어 음성과 Markdown을 묶어 보여 줍니다. <strong>최근 작업</strong>은 상태, 시간, 품질 지표, 재시도와 중단 기능을 제공합니다.</span></div>
-              <div><b>07</b><strong>수정 제안 검토</strong><span>각 후보의 해당 시간 원음을 듣고 승인하거나 거절합니다. 승인한 항목만 현재 Markdown과 강의의 확정 교정 규칙에 반영됩니다.</span></div>
+              <div><b>07</b><strong>수정 제안 검토</strong><span>각 후보의 해당 시간 원음을 듣고 승인하거나 거절합니다. 승인한 항목만 현재 Markdown에 반영됩니다.</span></div>
             </div>
           </section>
 
@@ -239,10 +238,10 @@ ollama list</code></pre>
               <div><b>01</b><strong>작업 접수</strong><span>업로드 파일은 작업 폴더에 먼저 복사합니다. 브라우저 녹음은 5초 조각으로 생성되어 IndexedDB에 기록된 뒤 서버로 전송되고, 종료할 때 순서대로 하나의 원본으로 결합됩니다.</span></div>
               <div><b>02</b><strong>단일 대기열</strong><span>SQLite에 작업과 당시의 강의 설정을 기록하고 단일 소비자 스레드가 등록 순서대로 처리합니다. 앱 재시작 시 <code>queued</code> 작업은 다시 대기열에 넣습니다.</span></div>
               <div><b>03</b><strong>오디오 표준화</strong><span>FFmpeg가 입력 미디어를 Whisper용 <code>16kHz · mono · PCM s16le WAV</code>로 변환합니다. 입력 확장자는 결과 원본을 저장할 때 그대로 유지합니다.</span></div>
-              <div><b>04</b><strong>Whisper 1차 전사</strong><span>음성을 약 120초씩 가까운 침묵 지점에서 나눕니다. 침묵을 찾지 못하면 경계에 2초 문맥을 겹칩니다. 요청마다 이전 전사의 텍스트 상태를 초기화하고, large-v3와 Silero VAD로 각 구간을 전사합니다. 인식 힌트는 UTF-8 400바이트까지 전달하며 발화 시각은 원본 기준으로 보존합니다.</span></div>
+              <div><b>04</b><strong>Whisper 1차 전사</strong><span>음성을 약 120초씩 가까운 침묵 지점에서 나눕니다. 침묵을 찾지 못하면 경계에 2초 문맥을 겹칩니다. 요청마다 이전 전사의 텍스트 상태를 초기화하고, large-v3와 Silero VAD로 각 구간을 전사합니다. 자동 인식 힌트는 실제 모델 토큰 96개 이내로 선별하며 발화 시각은 원본 기준으로 보존합니다.</span></div>
               <div><b>05</b><strong>1차 품질 보호</strong><span>60초 이상 파일에서 마지막 발화가 전체 길이의 절반 전에 끝나거나 인식된 발화 시간이 전체의 15%보다 짧으면 VAD 누락으로 판단합니다. 또한 신뢰도와 무관하게 긴 동일 문장이 연속 구간이나 전체 발화의 큰 비율을 차지하면 반복 붕괴로 판단합니다. 반복 붕괴 시 해당 구간만 과거 문맥·VAD·힌트 없이 beam search로 다시 읽으며, 재전사도 반복되면 잘못된 결과를 저장하지 않고 작업을 실패 처리합니다.</span></div>
               <div><b>06</b><strong>저신뢰 구간 재확인</strong><span>평균 로그확률이 기본 <code>-0.65</code>보다 낮은 인접 발화를 묶고 앞뒤 여유를 포함한 최대 30초 클립으로 다시 읽습니다. 기본 최대 4묶음·90초 안에서 beam size 5로 시도하며, 신뢰도가 개선되거나 힌트 용어가 늘면서 품질이 유지되는 경우에만 원래 구간을 교체합니다. 빈 결과, 과도한 길이 변화와 반복 문장은 거절합니다.</span></div>
-              <div><b>07</b><strong>확정 교정 적용</strong><span>강의에 저장된 <code>잘못된 표현=올바른 표현</code> 규칙을 발화별로 적용합니다. 이 단계는 모델 판단이 아닌 결정적 문자열 치환입니다.</span></div>
+              <div><b>07</b><strong>자동 힌트 사용</strong><span>선택한 강의노트의 키워드를 사용합니다. 수동 인식 힌트와 기계적인 문자열 교정은 사용하지 않습니다.</span></div>
               <div><b>08</b><strong>Qwen3 선택 검수</strong><span>검수를 켠 경우 약 1,800자 단위로 나누어 단어 오인식 후보를 요청합니다. 가독성 자동 정리도 켰다면 같은 요청에서 문단 경계를 함께 판단해 중복 모델 호출을 줄입니다. 각 묶음에는 앞뒤 최대 3개 발화를 문맥으로 제공하며, 잘린 JSON은 더 작은 묶음으로 나눠 재시도합니다.</span></div>
               <div><b>09</b><strong>Markdown 구성</strong><span>승인 전의 단어 후보는 본문에 적용하지 않습니다. Qwen3가 반환한 문단 경계만 선택 설정에 따라 반영하고, 각 문단 시작 시각에 원본 오디오 링크를 단 Markdown을 만듭니다.</span></div>
               <div><b>10</b><strong>안전한 저장</strong><span>출력 폴더의 숨김 임시파일에 원본과 Markdown을 먼저 만든 뒤 최종 이름으로 교체합니다. 같은 이름이 있으면 <code>(2)</code>, <code>(3)</code>을 붙여 기존 파일을 덮어쓰지 않습니다. 성공 후 작업용 임시 폴더를 삭제합니다.</span></div>
@@ -252,7 +251,7 @@ ollama list</code></pre>
               <tbody>
                 <tr><td>Qwen3 검수 켬<br>가독성 정리 켬</td><td>단어 수정 후보와 의미상 문단 경계를 통합 JSON으로 한 번에 요청합니다. 후보는 승인 전까지 원문을 바꾸지 않습니다.</td></tr>
                 <tr><td>Qwen3 검수 켬<br>가독성 정리 끔</td><td>단어 수정 후보는 만들지만 문단 판단 요청은 보내지 않고 전사문을 한 문단으로 구성합니다.</td></tr>
-                <tr><td>Qwen3 검수 끔</td><td>Whisper 결과에 확정 교정만 적용합니다. Qwen3 요청, 새 수정 후보와 의미 기반 문단 경계는 만들지 않습니다.</td></tr>
+                <tr><td>Qwen3 검수 끔</td><td>Whisper 결과를 그대로 보존합니다. Qwen3 요청, 새 수정 후보와 의미 기반 문단 경계는 만들지 않습니다.</td></tr>
                 <tr><td>Qwen3 일부 실패</td><td>작업은 완료 상태로 저장하되 경고를 표시합니다. Whisper 원문과 성공한 검수 결과만 남고 실패한 묶음을 임의로 수정하지 않습니다.</td></tr>
               </tbody>
             </table>
@@ -268,7 +267,7 @@ ollama list</code></pre>
               <li>번역, 맞춤법·띄어쓰기 교정, 조사·어미 수정, 요약, 사실 교정, 의미가 다른 표현으로의 교체는 허용하지 않습니다.</li>
               <li>문단 경계는 주제 전환, 정의에서 예시로의 전환, 질문·답변 종료와 같이 의미 변화가 분명할 때만 사용합니다.</li>
             </ul>
-            <p>사용자가 <strong>승인</strong>하면 해당 발화의 첫 일치 구절만 바꾸어 Markdown을 안전하게 다시 쓰고, 같은 규칙을 강의의 확정 교정 목록에 추가합니다. 이후 그 강의로 만든 작업에는 해당 규칙이 자동 적용됩니다. <strong>거절</strong>한 후보는 상태만 기록하며 본문을 바꾸지 않습니다.</p>
+            <p>사용자가 <strong>승인</strong>하면 해당 발화의 첫 일치 구절만 바꾸어 현재 Markdown을 안전하게 다시 씁니다. 다른 작업에 적용되는 영구 교정 규칙은 만들지 않습니다. <strong>거절</strong>한 후보는 상태만 기록하며 본문을 바꾸지 않습니다.</p>
             <h3>생성되는 Markdown</h3>
             <p>노트에는 강의명, 녹음 시각, 길이, 언어, Whisper·검수 모델, 원본 파일명이 YAML 메타데이터로 들어갑니다. 본문에는 전체 녹음 링크와 문단 시작 시각별 링크가 생성되므로 같은 폴더의 원본으로 바로 이동할 수 있습니다.</p>
           </section>
@@ -293,7 +292,7 @@ ollama list</code></pre>
               <li><strong>서비스 상태 확인</strong><p>대시보드 위 상태 표시에서 Whisper, Ollama와 선택한 Qwen3 모델의 준비 여부를 확인합니다. Qwen3는 선택 기능이므로 없어도 Whisper 전사와 저장은 가능합니다.</p></li>
               <li><strong>짧은 샘플 처리</strong><p>녹음 또는 파일 하나를 처리해 출력 폴더에 원본과 같은 이름의 Markdown이 함께 생기는지 확인합니다.</p></li>
               <li><strong>Markdown 확인</strong><p>YAML 메타데이터, 녹음 듣기 링크, 문단별 타임스탬프 링크가 올바른 원본 파일을 가리키는지 확인합니다.</p></li>
-              <li><strong>Qwen3 검수 확인</strong><p>검수를 켠다면 수정 후보의 원음을 재생하고 승인·거절해 봅니다. 승인 후 현재 Markdown과 강의의 확정 교정이 함께 바뀌어야 합니다.</p></li>
+              <li><strong>Qwen3 검수 확인</strong><p>검수를 켠다면 수정 후보의 원음을 재생하고 승인·거절해 봅니다. 승인 후 현재 Markdown만 바뀌어야 합니다.</p></li>
               <li><strong>회귀 테스트 실행</strong><pre><code>.venv/bin/python -m unittest discover -s tests -v</code></pre></li>
             </ol>
             <h3>자주 생기는 문제</h3>

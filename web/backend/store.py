@@ -15,7 +15,7 @@ from .records import ActiveSettings, Course, Recording, StoredSuggestion
 
 class LectureStore:
     COURSE_FIELDS = {
-        "name", "language", "prompt", "corrections",
+        "name", "language",
         "format_transcript", "llm_enabled",
     }
 
@@ -46,6 +46,16 @@ class LectureStore:
             connection.close()
 
     def _setup(self) -> None:
+        if self.path.exists() and self.path.stat().st_size:
+            with self._connect() as source:
+                columns = {row[1] for row in source.execute("PRAGMA table_info(recordings)")}
+                if columns and "note_revision_id" not in columns:
+                    backup = self.path.with_name(self.path.stem + "-before-notes-" + datetime.now().strftime("%Y%m%d%H%M%S") + ".db")
+                    target = sqlite3.connect(backup)
+                    try:
+                        source.backup(target)
+                    finally:
+                        target.close()
         with self._lock, self._connect() as db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(
@@ -114,6 +124,22 @@ class LectureStore:
                     ON suggestions(recording_id, status, id);
                 """
             )
+            db.execute("""CREATE TABLE IF NOT EXISTS transcription_runs (
+                id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+                settings TEXT NOT NULL, metrics TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')""")
+            db.execute("""CREATE TABLE IF NOT EXISTS review_runs (
+                id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
+                settings TEXT NOT NULL, metrics TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(recordings)")}
+            for name, definition in {
+                "note_revision_id": "TEXT", "note_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
+                "review_status": "TEXT NOT NULL DEFAULT 'none'", "review_error": "TEXT NOT NULL DEFAULT ''",
+            }.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE recordings ADD COLUMN {name} {definition}")
+            db.execute("PRAGMA user_version = 1")
             count = db.execute("SELECT COUNT(*) FROM courses").fetchone()[0]
             if count == 0:
                 now = self.now()
@@ -129,6 +155,7 @@ class LectureStore:
     def recover_interrupted(self) -> None:
         """Recover abandoned jobs once, when the processing worker starts."""
         with self._lock, self._connect() as db:
+            db.execute("UPDATE transcription_runs SET status='interrupted', completed_at=?, error='앱 종료로 중단되었습니다.' WHERE completed_at=''", (self.now(),))
             db.execute(
                 "UPDATE recordings SET status = 'recoverable', "
                 "error = '앱이 종료되어 작업이 중단되었습니다.' "
@@ -228,10 +255,6 @@ class LectureStore:
                 value = text(raw, 10)
                 if value not in LANGUAGES:
                     raise ValueError("지원하지 않는 언어입니다.")
-            elif key == "prompt":
-                value = text(raw, 3000)
-            elif key == "corrections":
-                value = text(raw, 5000)
             else:
                 value = int(flag(raw, getattr(current, key)))
             values[key] = value
@@ -278,8 +301,8 @@ class LectureStore:
             course_id=course.id,
             course_name=course.name,
             language=course.language,
-            prompt=course.prompt,
-            corrections=course.corrections,
+            prompt="",
+            corrections="",
             format_transcript=course.format_transcript,
             llm_enabled=course.llm_enabled,
             output_dir=self.environment.get().output_dir,
@@ -340,7 +363,7 @@ class LectureStore:
             # Deleted courses retain the job's snapshot; never borrow the selected course.
             if course is not None:
                 changes.update(course_name=course["name"])
-                for name in ("language", "prompt", "corrections", "format_transcript", "llm_enabled"):
+                for name in ("language", "format_transcript", "llm_enabled"):
                     changes[name] = course[name]
             assignments = ", ".join(f"{key} = ?" for key in changes)
             db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
@@ -352,6 +375,7 @@ class LectureStore:
             "title", "status", "source_path", "audio_path", "note_path", "duration_seconds",
             "processing_seconds", "transcript_text", "segments_json", "breaks_json",
             "quality_json", "error", "started_at", "completed_at",
+            "note_revision_id", "note_snapshot_json", "review_status", "review_error",
         }
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:
@@ -504,14 +528,3 @@ class LectureStore:
                     raise KeyError("수정 제안을 찾지 못했습니다.")
                 raise ValueError("이미 검토한 제안입니다.")
         return self.get_suggestion(suggestion_id)
-
-    def append_correction(self, course_id: int | None, wrong: str, correct: str) -> Course | None:
-        if course_id is None:
-            return None
-        course = self.get_course(course_id)
-        rule = f"{wrong}={correct}"
-        existing = [line.strip() for line in course.corrections.splitlines() if line.strip()]
-        if rule not in existing:
-            existing.append(rule)
-            return self.update_course(course_id, corrections="\n".join(existing))
-        return course

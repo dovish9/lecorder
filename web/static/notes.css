@@ -1,0 +1,449 @@
+/* Lecture-note surfaces share the app's existing colors and control scale. */
+.note-dialog {
+  color: var(--ink);
+  background: var(--raised);
+  border: 0.5px solid var(--line2);
+  border-radius: 12px;
+  padding: 22px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  box-shadow: 0 24px 80px #0004;
+  font:
+    13px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Apple SD Gothic Neo",
+    sans-serif;
+}
+.note-dialog::backdrop {
+  background: #0005;
+}
+.note-dialog > header,
+.note-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.note-dialog > header {
+  margin-bottom: 20px;
+}
+.note-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.note-dialog h3 {
+  font-size: 14px;
+}
+.note-dialog h4 {
+  font-size: 13px;
+}
+.note-dialog button,
+.note-dialog select,
+.note-dialog input:not([type="checkbox"]),
+#courseNotes button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  border: 0.5px solid var(--line2);
+  border-radius: 6px;
+  background: var(--raised);
+  padding: 5px 10px;
+  min-height: 28px;
+}
+.note-dialog button,
+#courseNotes button {
+  cursor: pointer;
+}
+.note-dialog button:hover,
+#courseNotes button:hover {
+  background: var(--surface);
+}
+.note-dialog button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.note-dialog :focus-visible,
+#courseNotes button:focus-visible {
+  outline: 3px solid var(--blue-soft);
+  outline-offset: 2px;
+}
+.note-dialog p {
+  line-height: 1.65;
+}
+.note-dialog > label {
+  display: grid;
+  gap: 8px;
+}
+.note-dialog > label select {
+  width: 100%;
+}
+.note-dialog > button:last-child {
+  display: block;
+  margin: 20px 0 0 auto;
+  color: white;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+.note-muted {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+#courseNotes {
+  padding: 22px 0 4px;
+}
+#courseNotes > .note-toolbar {
+  margin-bottom: 12px;
+}
+#courseNotes h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.note-list {
+  border: 0.5px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.note-list > p {
+  margin: 0;
+  padding: 20px 14px;
+}
+#courseNotes .note-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+}
+#courseNotes .note-row + .note-row {
+  border-top: 0.5px solid var(--line);
+}
+.note-row-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.note-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.note-document-icon {
+  flex: 0 0 22px;
+  height: 28px;
+  border: 1px solid var(--blue);
+  border-radius: 3px;
+  position: relative;
+  opacity: 0.8;
+}
+.note-document-icon::after {
+  content: "";
+  position: absolute;
+  inset: 8px 5px;
+  border-top: 1px solid var(--blue);
+  border-bottom: 1px solid var(--blue);
+}
+.note-chevron {
+  color: var(--muted);
+  font-size: 22px;
+  font-weight: 300;
+}
+.note-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+.note-viewer {
+  width: min(1120px, calc(100vw - 48px));
+  height: min(820px, calc(100dvh - 48px));
+  padding: 0;
+  overflow: hidden;
+}
+.note-viewer > header {
+  flex: none;
+  margin: 0;
+  padding: 18px 22px 14px;
+  background: var(--surface);
+}
+.note-heading {
+  min-width: 0;
+}
+.note-heading .note-muted {
+  margin: 5px 0 0;
+}
+.note-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 22px 14px;
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--line);
+}
+.note-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 0.5px solid var(--line);
+  border-radius: 7px;
+  background: var(--window);
+}
+.note-tabs button {
+  padding: 4px 15px;
+  border: 0;
+  background: transparent;
+  min-height: 26px;
+}
+.note-tabs [aria-pressed="true"] {
+  background: var(--raised);
+  box-shadow: 0 1px 3px #0002;
+  font-weight: 600;
+}
+.note-toolbar {
+  gap: 6px;
+}
+.note-viewer .note-toolbar button {
+  font-size: 11px;
+}
+.note-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 20px 22px;
+}
+.note-body > :first-child {
+  margin-top: 0;
+}
+.note-pagebar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.note-pagebar select {
+  min-width: 120px;
+}
+.note-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.note-preview {
+  padding: 12px;
+  border: 0.5px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.note-preview img {
+  display: block;
+  width: 100%;
+  background: white;
+  box-shadow: 0 1px 5px #0002;
+}
+.note-extracted {
+  min-width: 0;
+}
+.note-extracted h3:first-child {
+  margin-top: 0;
+}
+.note-extracted h3 {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 24px;
+}
+.note-body pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.8;
+}
+.note-keywords {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 24px;
+  margin: 18px 0;
+}
+.note-keywords > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 0.5px solid var(--line);
+}
+.note-keywords label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.note-keywords input {
+  accent-color: var(--blue);
+  flex-shrink: 0;
+}
+.note-keywords select {
+  flex-shrink: 0;
+  max-width: 110px;
+  font-size: 11px;
+}
+.note-body section {
+  border-bottom: 0.5px solid var(--line);
+  padding: 18px 0;
+}
+.note-body li {
+  margin: 6px 0;
+}
+.note-error {
+  color: var(--orange);
+  padding: 10px 12px;
+  border: 0.5px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.note-upload > input {
+  width: 100%;
+}
+.note-upload input[type="file"] {
+  padding: 14px;
+  background: var(--surface);
+}
+.note-upload input::file-selector-button {
+  font: inherit;
+  margin-right: 12px;
+  padding: 5px 10px;
+  border: 0.5px solid var(--line2);
+  border-radius: 5px;
+  background: var(--raised);
+  color: var(--ink);
+}
+.note-file-order {
+  padding: 0;
+  list-style: none;
+}
+.note-file-order li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 0;
+  border-bottom: 0.5px solid var(--line);
+}
+.note-file-order li span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  .note-viewer {
+    width: calc(100vw - 20px);
+    height: calc(100dvh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+  .note-viewer > header {
+    padding: 16px;
+  }
+  .note-controls {
+    padding: 0 16px 12px;
+    gap: 10px;
+  }
+  .note-body {
+    padding: 16px;
+  }
+  .note-split,
+  .note-keywords {
+    grid-template-columns: 1fr;
+  }
+  .note-dialog h2 {
+    font-size: 15px;
+  }
+  .note-tabs button {
+    padding: 4px 12px;
+  }
+}
+.note-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding: 12px 22px;
+  background: var(--surface);
+  border-top: 0.5px solid var(--line);
+}
+.note-footer button {
+  color: white;
+  background: var(--blue);
+  border-color: var(--blue);
+  white-space: nowrap;
+}
+.note-footer button:hover {
+  background: var(--blue);
+  filter: brightness(0.94);
+}
+/* A compact companion to the existing floating recording controls. */
+.command-dock > .dock-note-picker {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 390px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 12px;
+  border: 0.5px solid var(--line2);
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: 0 6px 22px #0002;
+  color: var(--ink);
+}
+.dock-note-picker label {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.dock-note-picker select {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  padding: 4px 2px;
+  color: var(--ink);
+  text-overflow: ellipsis;
+}
+.dock-note-picker span {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.dock-note-picker button {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.dock-note-picker :focus-visible {
+  outline: 3px solid var(--blue-soft);
+  outline-offset: 2px;
+}
+.note-retranscribe-title {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}

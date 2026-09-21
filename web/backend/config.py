@@ -99,7 +99,6 @@ class EnvironmentStore:
 
     KEYS = {
         "project_dir": "LECORDER_DIR",
-        "whisper_cpp_dir": "WHISPER_CPP_DIR",
         "output_dir": "LECORDER_OUTPUT_DIR",
     }
 
@@ -110,13 +109,10 @@ class EnvironmentStore:
 
     def get(self) -> Environment:
         values = _read_env(self.path)
+        project = resolve_path(values.get("LECORDER_DIR", os.getenv("LECORDER_DIR", ".")), self.script_root)
         return Environment(
-            project_dir=str(resolve_path(values.get(
-                "LECORDER_DIR", os.getenv("LECORDER_DIR", ".")
-            ), self.script_root)),
-            whisper_cpp_dir=str(resolve_path(values.get(
-                "WHISPER_CPP_DIR", os.getenv("WHISPER_CPP_DIR", "../whisper.cpp")
-            ), self.script_root)),
+            project_dir=str(project),
+            whisper_cpp_dir=str(project / "dependencies" / "whisper.cpp"),
             output_dir=str(resolve_path(values.get(
                 "LECORDER_OUTPUT_DIR",
                 os.getenv("LECORDER_OUTPUT_DIR", "output"),
@@ -136,12 +132,10 @@ class EnvironmentStore:
             project = Path(clean["project_dir"])
             if not (project / "app.py").is_file() or not (project / "web/backend").is_dir():
                 raise ValueError("프로젝트 경로에서 app.py와 web/backend 폴더를 찾지 못했습니다.")
-            if not Path(clean["whisper_cpp_dir"]).is_dir():
-                raise ValueError("whisper.cpp 경로가 존재하는 폴더가 아닙니다.")
             if not Path(clean["output_dir"]).is_dir():
                 raise ValueError("파일 저장 경로가 존재하는 폴더가 아닙니다.")
 
-            updated = replace(current, **clean)
+            updated = replace(current, **clean, whisper_cpp_dir=str(project / "dependencies" / "whisper.cpp"))
             managed_values = {
                 env_key: getattr(updated, field) for field, env_key in self.KEYS.items()
             }
@@ -149,7 +143,7 @@ class EnvironmentStore:
             preserved = {
                 key: value for key, value in existing.items()
                 if key not in managed_values
-                and key != "OLLAMA_MODEL"
+                and key not in {"OLLAMA_MODEL", "WHISPER_CPP_DIR"}
                 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
             }
             lines = [

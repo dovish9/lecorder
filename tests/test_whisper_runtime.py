@@ -166,8 +166,8 @@ class ChunkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             wav=Path(d)/'audio.wav';wav.write_bytes(b'wav')
             with patch('web.backend.engine.requests.post',return_value=response) as post:
-                Transcriber._whisper(wav,Options(language='ko',prompt='물리학 용어 '*1000),None)
-                self.assertLessEqual(len(post.call_args.kwargs['data']['prompt'].encode()),400)
+                Transcriber._whisper(wav,Options(language='ko',recognition_hint='물리학 용어'),None)
+                self.assertEqual(post.call_args.kwargs['data']['prompt'], '물리학 용어')
                 Transcriber._whisper(wav,Options(language='en'),{'no_context':'false'})
                 self.assertEqual(post.call_args.kwargs['data']['no_context'],'true')
                 self.assertEqual(post.call_args.kwargs['data']['prompt'],'')

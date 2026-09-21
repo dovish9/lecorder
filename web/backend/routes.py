@@ -5,6 +5,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
+from functools import wraps
 from typing import Any
 
 from flask import Flask, jsonify, request, send_file
@@ -14,6 +15,7 @@ from .engine import Transcriber, ollama_ready, port_ready
 from .files import safe_name
 from .output_files import prepare_webm_playback, rename_output_files
 from .pipeline import RecordingPipeline
+from .note_routes import note_routes
 from .records import Recording
 from .state import JobState
 from .whisper_runtime import whisper_runtime
@@ -52,6 +54,14 @@ def create_app(
     workflow = pipeline or RecordingPipeline(lectures, state, engine)
     app = Flask(__name__, static_folder=str(ROOT / "web" / "static"))
     app.extensions["recording_pipeline"] = workflow
+    app.register_blueprint(note_routes(workflow.notes, workflow.reviews))
+
+    def serialize_outputs(handler):
+        @wraps(handler)
+        def run(*args, **kwargs):
+            with workflow._lock:
+                return handler(*args, **kwargs)
+        return run
 
     @app.errorhandler(405)
     def api_method_not_allowed(error):
@@ -61,6 +71,7 @@ def create_app(
 
     def recording_payload(recording: Recording, counts: dict[str, int] | None = None) -> dict[str, Any]:
         data = recording.public()
+        data["lecture_note_id"] = workflow.notes._revision(recording.note_revision_id)["note_id"] if recording.note_revision_id else None
         data["suggestion_counts"] = (
             counts if counts is not None else lectures.suggestion_counts([recording.id])[recording.id]
         )
@@ -202,7 +213,7 @@ def create_app(
         if not title:
             return jsonify(error="저장할 파일 이름을 입력해 주세요."), 400
         try:
-            recording = workflow.create_upload(current, title, extension, uploaded.stream)
+            recording = workflow.create_upload(current, title, extension, uploaded.stream, request.form.get("lecture_note_id") or None)
             return jsonify(ok=True, recording=recording_payload(recording)), 202
         except ValueError as error:
             return jsonify(error=str(error)), 400
@@ -219,10 +230,24 @@ def create_app(
         if extension not in SUPPORTED_MEDIA:
             return jsonify(error="지원하지 않는 녹음 형식입니다."), 400
         try:
-            recording = workflow.begin_chunked(lectures.get(), title, extension)
+            recording = workflow.begin_chunked(lectures.get(), title, extension, payload.get("lecture_note_id"))
             return jsonify(ok=True, recording=recording_payload(recording)), 201
         except Exception as error:
             return jsonify(error=str(error)), 500
+
+    @app.patch("/api/recordings/<recording_id>/lecture-note")
+    @serialize_outputs
+    def select_recording_note(recording_id: str):
+        payload = request.get_json(silent=True) or {}
+        try:
+            if "lecture_note_id" not in payload:
+                raise ValueError("강의노트를 선택하세요.")
+            recording = workflow.select_recording_note(recording_id, payload["lecture_note_id"])
+            return jsonify(ok=True, recording=recording_payload(recording))
+        except KeyError as error:
+            return jsonify(error=error.args[0]), 404
+        except (TypeError, ValueError) as error:
+            return jsonify(error=str(error)), 400
 
     @app.put("/api/recordings/<recording_id>/chunks/<int:index>")
     def save_recording_chunk(recording_id: str, index: int):
@@ -235,6 +260,7 @@ def create_app(
             return jsonify(error=str(error)), 400
 
     @app.post("/api/recordings/<recording_id>/finalize")
+    @serialize_outputs
     def finalize_recording(recording_id: str):
         payload = request.get_json(silent=True) or {}
         try:
@@ -258,6 +284,7 @@ def create_app(
             return jsonify(error=str(error)), 400
 
     @app.delete("/api/recordings/<recording_id>/history")
+    @serialize_outputs
     def delete_recording_history(recording_id: str):
         try:
             workflow.delete_history(recording_id)
@@ -399,6 +426,7 @@ def create_app(
             return jsonify(error=error.args[0]), 404
 
     @app.patch("/api/recordings/<recording_id>")
+    @serialize_outputs
     def update_recording(recording_id: str):
         payload = request.get_json(silent=True) or {}
         title = safe_name(text(payload.get("title"), 160))
@@ -408,6 +436,8 @@ def create_app(
             recording = lectures.get_recording(recording_id)
             if recording.status not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업의 제목만 수정할 수 있습니다.")
+            if recording.review_status in {"queued", "processing"}:
+                raise ValueError("검수가 끝난 후 파일을 수정하거나 삭제하세요.")
             root = Path(recording.output_dir).expanduser().resolve()
             targets: list[Path] = []
             target_fields: list[str] = []
@@ -451,11 +481,14 @@ def create_app(
             return jsonify(error=f"파일 이름을 수정하지 못했습니다: {error}"), 500
 
     @app.delete("/api/recordings/<recording_id>/with-files")
+    @serialize_outputs
     def delete_recording_with_files(recording_id: str):
         try:
             recording = lectures.get_recording(recording_id)
             if recording.status not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업만 파일과 함께 삭제할 수 있습니다.")
+            if recording.review_status in {"queued", "processing"}:
+                raise ValueError("검수가 끝난 후 파일을 수정하거나 삭제하세요.")
             root = Path(recording.output_dir).expanduser().resolve()
             targets: list[Path] = []
             for value in (recording.audio_path, recording.note_path):
@@ -495,7 +528,8 @@ def create_app(
     @app.post("/api/recordings/<recording_id>/retranscribe")
     def retranscribe_recording(recording_id: str):
         try:
-            recording = workflow.retranscribe(recording_id)
+            payload = request.get_json(silent=True) or {}
+            recording = workflow.retranscribe(recording_id, payload.get("lecture_note_id"), retain_note="lecture_note_id" not in payload)
             return jsonify(ok=True, recording=recording_payload(recording)), 202
         except KeyError as error:
             return jsonify(error=error.args[0]), 404

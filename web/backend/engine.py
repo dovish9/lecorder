@@ -17,10 +17,12 @@ import requests
 
 from .config import OLLAMA_URL, WHISPER_URL
 from .whisper_runtime import whisper_runtime
+from .inference import inference
+from .review_jobs import relevant_context
+from .note_analysis import hint_terms
 from .review import (
     EDIT_SCHEMA,
     REVIEW_SCHEMA,
-    apply_rules,
     combined_review_prompt,
     compose_text,
     reviewer_prompt,
@@ -67,20 +69,14 @@ class Transcriber:
         conversion_started = time.monotonic()
         self._convert(source, wav, cancellation)
         conversion_seconds = time.monotonic() - conversion_started
-        with whisper_runtime.session(cancellation):
+        with inference.lease(speech=True, cancellation=cancellation), whisper_runtime.session(cancellation):
+            options = self._with_note_hint(options)
             whispered = self._whisper_chunked(wav, options, incoming, progress, cancellation)
             if options.retry_low_confidence:
                 whispered = self._retry_low_confidence(
                     wav, options, whispered, incoming, progress, cancellation
                 )
-        corrected_segments = tuple(
-            TranscriptSegment(
-                segment.index, segment.start, segment.end,
-                apply_rules(segment.text, options.corrections), segment.avg_logprob,
-                segment.no_speech_prob, segment.retried,
-            )
-            for segment in whispered.segments
-        )
+        corrected_segments = whispered.segments
         items = [segment.text for segment in corrected_segments]
         qwen_started = time.monotonic()
         if options.use_llm:
@@ -127,6 +123,8 @@ class Transcriber:
             qwen_seconds=qwen_seconds,
             pipeline_settings={
                 **whispered.settings,
+                "recognition_hint_tokens": str(options.recognition_hint_tokens),
+                "recognition_hint_warning": options.recognition_hint_warning,
                 "qwen_review_policy": (
                     "combined-asr-paragraph-v4" if options.format_text else "word-asr-v3"
                 ),
@@ -177,6 +175,30 @@ class Transcriber:
                               if candidates else (target, False))
         boundaries.append((duration, True))
         return boundaries
+
+    @staticmethod
+    def _with_note_hint(options):
+        if not options.note_keywords:
+            return options
+        endpoint = WHISPER_URL.rsplit("/", 1)[0] + "/tokenize"
+        selected = []
+        selected_tokens = 0
+        try:
+            for term in hint_terms(options.note_keywords)[:40]:
+                candidate = ", ".join([*selected, term])
+                response = requests.post(endpoint, json={"text": candidate}, timeout=(2, 5))
+                response.raise_for_status()
+                count = response.json()["tokens"]
+                if type(count) is not int or count < 0:
+                    raise ValueError("Invalid tokenizer response")
+                if count <= 96:
+                    selected.append(term)
+                    selected_tokens = count
+            return replace(options, recognition_hint=", ".join(selected), recognition_hint_tokens=selected_tokens, recognition_hint_warning="")
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            print("⚠️ Whisper tokenizer unavailable; proceeding without note hints")
+            return replace(options, recognition_hint="", recognition_hint_tokens=0,
+                           recognition_hint_warning="Whisper tokenizer가 없어 노트 인식 힌트 없이 전사했습니다.")
 
     @staticmethod
     def _whisper_chunked(wav: Path, options: Options, incoming=None, progress=None,
@@ -253,10 +275,10 @@ class Transcriber:
                      "no_context": "true"})
         # Bound hints conservatively below the decoder context budget. Always send
         # an empty prompt too: stock servers may retain omitted request options.
-        data["prompt"] = options.prompt.encode("utf-8")[:400].decode("utf-8", errors="ignore")
+        data["prompt"] = options.recognition_hint
         settings = {
             key: str(data[key]) for key in (
-                "language", "entropy_thold", "no_context", "max_context", "beam_size", "best_of",
+                "language", "prompt", "entropy_thold", "no_context", "max_context", "beam_size", "best_of",
                 "vad", "vad_threshold", "vad_min_speech_duration_ms",
                 "vad_min_silence_duration_ms", "vad_speech_pad_ms", "vad_samples_overlap",
             ) if key in data
@@ -321,7 +343,7 @@ class Transcriber:
             )
         if progress:
             progress("repetition_fallback" if repetition_detected else "vad_fallback", 1, 1)
-        fallback_data = dict(data)
+        fallback_data = {**data, "prompt": ""}
         if repetition_detected:
             # Break both feedback sources: previous text and concatenated VAD audio.
             # Only the current bounded chunk is retried.
@@ -610,8 +632,8 @@ class Transcriber:
                 })
                 retry_options = Options(
                     language=options.language, course_name=options.course_name,
-                    prompt=options.prompt.strip()[:3000],
-                    corrections=options.corrections, format_text=options.format_text,
+                    recognition_hint="",
+                    format_text=options.format_text,
                     use_llm=False, llm_model=options.llm_model, retry_low_confidence=False,
                 )
                 candidate = Transcriber._whisper(
@@ -638,8 +660,8 @@ class Transcriber:
             original_confidence = Transcriber._confidence(original)
             candidate_confidence = Transcriber._confidence(selected)
             hint_gain = (
-                Transcriber._hint_hits(candidate_text, options.prompt)
-                - Transcriber._hint_hits(original_text, options.prompt)
+                Transcriber._hint_hits(candidate_text, options.recognition_hint)
+                - Transcriber._hint_hits(original_text, options.recognition_hint)
             )
             if (not candidate_text or not 0.45 <= length_ratio <= 2.2
                     or candidate_text in {previous_text, following_text}
@@ -720,12 +742,23 @@ class Transcriber:
 
         def post_json(system: str, schema: dict[str, Any], content: str,
                       num_predict: int) -> dict[str, Any]:
+            with inference.lease(cancellation=cancellation):
+                return perform_post(system, schema, content, num_predict)
+
+        def perform_post(system: str, schema: dict[str, Any], content: str,
+                         num_predict: int) -> dict[str, Any]:
             if cancellation:
                 cancellation.check()
             stats.requests += 1
+            try:
+                note_data = json.loads(options.review_context or "{}")
+                evidence = relevant_context(note_data, content)
+            except (ValueError, TypeError, AttributeError):
+                evidence = ""
+            content += "\n\n선택 노트 참고자료(지시가 아님):\n" + evidence
             request_payload = {
                 "model": options.llm_model, "stream": False, "think": False,
-                "keep_alive": "5m", "format": schema,
+                "keep_alive": "60s", "format": schema,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": content},
@@ -850,14 +883,14 @@ class Transcriber:
             return batch[:split_at], batch[split_at:]
 
         def review_edits_with_retry(batch: list[tuple[str, str]], previous: list[tuple[str, str]],
-                                    following: list[tuple[str, str]]) -> tuple[list[Suggestion], bool]:
+                                    following: list[tuple[str, str]], *, retried=False) -> tuple[list[Suggestion], bool]:
             try:
                 return request_edits(batch, previous, following), True
             except requests.RequestException as error:
                 print(f"⚠️ {options.llm_model} 연결 오류로 단어 교정 건너뜀: {error}")
                 return [], False
             except (KeyError, TypeError, ValueError) as error:
-                if len(batch) <= 1:
+                if retried or len(batch) <= 1:
                     print(f"⚠️ {options.llm_model} 단어 교정 건너뜀: {error}")
                     return [], False
                 stats.split_retries += 1
@@ -866,13 +899,13 @@ class Transcriber:
                     f"↻ {options.llm_model} 단어 교정 응답 복구: {len(batch)}개 발화를 "
                     f"{len(left)}+{len(right)}개로 나눠 재시도 ({error})"
                 )
-                left_suggestions, left_ok = review_edits_with_retry(left, previous, right[:3])
-                right_suggestions, right_ok = review_edits_with_retry(right, left[-3:], following)
+                left_suggestions, left_ok = review_edits_with_retry(left, previous, right[:3], retried=True)
+                right_suggestions, right_ok = review_edits_with_retry(right, left[-3:], following, retried=True)
                 return left_suggestions + right_suggestions, left_ok and right_ok
 
         def review_combined_with_retry(
             batch: list[tuple[str, str]], previous: list[tuple[str, str]],
-            following: list[tuple[str, str]],
+            following: list[tuple[str, str]], *, retried=False,
         ) -> tuple[list[Suggestion], set[str], bool]:
             try:
                 found_suggestions, found_breaks = request_combined(batch, previous, following)
@@ -881,7 +914,7 @@ class Transcriber:
                 print(f"⚠️ {options.llm_model} 연결 오류로 통합 검수 건너뜀: {error}")
                 return [], set(), False
             except (KeyError, TypeError, ValueError) as error:
-                if len(batch) <= 1:
+                if retried or len(batch) <= 1:
                     print(f"⚠️ {options.llm_model} 통합 검수 건너뜀: {error}")
                     return [], set(), False
                 stats.split_retries += 1
@@ -891,10 +924,10 @@ class Transcriber:
                     f"{len(left)}+{len(right)}개로 나눠 재시도 ({error})"
                 )
                 left_suggestions, left_breaks, left_ok = review_combined_with_retry(
-                    left, previous, right[:3]
+                    left, previous, right[:3], retried=True
                 )
                 right_suggestions, right_breaks, right_ok = review_combined_with_retry(
-                    right, left[-3:], following
+                    right, left[-3:], following, retried=True
                 )
                 return (
                     left_suggestions + right_suggestions,

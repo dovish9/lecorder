@@ -37,8 +37,6 @@ def convert(path: str, title: str = "", language: str | None = None,
     options = Options(
         language=selected_language,
         course_name=settings.course_name,
-        prompt=settings.prompt,
-        corrections=settings.corrections,
         format_text=settings.format_transcript,
         use_llm=settings.llm_enabled if use_llm is None else use_llm,
         llm_model=settings.llm_model,

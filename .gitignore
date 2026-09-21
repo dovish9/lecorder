@@ -1,5 +1,5 @@
 # Local settings and secrets
-AGENTS.md
+/AGENTS.md
 .env
 .env.*
 !.env.example
@@ -11,7 +11,6 @@ venv/
 env/
 __pycache__/
 *.py[cod]
-*$py.class
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -21,32 +20,50 @@ __pycache__/
 .coverage
 .coverage.*
 htmlcov/
-build/
 dist/
 *.egg-info/
 
+# Project-local tools, models and development records
+/dependencies/
+/memories/
+
 # Lecorder runtime data and personal output
-web/data/
-output/
-recordings/
-experiments/
+/web/data/
+/output/
+/recordings/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
 *.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.sqlite3-journal
 
-# Audio and video recordings
-*.wav
-*.mp3
-*.m4a
+# Audio and video recordings (supported upload formats)
+*.3g2
+*.3gp
 *.aac
+*.aif
+*.aiff
+*.alac
+*.amr
+*.caf
 *.flac
+*.m4a
+*.mka
+*.mov
+*.mp3
+*.mp4
 *.ogg
 *.opus
+*.wav
 *.webm
-*.mp4
-*.mov
+*.wma
 
 # Logs and temporary files
 *.log

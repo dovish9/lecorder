@@ -1,3 +1,4 @@
+import {showCourseNotes, chooseNote} from "./notes.js?v=20260921-recording-note";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,
@@ -53,8 +54,6 @@ const ui = {
   newCourseForm: $("#newCourseForm"),
   newCourseName: $("#newCourseName"),
   courseName: $("#courseName"),
-  prompt: $("#prompt"),
-  corrections: $("#corrections"),
   formatTranscript: $("#formatTranscript"),
   llmEnabled: $("#llmEnabled"),
   saveState: $("#saveState"),
@@ -114,7 +113,6 @@ const ui = {
   systemForm: $("#systemForm"),
   closeSystemButton: $("#closeSystemButton"),
   projectDir: $("#projectDir"),
-  whisperDir: $("#whisperDir"),
   outputDir: $("#outputDir"),
   projectCheck: $("#projectCheck"),
   whisperCheck: $("#whisperCheck"),
@@ -258,7 +256,7 @@ function activeCourse() {
 
 const viewCopy = {
   dashboard: ["대시보드", "녹음과 전사 작업의 현재 상태를 확인합니다."],
-  courses: ["강의", "강의별 음성 인식과 후처리 규칙을 관리합니다."],
+  courses: ["강의", "강의별 음성 인식 설정과 강의노트를 관리합니다."],
   recordings: ["보관함", "원음, 결과 파일, 수정 검토와 처리 기록을 함께 봅니다."],
 };
 
@@ -631,8 +629,6 @@ function renderCourse(course) {
   if (!course) {
     app.hydrating = true;
     ui.courseName.value = "강의를 추가하세요";
-    ui.prompt.value = "";
-    ui.corrections.value = "";
     ui.formatTranscript.checked = false;
     ui.llmEnabled.checked = false;
     ui.dashboardCourseName.textContent = "강의 없음";
@@ -642,8 +638,7 @@ function renderCourse(course) {
   }
   app.hydrating = true;
   ui.courseName.value = course.name;
-  ui.prompt.value = course.prompt;
-  ui.corrections.value = course.corrections;
+  void showCourseNotes(course.id);
   ui.formatTranscript.checked = course.format_transcript;
   ui.llmEnabled.checked = course.llm_enabled;
   const language = $(`input[name="language"][value="${course.language}"]`);
@@ -658,8 +653,6 @@ function coursePayload() {
   return {
     name: ui.courseName.value.trim(),
     language: $('input[name="language"]:checked')?.value || "ko",
-    prompt: ui.prompt.value,
-    corrections: ui.corrections.value,
     format_transcript: ui.formatTranscript.checked,
     llm_enabled: ui.llmEnabled.checked,
   };
@@ -694,7 +687,7 @@ function saveCourseNow() {
   setSaveState("saving", "저장 중");
   app.saveChain = app.saveChain.then(async () => {
     try {
-      const data = await requestJson(`/api/courses/${courseId}`, {
+      const data = await requestJsonBeforeDeadline(`/api/courses/${courseId}`, {
         method: "PATCH",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload),
@@ -719,9 +712,12 @@ function scheduleCourseSave(delay = 450) {
   setSaveState("saving", "입력 중");
 }
 
-async function flushCourseSave() {
+async function flushCourseSave({requireSaved = false} = {}) {
   if (app.saveTimer) saveCourseNow();
   await app.saveChain;
+  if (requireSaved && ui.saveState.classList.contains("error")) {
+    throw new Error("강의 설정을 저장하지 못했습니다. 설정 저장 후 다시 시작하세요.");
+  }
 }
 
 async function selectCourse(courseId, {updateRoute = false} = {}) {
@@ -777,8 +773,6 @@ ui.courseName.addEventListener("input", () => {
   }
   scheduleCourseSave();
 });
-ui.prompt.addEventListener("input", () => scheduleCourseSave());
-ui.corrections.addEventListener("input", () => scheduleCourseSave());
 $$('input[name="language"]').forEach((input) => input.addEventListener("change", () => {
   const course = activeCourse();
   if (course) course.language = input.value;
@@ -865,6 +859,9 @@ function setRecorderState(state) {
   ui.commandDock.dataset.recordState = state;
   const active = ["recording", "paused"].includes(state);
   const finalizing = state === "finalizing";
+  $("#dockNotePicker").hidden = !active && !finalizing;
+  $("#dockNoteSelect").disabled = !active;
+  $("#dockNoteRefresh").disabled = !active;
   ui.dockRecordLabel.textContent = active ? "종료" : finalizing ? "저장 중" : state === "starting" ? "연결 중" : "녹음";
   ui.dockRecordButton.setAttribute("aria-label", active ? "녹음 종료 후 전사" : finalizing ? "녹음 저장 중" : state === "starting" ? "마이크 연결 중" : "녹음 시작");
   ui.dockRecordButton.disabled = !app.courses.length || ["starting", "finalizing"].includes(state);
@@ -1060,6 +1057,7 @@ async function finalizeRecording() {
   const recordingId = app.recordingId;
   app.finalizingRecordingId = recordingId;
   try {
+    await recordingNoteSave;
     await app.chunkUploadChain;
     const now = app.pausedAt || Date.now();
     const duration = Math.max(0, now - app.recordingStartedAt - app.pausedDuration) / 1000;
@@ -1155,17 +1153,81 @@ async function recoverRecordingSessions(recordings) {
   }
 }
 
+let recordingNoteSave = Promise.resolve();
+let recordingNoteSaved = "";
+let recordingNoteLoad = 0;
+async function loadRecordingNotes() {
+  const serial = ++recordingNoteLoad;
+  const recordingId = app.recordingId;
+  const select = $("#dockNoteSelect");
+  const status = $("#dockNoteStatus");
+  status.textContent = "불러오는 중";
+  try {
+    const {notes} = await requestJson(`/api/courses/${app.recordingCourseId}/notes`);
+    if (serial !== recordingNoteLoad || recordingId !== app.recordingId) return;
+    const selected = select.value;
+    select.replaceChildren(new Option("사용 안 함", ""));
+    for (const note of notes) {
+      const ready = ["ready", "partial"].includes(note.status);
+      const option = new Option(`${note.title}${ready ? "" : " · 준비되지 않음"}`, note.id);
+      option.disabled = !ready;
+      select.append(option);
+    }
+    // A saved snapshot remains valid even when its note is hidden later.
+    if (selected && !notes.some(note => note.id === selected)) {
+      select.append(new Option("기존에 선택한 노트", selected));
+    }
+    select.value = selected;
+    status.textContent = notes.length ? "" : "등록된 노트 없음";
+  } catch (error) {
+    if (recordingId !== app.recordingId) return;
+    status.textContent = "목록을 불러오지 못함";
+    showToast(error.message, "error");
+  }
+}
+$("#dockNoteRefresh").addEventListener("click", () => void loadRecordingNotes());
+$("#dockNoteSelect").addEventListener("change", () => {
+  const select = $("#dockNoteSelect");
+  const recordingId = app.recordingId;
+  const selected = select.value;
+  $("#dockNoteStatus").textContent = "저장 중";
+  select.disabled = true;
+  recordingNoteSave = recordingNoteSave.then(async () => {
+    try {
+      await requestJson(`/api/recordings/${recordingId}/lecture-note`, {
+        method: "PATCH", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({lecture_note_id: selected || null}),
+      });
+      recordingNoteSaved = selected;
+      $("#dockNoteStatus").textContent = "저장됨";
+    } catch (error) {
+      select.value = recordingNoteSaved;
+      $("#dockNoteStatus").textContent = "저장 실패";
+      showToast(`강의노트 선택을 저장하지 못했습니다: ${error.message}`, "error");
+    } finally {
+      select.disabled = !["recording", "paused"].includes(app.recordingState);
+    }
+  });
+});
+
 async function startDockRecording() {
   if (!app.courses.length || app.recordingState !== "idle") return;
   ui.dockCoursePicker.removeAttribute("open");
+  setRecorderState("starting");
+  try {
+    await flushCourseSave({requireSaved: true});
+
+  } catch (error) {
+    setRecorderState("idle");
+    showToast(error.message, "error");
+    return;
+  }
   app.recordingTitle = automaticTitle();
   app.recordingCourseId = app.activeCourseId;
   ui.dockRecordingTitle.textContent = app.recordingTitle;
   ui.dockRecordingSession.dataset.sync = "saved";
   ui.dockRecordingSession.removeAttribute("title");
   setRecorderState("starting");
-  // Course autosave must never hold the microphone UI in a disabled state.
-  void flushCourseSave();
   try {
     app.mediaStream = await acquireMicrophone();
     const preferred = preferredRecordingMimeType();
@@ -1220,6 +1282,9 @@ async function startDockRecording() {
     updateClock();
     app.clockTimer = window.setInterval(updateClock, 250);
     setRecorderState("recording");
+    recordingNoteSaved = "";
+    $("#dockNoteSelect").replaceChildren(new Option("사용 안 함", ""));
+    void loadRecordingNotes();
   } catch (error) {
     stopMediaStream();
     if (app.recordingId) {
@@ -1643,7 +1708,9 @@ function createAudioPlayer(source, label = "녹음", expectedDuration = 0, stora
       commitPendingSeek();
       updateTimeline();
       if (name === "canplay" && pendingPlay && audio.paused) requestPlay();
-      if (!loadError && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) status.textContent = "준비됨";
+      if (!loadError && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+        status.textContent = audio.ended ? "재생 완료" : audio.paused ? "준비됨" : "재생 중";
+      }
     });
   });
   audio.addEventListener("timeupdate", updateTimeline);
@@ -1656,7 +1723,10 @@ function createAudioPlayer(source, label = "녹음", expectedDuration = 0, stora
     player.classList.remove("buffering");
     setPlaybackState();
   });
-  audio.addEventListener("pause", setPlaybackState);
+  audio.addEventListener("pause", () => {
+    if (!loadError && !audio.ended) status.textContent = "일시정지";
+    setPlaybackState();
+  });
   audio.addEventListener("ended", () => { status.textContent = "재생 완료"; setPlaybackState(); });
   audio.addEventListener("error", () => {
     loadError = true;
@@ -2040,6 +2110,12 @@ function createDetailMenu(entry, title) {
   if (recording && ["queued", "processing"].includes(recording.status)) {
     panel.append(detailMenuButton("처리 중단", (button) => cancelTranscription(recording, button)));
   }
+  if (recording?.status === "completed" && !["queued","processing"].includes(recording.review_status)) {
+    panel.append(detailMenuButton("검수 다시 하기", async () => {
+      await requestJson(`/api/recordings/${recording.id}/review`, {method:"POST"});
+      await refreshStatus();
+    }));
+  }
   if (final) {
     panel.append(detailMenuButton("다시 전사하기", (button) => retryRecording(recording, button)));
   } else if (interrupted) {
@@ -2078,6 +2154,17 @@ function renderLibraryDetail(entry) {
   status.className = "detail-status";
   status.textContent = libraryState(entry);
   header.append(titleRow, meta, status);
+  if (entry.recording?.review_status && entry.recording.review_status !== "none") {
+    const review = document.createElement("p");
+    review.textContent = ({queued:"검수 대기",processing:"검수 중",completed:"검수 완료",failed:"검수 실패"}[entry.recording.review_status] || "") + (entry.recording.review_error ? ` · ${entry.recording.review_error}` : "");
+    header.append(review);
+  }
+  const hintWarning = entry.recording?.quality?.settings?.recognition_hint_warning;
+  if (hintWarning) {
+    const warning = document.createElement("p");
+    warning.textContent = hintWarning;
+    header.append(warning);
+  }
   ui.libraryDetail.append(back, header);
 
   const files = detailSection("원음과 결과 파일");
@@ -2321,13 +2408,23 @@ ui.uploadForm.addEventListener("submit", async (event) => {
     ui.uploadMessage.textContent = "저장할 파일 이름을 입력하세요.";
     return;
   }
-  await flushCourseSave();
+  let lectureNoteId;
+  try {
+    await flushCourseSave({requireSaved: true});
+    lectureNoteId = await chooseNote(app.activeCourseId);
+    if (lectureNoteId === undefined) return;
+  } catch (error) {
+    ui.uploadMessage.className = "upload-message error";
+    ui.uploadMessage.textContent = error.message;
+    return;
+  }
   setUploadBusy(true);
   ui.uploadMessage.className = "upload-message";
   ui.uploadMessage.textContent = "파일을 안전하게 저장하는 중입니다.";
   const data = new FormData();
   data.append("file", app.selectedFile, app.selectedFile.name);
   data.append("title", ui.uploadTitle.value);
+  if (lectureNoteId) data.append("lecture_note_id", lectureNoteId);
   try {
     const result = await requestJson("/api/upload", {method: "POST", body: data});
     renderRecordings([result.recording, ...app.recordings.filter((item) => item.id !== result.recording.id)]);
@@ -2350,7 +2447,6 @@ ui.uploadForm.addEventListener("submit", async (event) => {
 function renderEnvironment(environment) {
   app.environment = environment;
   ui.projectDir.value = environment.project_dir;
-  ui.whisperDir.value = environment.whisper_cpp_dir;
   ui.outputDir.value = environment.output_dir;
   const checks = [
     [ui.projectCheck, environment.checks.project, "프로젝트 확인됨", "app.py를 찾지 못함"],
@@ -2404,7 +2500,6 @@ ui.systemForm.addEventListener("submit", async (event) => {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
         project_dir: ui.projectDir.value,
-        whisper_cpp_dir: ui.whisperDir.value,
         output_dir: ui.outputDir.value,
       }),
     });
@@ -2485,7 +2580,7 @@ async function cancelTranscription(recording, button) {
 async function retryRecording(recording, button) {
   button.disabled = true;
   try {
-    await flushCourseSave();
+    await flushCourseSave({requireSaved: true});
     let session = null;
     if (["recording", "recoverable"].includes(recording.status)) {
       const sessions = await recordingSessions().catch(() => []);
@@ -2497,7 +2592,10 @@ async function retryRecording(recording, button) {
     } else {
       const retranscribe = ["completed", "failed", "cancelled"].includes(recording.status);
       const action = retranscribe ? "retranscribe" : "retry";
-      await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/${action}`, {method: "POST"});
+      const note = retranscribe ? await chooseNote(recording.course_id, recording.lecture_note_id, recording.title) : null;
+      if (note === undefined) return;
+      await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/${action}`, {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({lecture_note_id:note})});
       if (retranscribe) showToast("다시 전사할 작업을 대기열에 추가했습니다.", "success");
     }
     await refreshStatus();
@@ -2747,10 +2845,9 @@ async function openReview(recordingId, {focus = true} = {}) {
   try {
     const data = await requestJson(`/api/recordings/${recordingId}`, {cache: "no-store"});
     app.reviewingRecordingId = recordingId;
-    const courseName = data.recording.course_name || activeCourse()?.name || "선택한";
     ui.reviewRecordingName.textContent = data.recording.title;
     ui.reviewDialogTitle.textContent = "수정 제안";
-    ui.reviewSubtitle.textContent = `승인하면 현재 노트와 ${courseName} 강의의 확정 교정 규칙에 반영됩니다.`;
+    ui.reviewSubtitle.textContent = "승인하면 현재 전사문과 Markdown에 반영됩니다.";
     ui.closeReviewButton.hidden = false;
     renderReviewItems(data.suggestions);
     if (focus) ui.closeReviewButton.focus({preventScroll: true});

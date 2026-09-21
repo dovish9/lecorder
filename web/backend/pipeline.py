@@ -20,6 +20,8 @@ from .markdown import render_note, transcript_text
 from .records import ActiveSettings, Recording
 from .state import JobState
 from .store import LectureStore
+from .notes import NoteLibrary
+from .review_jobs import ReviewQueue
 from .transcription import CancellationToken, Options, TranscriptionCancelled
 
 
@@ -41,6 +43,8 @@ class RecordingPipeline:
         self._cancellations: dict[str, CancellationToken] = {}
         self._cancel_stages: dict[str, str] = {}
         self._lock = threading.RLock()
+        self.notes = NoteLibrary(store, self.work_root.parent / "notes", start_worker)
+        self.reviews = ReviewQueue(store, engine, self._lock, start_worker)
         self.cleanup_orphans()
         if start_worker:
             self.store.recover_interrupted()
@@ -138,8 +142,16 @@ class RecordingPipeline:
                 recording_id, settings, title, source_kind, extension, str(source), status
             )
 
+    def _preserve_intake(self, recording):
+        path, error = self._preserve_failed_audio(recording)
+        if not path:
+            self.store.update_recording(recording.id, status="failed", error=error)
+            raise ValueError(f"원본 보존 실패: {error}")
+        return self.store.update_recording(recording.id, audio_path=path)
+
     def create_upload(self, settings: ActiveSettings, title: str, extension: str,
-                      stream: BinaryIO) -> Recording:
+                      stream: BinaryIO, lecture_note_id: str | None = None) -> Recording:
+        revision = self.notes.bind(lecture_note_id, settings.course_id)
         recording_id = self.new_id()
         folder = self.folder(recording_id)
         folder.mkdir(parents=True, exist_ok=False)
@@ -152,26 +164,42 @@ class RecordingPipeline:
             recording = self._create_named_recording(
                 recording_id, settings, title, "upload", extension, source, "queued"
             )
+            recording = self._bind_note(recording, revision)
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
+        recording = self._preserve_intake(recording)
         self.state.set("queued", f"{recording.title} 작업을 대기열에 추가했습니다.",
                        job_id=recording.id, title=recording.title, course_id=settings.course_id)
         self.enqueue(recording.id)
         return recording
 
-    def begin_chunked(self, settings: ActiveSettings, title: str, extension: str) -> Recording:
+    def begin_chunked(self, settings: ActiveSettings, title: str, extension: str, lecture_note_id: str | None = None) -> Recording:
+        revision = self.notes.bind(lecture_note_id, settings.course_id)
         recording_id = self.new_id()
         folder = self.folder(recording_id)
         (folder / "chunks").mkdir(parents=True, exist_ok=False)
         source = folder / f"source{extension}"
         try:
-            return self._create_named_recording(
+            recording = self._create_named_recording(
                 recording_id, settings, title, "browser", extension, source, "recording"
             )
+            return self._bind_note(recording, revision)
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
+
+    def _bind_note(self, recording, revision):
+        return self.store.update_recording(recording.id, note_revision_id=revision,
+            note_snapshot_json=json.dumps(self.notes.snapshot(revision), ensure_ascii=False))
+
+    def select_recording_note(self, recording_id: str, lecture_note_id: str | None):
+        with self._lock:
+            recording = self.store.get_recording(recording_id)
+            if recording.status not in {"recording", "recoverable"}:
+                raise ValueError("녹음 중인 작업의 강의노트만 변경할 수 있습니다.")
+            revision = self.notes.bind(lecture_note_id, recording.course_id)
+            return self._bind_note(recording, revision)
 
     def save_chunk(self, recording_id: str, index: int, stream: BinaryIO) -> int:
         recording = self.store.get_recording(recording_id)
@@ -234,6 +262,7 @@ class RecordingPipeline:
         recording = self.store.update_recording(
             recording_id, status="queued", duration_seconds=max(0.0, float(duration_seconds)), error=""
         )
+        recording = self._preserve_intake(recording)
         self.state.set("queued", f"{recording.title} 녹음을 안전하게 저장하고 대기열에 추가했습니다.",
                        job_id=recording.id, title=recording.title, course_id=recording.course_id)
         self.enqueue(recording_id)
@@ -279,15 +308,24 @@ class RecordingPipeline:
         shutil.rmtree(self.folder(recording_id), ignore_errors=True)
 
     def delete_history(self, recording_id: str) -> None:
-        self.store.delete_recording_history(recording_id)
-        shutil.rmtree(self.folder(recording_id), ignore_errors=True)
+        with self._lock:
+            recording = self.store.get_recording(recording_id)
+            if recording.review_status in {"queued", "processing"}:
+                raise ValueError("검수가 끝난 후 작업을 삭제하세요.")
+            self.store.delete_recording_history(recording_id)
+            shutil.rmtree(self.folder(recording_id), ignore_errors=True)
 
-    def retranscribe(self, recording_id: str) -> Recording:
+    def retranscribe(self, recording_id: str, lecture_note_id: str | None = None, *, retain_note=True) -> Recording:
         """Re-run the same job, preserving its output until replacement succeeds."""
         with self._lock:
             previous = self.store.get_recording(recording_id)
             if previous.status not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
+            if previous.review_status in {"queued", "processing"}:
+                raise ValueError("검수가 끝난 후 다시 전사하세요.")
+            if retain_note and previous.note_revision_id:
+                lecture_note_id = self.notes._revision(previous.note_revision_id)['note_id']
+            revision = self.notes.bind(lecture_note_id, previous.course_id)
             source = next((Path(value) for value in (previous.source_path, previous.audio_path)
                            if value and Path(value).is_file()), None)
             if source is None:
@@ -301,6 +339,7 @@ class RecordingPipeline:
             except OSError as error:
                 raise ValueError("원본 음성 파일을 읽거나 작업용 사본을 만들 수 없습니다.") from error
             recording = self.store.queue_retranscription(recording_id, working)
+            recording = self._bind_note(recording, revision)
             self._cancellations[recording_id] = CancellationToken()
             self._cancel_stages.pop(recording_id, None)
             self.enqueue(recording_id)
@@ -370,6 +409,14 @@ class RecordingPipeline:
                 recording_id, status="processing", started_at=self.store.now(), error=""
             )
         source = Path(recording.source_path)
+        run_id = uuid.uuid4().hex
+        with self.store._connect() as db:
+            db.execute("INSERT INTO transcription_runs(id,recording_id,started_at,status,settings) VALUES (?,?,?,?,?)",
+                       (run_id, recording.id, self.store.now(), "processing", json.dumps({
+                           "language": recording.language, "note_revision_id": recording.note_revision_id,
+                           "note_snapshot": json.loads(recording.note_snapshot_json), "model": "whisper/large-v3",
+                           "llm_model": recording.llm_model, "format_transcript": recording.format_transcript,
+                       }, ensure_ascii=False)))
         started = time.monotonic()
         hidden_audio: Path | None = None
         hidden_note: Path | None = None
@@ -396,8 +443,8 @@ class RecordingPipeline:
                            job_id=recording.id, title=recording.title, course_id=recording.course_id)
             options = Options(
                 language=recording.language, course_name=recording.course_name,
-                prompt=recording.prompt, corrections=recording.corrections,
-                format_text=recording.format_transcript, use_llm=recording.llm_enabled,
+                note_keywords=tuple(k['term'] for k in json.loads(recording.note_snapshot_json).get('keywords', []) if k.get('included', True)),
+                format_text=False, use_llm=False,
                 llm_model=recording.llm_model,
             )
             def progress(stage: str, index: int, total: int) -> None:
@@ -501,9 +548,12 @@ class RecordingPipeline:
                     recording, status="completed", source_path="", processing_seconds=elapsed,
                     completed_at=self.store.now(), error=review_warning,
                     quality_json=json.dumps(pipeline_details),
+                    review_status="queued" if recording.llm_enabled else "none", review_error="",
                 )
                 self.store.commit_result(recording, [item.public() for item in result.suggestions], publish)
             shutil.rmtree(self.folder(recording.id), ignore_errors=True)
+            if recording.llm_enabled:
+                self.reviews.enqueue(recording.id)
             self.state.set(
                 "warning" if review_warning else "complete",
                 review_warning or f"저장 완료 · 검토할 수정 제안 {len(result.suggestions)}개",
@@ -525,6 +575,14 @@ class RecordingPipeline:
             rollback_outputs()
             self._fail(recording_id, str(error), started)
         finally:
+            try:
+                latest = self.store.get_recording(recording_id)
+                with self.store._connect() as db:
+                    db.execute("UPDATE transcription_runs SET status=?,completed_at=?,metrics=?,error=? WHERE id=?",
+                               (latest.status, self.store.now(), latest.quality_json, latest.error, run_id))
+            except Exception as error:
+                # An audit write must not skip cleanup or invalidate saved output.
+                print(f"전사 실행 기록 저장 실패: {error}")
             if hidden_audio:
                 hidden_audio.unlink(missing_ok=True)
             if hidden_note:
@@ -643,6 +701,8 @@ class RecordingPipeline:
     def decide_suggestion(self, suggestion_id: int, action: str) -> tuple[Recording, object | None]:
         suggestion = self.store.get_suggestion(suggestion_id)
         recording = self.store.get_recording(suggestion.recording_id)
+        if recording.review_status in {"queued", "processing"}:
+            raise ValueError("검수가 끝난 후 제안을 적용하세요.")
         if suggestion.status != "pending":
             raise ValueError("이미 검토한 제안입니다.")
         if action == "reject":
@@ -681,7 +741,4 @@ class RecordingPipeline:
             transcript_text=updated.transcript_text,
         )
         self.store.decide_suggestion(suggestion_id, "accepted")
-        course = self.store.append_correction(
-            recording.course_id, suggestion.original, suggestion.replacement
-        )
-        return recording, course
+        return recording, None

@@ -8,6 +8,7 @@
   <title>Lecorder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230078ff%22/><path d=%22M8 34h8l4-17 7 31 7-41 7 33 5-18 5 12h6%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%224%22/></svg>" />
 <link rel="stylesheet" href="/static/dashboard.css?v=20260910-30" />
+<link rel="stylesheet" href="/static/notes.css?v=20260921-dependencies" />
 </head>
 <body>
 <div class="app-shell" id="appShell">
@@ -62,8 +63,8 @@
         <div class="course-detail-scroll">
           <section class="course-document" aria-labelledby="courseNameLabel">
             <header class="course-heading"><label class="sr-only" id="courseNameLabel" for="courseName">선택한 강의 이름</label><input id="courseName" type="text" maxlength="80" readonly aria-readonly="true" /><span class="save-state has-tooltip" id="saveState" role="status" tabindex="0" data-tooltip="변경 사항은 자동 저장됩니다."><i></i>저장됨</span></header>
-            <div class="settings-group"><h3>음성 인식</h3><section class="editor-section"><div class="editor-label"><h4>언어</h4><p>Whisper가 먼저 들을 언어</p></div><div class="language-control" role="radiogroup" aria-label="강의 언어"><label><input type="radio" name="language" value="ko" /><span>한국어</span></label><label><input type="radio" name="language" value="en" /><span>English</span></label><label><input type="radio" name="language" value="auto" /><span>자동 감지</span></label></div></section><section class="editor-section"><div class="editor-label"><h4>인식 힌트</h4><p>전문 용어와 고유명사</p></div><textarea id="prompt" rows="7" placeholder="예: Bayes theorem, von Neumann architecture"></textarea></section><section class="editor-section"><div class="editor-label"><h4>확정 교정</h4><p>잘못된 표현=올바른 표현</p></div><textarea id="corrections" rows="7" spellcheck="false" placeholder="베이지안 정리=베이즈 정리"></textarea></section></div>
-            <div class="settings-group"><h3>후처리</h3><div class="option-list"><label class="option-row"><span><strong>가독성 자동 정리</strong><small>Qwen3가 의미 경계에서 문단을 구성합니다.</small></span><input id="formatTranscript" type="checkbox" /></label><label class="option-row"><span><strong>Qwen3 문맥 검수</strong><small>수정 제안을 직접 승인하거나 거절합니다.</small></span><input id="llmEnabled" type="checkbox" /></label></div></div>
+            <div class="settings-group"><h3>음성 인식</h3><section class="editor-section"><div class="editor-label"><h4>언어</h4><p>Whisper가 먼저 들을 언어</p></div><div class="language-control" role="radiogroup" aria-label="강의 언어"><label><input type="radio" name="language" value="ko" /><span>한국어</span></label><label><input type="radio" name="language" value="en" /><span>English</span></label><label><input type="radio" name="language" value="auto" /><span>자동 감지</span></label></div></section></div>
+            <section id="courseNotes" class="settings-group" aria-label="강의노트"></section><div class="settings-group"><h3>후처리</h3><div class="option-list"><label class="option-row"><span><strong>가독성 자동 정리</strong><small>Qwen3가 의미 경계에서 문단을 구성합니다.</small></span><input id="formatTranscript" type="checkbox" /></label><label class="option-row"><span><strong>Qwen3 문맥 검수</strong><small>수정 제안을 직접 승인하거나 거절합니다.</small></span><input id="llmEnabled" type="checkbox" /></label></div></div>
           </section>
         </div>
       </section>
@@ -85,6 +86,12 @@
 </div>
 
 <aside class="command-dock" id="commandDock" data-record-state="idle" aria-label="빠른 녹음 도구">
+  <div class="dock-note-picker" id="dockNotePicker" hidden>
+    <label for="dockNoteSelect">강의노트</label>
+    <select id="dockNoteSelect" aria-label="녹음에 사용할 강의노트"><option value="">사용 안 함</option></select>
+    <span id="dockNoteStatus" role="status"></span>
+    <button id="dockNoteRefresh" type="button" aria-label="강의노트 목록 새로고침" title="강의노트 목록 새로고침">↻</button>
+  </div>
   <details class="dock-course-picker" id="dockCoursePicker"><summary id="dockCourseButton" aria-label="녹음할 강의 선택"><svg class="dock-course-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg><span><small>강의</small><strong id="dockCourseLabel">강의를 추가하세요</strong></span><svg class="dock-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="dock-course-menu" id="dockCourseMenu" role="listbox" aria-label="녹음할 강의"></div><select id="dockCourseSelect" aria-label="녹음할 강의" hidden tabindex="-1"></select></details>
   <span class="dock-divider" aria-hidden="true"></span>
   <button class="dock-upload" id="dockUploadButton" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0-11-4 4m4-4 4 4M5 13v6h14v-6"/></svg><span>파일 가져오기</span></button>
@@ -109,10 +116,10 @@
 </dialog>
 
 <dialog class="guide-dialog" id="guideDialog" aria-label="Lecorder 사용 안내"><div class="guide-frame"><iframe id="guideFrame" title="Lecorder 사용 안내" loading="lazy"></iframe><button class="guide-dialog-close" id="closeGuideButton" type="button" aria-label="사용 안내 닫기">×</button></div></dialog>
-<dialog class="system-dialog" id="systemDialog" aria-label="시스템 경로 설정"><form method="dialog" class="dialog-frame" id="systemForm"><header><h2>시스템 경로 설정</h2><button class="dialog-close" id="closeSystemButton" type="button" aria-label="설정 창 닫기">×</button></header><p>경로를 저장하면 Lecorder와 whisper.cpp를 다시 시작합니다.</p><label for="projectDir"><span>Lecorder 프로젝트</span><small id="projectCheck">확인 중</small></label><input id="projectDir" name="project_dir" type="text" autocomplete="off" /><label for="whisperDir"><span>whisper.cpp 설치 폴더</span><small id="whisperCheck">확인 중</small></label><input id="whisperDir" name="whisper_cpp_dir" type="text" autocomplete="off" /><label for="outputDir"><span>오디오·Markdown 저장 폴더</span><small id="outputCheck">확인 중</small></label><input id="outputDir" name="output_dir" type="text" autocomplete="off" /><div class="dialog-actions"><p id="systemMessage" role="status"></p><button id="saveSystemButton" type="submit">경로 저장</button></div></form></dialog>
+<dialog class="system-dialog" id="systemDialog" aria-label="시스템 경로 설정"><form method="dialog" class="dialog-frame" id="systemForm"><header><h2>시스템 경로 설정</h2><button class="dialog-close" id="closeSystemButton" type="button" aria-label="설정 창 닫기">×</button></header><p>경로를 저장하면 Lecorder와 whisper.cpp를 다시 시작합니다.</p><label for="projectDir"><span>Lecorder 프로젝트</span><small id="projectCheck">확인 중</small></label><input id="projectDir" name="project_dir" type="text" autocomplete="off" /><p>Whisper: dependencies/whisper.cpp <small id="whisperCheck">확인 중</small></p><label for="outputDir"><span>오디오·Markdown 저장 폴더</span><small id="outputCheck">확인 중</small></label><input id="outputDir" name="output_dir" type="text" autocomplete="off" /><div class="dialog-actions"><p id="systemMessage" role="status"></p><button id="saveSystemButton" type="submit">경로 저장</button></div></form></dialog>
 <dialog class="pipeline-dialog" id="pipelineDialog" aria-labelledby="pipelineDialogTitle"><section class="pipeline-dialog-frame"><header><div><h2 id="pipelineDialogTitle">작업 로그</h2><p id="pipelineDialogSubtitle"></p></div><button class="dialog-close" id="closePipelineButton" type="button" aria-label="작업 로그 닫기">×</button></header><div class="pipeline-dialog-body" id="pipelineDialogBody"></div></section></dialog>
 <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><h2 id="confirmTitle">확인</h2><p id="confirmMessage"></p><div><button id="confirmCancel" value="cancel">취소</button><button id="confirmAccept" class="danger" value="confirm">확인</button></div></form></dialog>
 <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
-<script type="module" src="/static/dashboard.js?v=20260910-31"></script>
+<script type="module" src="/static/dashboard.js?v=20260921-dependencies"></script>
 </body>
 </html>

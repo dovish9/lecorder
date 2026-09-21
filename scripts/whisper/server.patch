@@ -1,0 +1,58 @@
+diff --git a/examples/server/server.cpp b/examples/server/server.cpp
+index f6a7a831..4482db28 100644
+--- a/examples/server/server.cpp
++++ b/examples/server/server.cpp
+@@ -163,6 +163,8 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
+     fprintf(stderr, "  -pr,       --print-realtime    [%-7s] print output in realtime\n",                       params.print_realtime ? "true" : "false");
+     fprintf(stderr, "  -pp,       --print-progress    [%-7s] print progress\n",                                 params.print_progress ? "true" : "false");
+     fprintf(stderr, "  -nt,       --no-timestamps     [%-7s] do not print timestamps\n",                        params.no_timestamps ? "true" : "false");
++    fprintf(stderr, "             --context           [%-7s] use previous transcription as decoder context\n", !params.no_context ? "true" : "false");
++    fprintf(stderr, "             --no-context        [%-7s] do not use previous transcription as decoder context\n", params.no_context ? "true" : "false");
+     fprintf(stderr, "  -l LANG,   --language LANG     [%-7s] spoken language ('auto' for auto-detect)\n",       params.language.c_str());
+     fprintf(stderr, "  -dl,       --detect-language   [%-7s] exit after automatically detecting language\n",    params.detect_language ? "true" : "false");
+     fprintf(stderr, "             --prompt PROMPT     [%-7s] initial prompt\n",                                 params.prompt.c_str());
+@@ -236,6 +238,8 @@ bool whisper_params_parse(int argc, char ** argv, whisper_params & params, serve
+         else if (arg == "-pr"   || arg == "--print-realtime")  { params.print_realtime  = true; }
+         else if (arg == "-pp"   || arg == "--print-progress")  { params.print_progress  = true; }
+         else if (arg == "-nt"   || arg == "--no-timestamps")   { params.no_timestamps   = true; }
++        else if (                  arg == "--context")          { params.no_context      = false; }
++        else if (                  arg == "--no-context")       { params.no_context      = true; }
+         else if (arg == "-l"    || arg == "--language")        { params.language        = argv[++i]; }
+         else if (arg == "-dl"   || arg == "--detect-language") { params.detect_language = true; }
+         else if (                  arg == "--prompt")          { params.prompt          = argv[++i]; }
+@@ -550,6 +554,10 @@ void get_req_parameters(const Request & req, whisper_params & params)
+     {
+         params.no_timestamps = parse_str_to_bool(req.get_file_value("no_timestamps").content);
+     }
++    if (req.has_file("no_context"))
++    {
++        params.no_context = parse_str_to_bool(req.get_file_value("no_context").content);
++    }
+     if (req.has_file("language"))
+     {
+         params.language = req.get_file_value("language").content;
+@@ -802,7 +810,24 @@ int main(int argc, char ** argv) {
+     svr->Options(sparams.request_path + sparams.inference_path, [&](const Request &, Response &){
+     });
+ 
++    // Lecorder uses this lightweight endpoint to keep decoder hints below the
++    // model's real BPE token budget without loading a second model process.
++    svr->Post(sparams.request_path + "/tokenize", [&](const Request &req, Response &res){
++        try {
++            const json body = json::parse(req.body);
++            const std::string text = body.value("text", "");
++            std::lock_guard<std::mutex> lock(whisper_mutex);
++            res.set_content(json{{"tokens", whisper_token_count(ctx, text.c_str())}}.dump(),
++                            "application/json");
++        } catch (const std::exception & error) {
++            res.status = 400;
++            res.set_content(json{{"error", error.what()}}.dump(), "application/json");
++        }
++    });
++
++    const whisper_params request_defaults = params;
+     svr->Post(sparams.request_path + sparams.inference_path, [&](const Request &req, Response &res){
++        whisper_params params = request_defaults;
+         // acquire whisper model mutex lock
+         std::lock_guard<std::mutex> lock(whisper_mutex);
+ 

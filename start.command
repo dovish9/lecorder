@@ -15,10 +15,7 @@ fi
 if [ ! -f "$ROOT/app.py" ]; then
     ROOT="$SCRIPT_ROOT"
 fi
-WHISPER_HOME="${WHISPER_CPP_DIR:-../whisper.cpp}"
-if [[ "$WHISPER_HOME" != /* ]]; then
-    WHISPER_HOME="$SCRIPT_ROOT/$WHISPER_HOME"
-fi
+WHISPER_HOME="$ROOT/dependencies/whisper.cpp"
 WHISPER_BIN="$WHISPER_HOME/build/bin/whisper-server"
 WHISPER_MODEL="${WHISPER_MODEL_PATH:-$WHISPER_HOME/models/ggml-large-v3.bin}"
 WHISPER_VAD_MODEL="${WHISPER_VAD_MODEL_PATH:-$WHISPER_HOME/models/ggml-silero-v6.2.0.bin}"
@@ -96,9 +93,9 @@ echo "================================================="
 if ! command -v ffmpeg >/dev/null 2>&1; then
     echo "⚠️ FFmpeg 없음: 설치 전에는 전사할 수 없습니다."
 elif [ ! -x "$WHISPER_BIN" ]; then
-    echo "⚠️ whisper-server 없음: 대시보드의 시스템 경로를 확인하세요."
+    echo "⚠️ whisper-server 없음: scripts/build-whisper.sh를 실행하세요."
 elif [ ! -f "$WHISPER_MODEL" ]; then
-    echo "⚠️ large-v3 모델 없음: 대시보드의 시스템 경로를 확인하세요."
+    echo "⚠️ large-v3 모델 없음: scripts/build-whisper.sh를 실행하세요."
 elif [ ! -f "$WHISPER_VAD_MODEL" ]; then
     echo "⚠️ Silero VAD 모델 없음: $WHISPER_VAD_MODEL"
 else

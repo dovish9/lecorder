@@ -19,8 +19,11 @@ SUPPORTED_MEDIA = frozenset({
 class Options:
     language: str
     course_name: str = "강의"
-    prompt: str = ""
-    corrections: str = ""
+    recognition_hint: str = ""
+    recognition_hint_tokens: int = 0
+    recognition_hint_warning: str = ""
+    review_context: str = ""
+    note_keywords: tuple[str, ...] = ()
     format_text: bool = True
     use_llm: bool = True
     llm_model: str = "qwen3:8b-q4_K_M"
@@ -87,6 +90,7 @@ class CancellationToken:
         input_data: bytes | None = None,
         stdout: int | None = subprocess.PIPE,
         stderr: int | None = subprocess.PIPE,
+        timeout: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         self.check()
         process = subprocess.Popen(
@@ -100,7 +104,12 @@ class CancellationToken:
             if self.cancelled and process.poll() is None:
                 process.terminate()
         try:
-            output, errors = process.communicate(input=input_data)
+            try:
+                output, errors = process.communicate(input=input_data, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                raise
         finally:
             with self._lock:
                 if self._process is process:

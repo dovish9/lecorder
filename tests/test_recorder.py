@@ -58,10 +58,10 @@ class RecorderTests(unittest.TestCase):
     @staticmethod
     def environment(root: Path) -> tuple[EnvironmentStore, Path]:
         project = root / "lecorder"
-        whisper = root / "whisper.cpp"
+        whisper = project / "dependencies/whisper.cpp"
         output = root / "output"
         project.mkdir()
-        whisper.mkdir()
+        whisper.mkdir(parents=True)
         output.mkdir()
         (project / "app.py").write_text("", encoding="utf-8")
         (project / "web/backend").mkdir(parents=True)
@@ -71,7 +71,7 @@ class RecorderTests(unittest.TestCase):
         (whisper / "models/ggml-large-v3.bin").write_text("", encoding="utf-8")
         (whisper / "models/ggml-silero-v6.2.0.bin").write_text("", encoding="utf-8")
         environment = EnvironmentStore(root / ".env", project)
-        environment.update(project_dir=str(project), whisper_cpp_dir=str(whisper), output_dir=str(output))
+        environment.update(project_dir=str(project), output_dir=str(output))
         return environment, output
 
     def test_opening_store_does_not_interrupt_live_jobs(self) -> None:
@@ -98,7 +98,7 @@ class RecorderTests(unittest.TestCase):
             store.create_recording("interrupted", store.get(), "test", "upload", ".wav", "", "processing")
             with patch("web.backend.pipeline.threading.Thread") as worker:
                 RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work")
-                worker.return_value.start.assert_called_once()
+                self.assertEqual(worker.return_value.start.call_count, 4)
             self.assertEqual(store.get_recording("interrupted").status, "failed")
 
     def test_suggestion_counts_are_grouped_and_include_empty_jobs(self) -> None:
@@ -385,7 +385,7 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('const SUPPORTED_UPLOAD_EXTENSIONS = new Set([', script)
         self.assertIn('if (parts[0] === "capture")', script)
         self.assertIn('ui.reviewDialogTitle.textContent = "수정 제안"', script)
-        self.assertIn('현재 노트와 ${courseName} 강의의 확정 교정 규칙', script)
+        self.assertNotIn('확정 교정 규칙', script)
         self.assertIn('function applyRoute()', script)
         self.assertIn('window.location.replace("#/dashboard")', script)
         self.assertIn('function renderDashboard()', script)
@@ -440,8 +440,8 @@ class RecorderTests(unittest.TestCase):
             course = store.create_course("통계학")
             store.update_course(course.id, prompt="population, sample", corrections="표정=표본")
             active = LectureStore(store.path, environment).get()
-            self.assertEqual(active.prompt, "population, sample")
-            self.assertEqual(active.corrections, "표정=표본")
+            self.assertEqual(active.prompt, "")
+            self.assertEqual(active.corrections, "")
             self.assertEqual(Path(active.output_dir).resolve(), output.resolve())
 
     def test_environment_resolves_relative_paths_from_project_root(self) -> None:
@@ -460,8 +460,17 @@ class RecorderTests(unittest.TestCase):
             environment = EnvironmentStore(environment_file, project).get()
 
             self.assertEqual(Path(environment.project_dir), project.resolve())
-            self.assertEqual(Path(environment.whisper_cpp_dir), (root / "whisper.cpp").resolve())
+            self.assertEqual(Path(environment.whisper_cpp_dir), (project / "dependencies/whisper.cpp").resolve())
             self.assertEqual(Path(environment.output_dir), (project / "output").resolve())
+
+    def test_environment_update_removes_legacy_whisper_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            environment, output = self.environment(Path(temporary))
+            with environment.path.open("a") as target:
+                target.write("WHISPER_CPP_DIR=/obsolete/location\n")
+            result = environment.update(output_dir=str(output))
+            self.assertNotIn("WHISPER_CPP_DIR", environment.path.read_text())
+            self.assertEqual(Path(result.whisper_cpp_dir), Path(result.project_dir) / "dependencies/whisper.cpp")
 
     def test_path_update_preserves_advanced_environment_options(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -487,7 +496,7 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('command -v python3', script)
 
     def test_reviewer_requests_suggestions_and_applies_only_verifiable_edits(self) -> None:
-        options = Options(language="ko", course_name="통계학", prompt="모집단, 표본", llm_model="test")
+        options = Options(language="ko", course_name="통계학", recognition_hint="모집단, 표본", llm_model="test")
         self.assertIn("과목명: 통계학", reviewer_prompt(options))
         self.assertIn("제안 누락이 잘못된 제안보다 낫다", reviewer_prompt(options))
         self.assertIn("population, 파퓰레이션, 모집단은 서로 교체하지 않는다", reviewer_prompt(options))
@@ -641,7 +650,7 @@ class RecorderTests(unittest.TestCase):
         self.assertNotIn("\n\n", value)
 
     def test_reviewer_splits_and_retries_truncated_json(self) -> None:
-        options = Options(language="ko", course_name="통계학", prompt="모집단, 표본", llm_model="test")
+        options = Options(language="ko", course_name="통계학", recognition_hint="모집단, 표본", llm_model="test")
         truncated = Mock()
         truncated.raise_for_status.return_value = None
         truncated.json.return_value = {
@@ -797,7 +806,7 @@ class RecorderTests(unittest.TestCase):
                 "web.backend.engine.requests.post", side_effect=[collapsed, recovered]
             ) as post:
                 result = Transcriber._whisper(
-                    wav, Options(language="en", prompt="electric field"), None,
+                    wav, Options(language="en", recognition_hint="electric field"), None,
                     lambda stage, index, total: progress.append((stage, index, total)),
                 )
 
@@ -866,7 +875,7 @@ class RecorderTests(unittest.TestCase):
             "correct term", 6.5,
             (TranscriptSegment(1, 1.25, 5.25, "correct term", -.3, .01),),
         )
-        options = Options(language="en", prompt="correct term")
+        options = Options(language="en", recognition_hint="correct term")
         progress = []
         with patch("web.backend.engine.subprocess.run"), patch.object(
             Transcriber, "_whisper", return_value=better
@@ -1128,7 +1137,7 @@ class RecorderTests(unittest.TestCase):
             )
             pipeline.process_next()
             self.assertEqual(engine.calls[-1].course_name, "Physics")
-            self.assertEqual(engine.calls[-1].prompt, "Coulomb law")
+            self.assertEqual(engine.calls[-1].recognition_hint, "")
             self.assertTrue((output / "Lecture.wav").exists())
             self.assertTrue((output / "Lecture.md").exists())
             self.assertTrue(
@@ -1150,6 +1159,9 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(details["qwen_output_tokens"], 24)
             self.assertIn("saving_seconds", details)
             self.assertIn("total_seconds", details)
+            removed = client.delete(f"/api/recordings/{recording_id}/history")
+            self.assertEqual(removed.status_code, 400)  # queued review still owns this result
+            store.update_recording(recording_id, review_status="completed")
             removed = client.delete(f"/api/recordings/{recording_id}/history")
             self.assertEqual(removed.status_code, 200)
             self.assertEqual(
@@ -1312,8 +1324,8 @@ class RecorderTests(unittest.TestCase):
                     options = engine.calls[-1]
                     self.assertEqual(options.language, language)
                     self.assertEqual(options.course_name, "updated course")
-                    self.assertEqual(options.prompt, "new hint")
-                    self.assertEqual(options.corrections, "old -> new")
+                    self.assertEqual(options.recognition_hint, "")
+                    self.assertFalse(hasattr(options, "corrections"))
                     self.assertFalse(options.format_text)
                     self.assertFalse(options.use_llm)
                     saved = store.get_recording(row.id)
@@ -1338,7 +1350,7 @@ class RecorderTests(unittest.TestCase):
             pipeline.retry(row.id)
             pipeline.process_next()
             self.assertEqual(engine.calls[-1].language, "en")
-            self.assertEqual(engine.calls[-1].prompt, "original hint")
+            self.assertEqual(engine.calls[-1].recognition_hint, "")
             self.assertIsNone(store.get_recording(row.id).course_id)
 
     def test_retranscribe_rejects_active_or_missing_source_without_new_jobs(self) -> None:
@@ -1583,7 +1595,7 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(deleted.status_code, 200)
             self.assertFalse((output / "강의.wav").exists())
 
-            with sqlite3.connect(store.path) as db:
+            with store._connect() as db:
                 tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertNotIn("storage", tables)
             self.assertNotIn("files", tables)
@@ -1771,6 +1783,7 @@ class RecorderTests(unittest.TestCase):
             pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
             recording = pipeline.create_upload(store.get(), "검토", ".wav", io.BytesIO(b"audio"))
             pipeline.process_next()
+            store.update_recording(recording.id, review_status="completed")
             suggestion = store.list_suggestions(recording.id)[0]
             self.assertEqual(suggestion.status, "pending")
             app = create_app(store, JobState(), engine, environment, pipeline)
@@ -1783,7 +1796,7 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(audio_response.get_data(), b"audio")
             audio_response.close()
             pipeline.decide_suggestion(suggestion.id, "accept")
-            self.assertIn("표정을=표본을", store.get_course(store.active_course_id()).corrections)
+            self.assertEqual(store.get_course(store.active_course_id()).corrections, "")
             self.assertIn("표본을 사용합니다", (output / "검토.md").read_text(encoding="utf-8"))
             self.assertEqual(store.get_suggestion(suggestion.id).status, "accepted")
 
