@@ -1,4 +1,4 @@
-import {showCourseNotes, openNote, showRecordingNote} from "./notes.js?v=20260922-terminology";
+import {showCourseNotes, openNote, showRecordingNote} from "./notes.js?v=20260923-validation";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,

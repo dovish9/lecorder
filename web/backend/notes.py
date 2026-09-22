@@ -14,7 +14,7 @@ from .note_analysis import candidates
 from .note_study import analyze_visual_page as analyze_page, build_overview
 from .transcription import CancellationToken, TranscriptionCancelled
 
-ANALYZER_VERSION = "notes-v3-vision-kiwi"
+ANALYZER_VERSION = "notes-v4-validated"
 
 
 class NoteLibrary:
@@ -120,6 +120,15 @@ class NoteLibrary:
             )
             note["keywords"] = json.loads(revision["keywords"])
             note["overview"] = json.loads(revision["overview"])
+            with self.store._connect() as db:
+                flagged = db.execute(
+                    "SELECT 1 FROM note_pages WHERE revision_id=? "
+                    "AND json_extract(payload, '$.analysis.validation.status')='needs_review' "
+                    "UNION ALL SELECT 1 FROM note_details WHERE revision_id=? "
+                    "AND json_extract(payload, '$.detail.validation.status')='needs_review' LIMIT 1",
+                    (revision['id'], revision['id']),
+                ).fetchone()
+            note['needs_review'] = bool(flagged or any(g.get('uncertainties') for g in note['overview']))
             note["needs_reanalysis"] = revision["analyzer"] != ANALYZER_VERSION
         return note
 
@@ -500,7 +509,7 @@ class NoteLibrary:
                     "SELECT originals FROM lecture_notes WHERE id=?",
                     (revision["note_id"],),
                 ).fetchone()
-            folder = self.folder / revision["note_id"] / revision_id
+            folder = self.folder / revision["note_id"] / "pages-v1"
             folder.mkdir(exist_ok=True)
             originals = [
                 self.folder / revision["note_id"] / name for name in json.loads(row[0])
@@ -516,7 +525,7 @@ class NoteLibrary:
                     continue
                 try:
                     page = extract_page(source, index, folder, number, token)
-                    page["image"] = f'{revision_id}/{page["image"]}'
+                    page["image"] = f'{folder.name}/{page["image"]}'
                 except TranscriptionCancelled:
                     raise
                 except Exception as error:
@@ -591,6 +600,8 @@ class NoteLibrary:
                         image_path=self.folder / revision["note_id"] / page["image"],
                     )
                     page.pop("analysis_error", None)
+                    if result.get("validation", {}).get("status") == "needs_review":
+                        page["needs_review"] = True
                     page["detail" if number is not None else "analysis"] = result
                     page[
                         "detail_status" if number is not None else "analysis_status"

@@ -17,6 +17,7 @@ def checks():
     output = {
         name: shutil.which(name)
         for name in (
+            "node",
             "ffmpeg",
             "pdftotext",
             "pdftoppm",

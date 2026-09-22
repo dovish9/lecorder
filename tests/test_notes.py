@@ -686,8 +686,8 @@ class NoteTests(unittest.TestCase):
         response = Mock()
         response.json.return_value = {"message": {"content": json.dumps(invalid)}}
         with patch("web.backend.note_study.requests.post", return_value=response) as post:
-            with self.assertRaises(ValueError):
-                analyze_visual_page({"number": 1, "text": "source"}, [], CancellationToken(), image_path=image)
+            result = analyze_visual_page({"number": 1, "text": "source"}, [], CancellationToken(), image_path=image)
+        self.assertEqual(result["validation"]["status"], "needs_review")
         self.assertEqual(post.call_count, 2)
         self.assertIn("images", post.call_args.kwargs["json"]["messages"][1])
 

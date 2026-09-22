@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import struct
+import tempfile
 import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -213,37 +214,19 @@ def extract_page(source, page, folder, number, token, engine=None):
                         )
         except ET.ParseError:
             pass
-        run(
-            [
-                binary("pdftoppm"),
-                "-f",
-                str(page),
-                "-l",
-                str(page),
-                "-scale-to",
-                "2200",
-                "-singlefile",
-                "-png",
-                str(source),
-                str(image.with_suffix("")),
-            ],
-            token,
-        )
-    else:
-        run(
-            [
-                "/usr/bin/sips",
-                "-s",
-                "format",
-                "png",
-                "-Z",
-                "2200",
-                str(source),
-                "--out",
-                str(image),
-            ],
-            token,
-        )
+    if not image.is_file():
+        # Publish only a complete render. Reanalysis reuses it but repeats OCR.
+        with tempfile.TemporaryDirectory(prefix="render-", dir=folder) as work:
+            temporary = Path(work) / image.name
+            if page is not None:
+                run([binary("pdftoppm"), "-f", str(page), "-l", str(page),
+                     "-scale-to", "2200", "-singlefile", "-png", str(source),
+                     str(temporary.with_suffix(""))], token)
+            else:
+                run(["/usr/bin/sips", "-s", "format", "png", "-Z", "2200",
+                     str(source), "--out", str(temporary)], token)
+            token.check()
+            temporary.replace(image)
     lines = ocr(image, token, engine)
     merged = merge_text(embedded, lines, embedded_boxes)
     uncertain = (

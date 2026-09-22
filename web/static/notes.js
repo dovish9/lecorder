@@ -64,7 +64,7 @@ function createNoteRow(item) {
     node("strong", item.title, "note-title"),
     node(
       "span",
-      `${statuses[item.status]} · ${item.page_count || 0}쪽 · 학습 정리 ${statuses[item.study_status] || item.study_status}`,
+      `${statuses[item.status]} · ${item.page_count || 0}쪽 · 학습 정리 ${item.needs_review ? "확인 필요" : statuses[item.study_status] || item.study_status}`,
       "note-muted",
     ),
   );
@@ -330,6 +330,7 @@ export async function openNote(id) {
           continue;
         }
         overview.append(markdown(group.markdown || group.summary));
+        for (const issue of group.uncertainties || []) overview.append(node("p", `확인 필요 · ${issue}`, "note-error"));
         if (group.missing_pages?.length)
           overview.append(
             node(
@@ -359,7 +360,7 @@ export async function openNote(id) {
     for (const p of pages)
       navigation.append(
         new Option(
-          `${p.number}쪽${p.needs_review ? " · 확인 필요" : ""}`,
+          `${p.number}쪽${(p.needs_review || (p.detail || p.analysis)?.validation?.status === "needs_review") ? " · 확인 필요" : ""}`,
           p.number,
         ),
       );
@@ -498,7 +499,7 @@ export async function openNote(id) {
       });
       if (response.status === 304) {
         if (data)
-          state.textContent = `${statuses[data.note.status]} · 학습 정리 ${statuses[data.note.study_status]} ${data.note.error || ""}`;
+          state.textContent = `${statuses[data.note.status]} · 학습 정리 ${data.note.needs_review ? "확인 필요" : statuses[data.note.study_status]} ${data.note.error || ""}`;
         clearTimeout(poll);
         poll = setTimeout(refresh, 5000);
         return;
@@ -510,7 +511,7 @@ export async function openNote(id) {
       const fp = JSON.stringify(next);
       data = next;
       d.querySelector("h2").textContent = data.note.title;
-      state.textContent = `${statuses[data.note.status]} · 학습 정리 ${statuses[data.note.study_status]} ${data.note.error || ""}`;
+      state.textContent = `${statuses[data.note.status]} · 학습 정리 ${data.note.needs_review ? "확인 필요" : statuses[data.note.study_status]} ${data.note.error || ""}`;
       actions.children[1].hidden = !(
         ["queued", "extracting"].includes(data.note.status) ||
         ["pending", "analyzing"].includes(data.note.study_status)
