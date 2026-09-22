@@ -114,7 +114,8 @@ button,a{-webkit-tap-highlight-color:transparent}
 .save-state.error i{background:var(--red)}
 .settings-group{padding-top:26px}
 .settings-group>h3,.settings-group>.note-toolbar>h3{margin:0 0 8px;color:var(--muted);font-size:11px}
-.settings-group:not(:last-child){padding-bottom:6px;border-bottom:.5px solid var(--line)}
+.settings-group:not(:last-child){padding-bottom:6px}
+.settings-group:not(:last-child):not(#courseNotes){border-bottom:.5px solid var(--line)}
 .editor-section{display:grid;grid-template-columns:150px minmax(0,1fr);gap:22px;padding:14px 0}
 .editor-label h4{margin:0;font-size:12px}
 .editor-label p{margin:3px 0;color:var(--muted);font-size:10px}
@@ -139,6 +140,7 @@ button,a{-webkit-tap-highlight-color:transparent}
 .recordings-workspace{display:grid;grid-template-columns:minmax(330px,42%) minmax(420px,1fr);height:100%}
 .library-browser{min-width:0;border-right:.5px solid var(--line);background:var(--surface)}
 .library-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;padding:13px;border-bottom:.5px solid var(--line)}
+.library-list>.empty-state{padding:24px 13px}
 .library-tools>.compact-search{grid-column:1/-1}
 .library-tools select{padding:0 8px}
 .library-list{overflow:auto}
@@ -263,7 +265,7 @@ dialog::backdrop{background:rgba(0,0,0,.3);backdrop-filter:blur(5px)}
 .confirm-dialog form>div{display:flex;justify-content:flex-end;gap:7px}
 .confirm-dialog button{padding:7px 12px;border:.5px solid var(--line2);border-radius:7px;background:var(--raised)}
 .confirm-dialog .danger{border-color:var(--red);color:#fff;background:var(--red)}
-.toast-region{position:fixed;z-index:120;right:18px;bottom:18px;display:grid;gap:6px;width:min(340px,calc(100% - 28px));pointer-events:none}
+.toast-region{position:fixed;z-index:120;right:18px;bottom:104px;display:grid;gap:6px;width:min(340px,calc(100% - 28px));pointer-events:none}
 .toast{padding:10px 12px;border-radius:8px;color:#fff;background:rgba(44,44,46,.96);font-size:10px;box-shadow:0 10px 30px rgba(0,0,0,.24)}
 .has-tooltip{position:relative}
 .has-tooltip:after{position:absolute;z-index:100;top:calc(100% + 7px);right:0;width:max-content;max-width:280px;padding:7px 9px;border-radius:6px;color:#fff;background:rgba(44,44,46,.97);font-size:10px;content:attr(data-tooltip);opacity:0;visibility:hidden}
@@ -1400,7 +1402,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 }
 
 /* Fixed-width capture selectors; long names never resize the recording controls. */
-.command-dock #dockCoursePicker{flex:0 0 132px;width:132px;max-width:132px}
+.command-dock #dockCoursePicker{flex:0 0 198px;width:198px;max-width:198px}
 .command-dock #dockNotePicker{flex:0 0 220px;width:220px;max-width:220px}
 .command-dock .dock-course-option>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .command-dock .dock-recording-session{min-width:0;flex-shrink:1;margin-right:6px}
@@ -1410,12 +1412,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 @media(max-width:1100px){
   .command-dock .dock-recording-copy strong{display:none}
   .command-dock .dock-frequency{width:30px}
-  .command-dock #dockCoursePicker{flex-basis:112px;width:112px;max-width:112px}
+  .command-dock #dockCoursePicker{flex-basis:168px;width:168px;max-width:168px}
   .command-dock #dockNotePicker{flex-basis:190px;width:190px;max-width:190px}
 }
 @media(max-width:700px){
   .command-dock{flex-wrap:wrap;justify-content:center;border-radius:25px}
-  .command-dock #dockCoursePicker{flex:0 0 106px;width:106px;max-width:106px}
+  .command-dock #dockCoursePicker{flex:0 0 159px;width:159px;max-width:159px}
   .command-dock #dockNotePicker{flex:0 0 176px;width:176px;max-width:176px}
   .command-dock .dock-divider{display:none}
   .command-dock .dock-course-picker>summary small{display:block}
@@ -1428,3 +1430,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 
 .upload-dialog[data-mode="retranscribe"] .upload-drop-zone{min-height:76px;padding:16px;display:flex;gap:14px;text-align:left;border-style:solid;opacity:1;color:var(--ink);cursor:default}
 .upload-dialog[data-mode="retranscribe"] .upload-drop-zone>svg{width:24px;height:24px}
+
+.notification-count{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#d70015;color:#fff;font-size:11px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.library-name-row{display:flex;align-items:center;gap:7px;min-width:0}
+.library-name-row>strong{min-width:0;flex:0 1 auto}
+#dockCourseMenu .dock-course-option.has-alert{grid-template-columns:24px minmax(0,1fr) auto}
+#dockCourseMenu .dock-course-option>span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dockCourseMenu .notification-count{color:#fff;background:#d70015}
+
+.dock-course-title{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}
+.dock-course-picker>summary .dock-course-title strong{min-width:0;margin-top:0}
+.dock-course-title .notification-count{flex-shrink:0;margin-left:auto}

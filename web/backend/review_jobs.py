@@ -1,4 +1,5 @@
 """Review completed transcripts without withholding Whisper output."""
+from .ollama_status import require_ollama
 
 import json
 import queue
@@ -77,6 +78,11 @@ class ReviewQueue:
         with self.lock:
             if recording_id in self.pending:
                 return
+            try:
+                require_ollama()
+            except RuntimeError as error:
+                self.store.update_recording(recording_id, review_status="failed", review_error=str(error))
+                return
             self.pending.add(recording_id)
             self.queue.put(recording_id)
 
@@ -90,7 +96,7 @@ class ReviewQueue:
                 raise ValueError("완료된 전사의 검수만 다시 시작할 수 있습니다.")
             self._restore_backup(row)
             self.store.update_recording(
-                recording_id, review_status="queued", review_error="", llm_model=DEFAULT_LLM_MODEL
+                recording_id, review_status="queued", review_error="", llm_model=DEFAULT_LLM_MODEL, llm_enabled=True, format_transcript=True
             )
             self.enqueue(recording_id)
 
@@ -124,7 +130,8 @@ class ReviewQueue:
                             json.dumps(settings),
                         ),
                     )
-                self.store.update_recording(recording_id, review_status="processing")
+                row = self.store.update_recording(recording_id, review_status="processing", llm_enabled=True, format_transcript=True, llm_model=DEFAULT_LLM_MODEL)
+            require_ollama()
             segments = json.loads(row.segments_json)
             snapshot = json.loads(row.note_snapshot_json)
             options = Options(

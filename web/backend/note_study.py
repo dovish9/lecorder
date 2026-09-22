@@ -1,4 +1,5 @@
 """Image-grounded study Markdown with bounded, schema-validated Ollama calls."""
+from .ollama_status import require_ollama
 import base64
 import json
 import re
@@ -63,6 +64,7 @@ def _generate(system, source, cancellation, image=None, detailed=False, *, parse
     error = None
     for attempt in range(2):
         cancellation.check()
+        require_ollama()
         user = {"role": "user", "content": (source[:12000 if not attempt else 6000] if image else source)}
         if image:
             user["images"] = [base64.b64encode(Path(image).read_bytes()).decode("ascii")]

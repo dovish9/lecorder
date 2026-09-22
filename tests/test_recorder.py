@@ -55,6 +55,11 @@ class FakeTranscriber:
 
 
 class RecorderTests(unittest.TestCase):
+    def setUp(self):
+        self.ollama_available = patch("web.backend.ollama_status.ollama_ready", return_value=(True, True))
+        self.ollama_available.start()
+        self.addCleanup(self.ollama_available.stop)
+
     @staticmethod
     def environment(root: Path) -> tuple[EnvironmentStore, Path]:
         project = root / "lecorder"
@@ -264,7 +269,7 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('recording.status === "processing" && app.job?.job_id === recording.id', script)
         self.assertIn('label: "변환·전사"', script)
         self.assertIn('label: "품질 확인"', script)
-        self.assertIn('label: "Qwen3"', script)
+        self.assertIn('label: "검수"', script)
         self.assertIn('.queue-pipeline li.complete i:before', dashboard_css)
         self.assertIn('.queue-pipeline li.current i', dashboard_css)
         self.assertIn('className = `queue-item ${isQueued ? "queued" : "active"}`', script)
@@ -318,12 +323,12 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('function storageFileRow(kind, names)', script)
         self.assertIn('function createDetailMenu(entry, title)', script)
         self.assertIn('function beginEntryTitleEdit(entry, title, menu)', script)
-        self.assertIn('detailMenuButton("수정"', script)
-        self.assertIn('detailMenuButton("로그 보기"', script)
+        self.assertIn('detailMenuButton("이름 수정"', script)
+        self.assertIn('detailMenuButton("로그 확인"', script)
         self.assertIn('recording.error', script[script.index("function hasPipelineLog"):script.index("function openPipelineLog")])
         self.assertIn('historyTitle.textContent = "실패 이력"', script)
         self.assertIn('detailSection(recording.status === "failed" ? "실패 원인"', script)
-        self.assertLess(script.index('detailMenuButton("수정"'), script.index('detailMenuButton("로그 보기"'))
+        self.assertLess(script.index('detailMenuButton("이름 수정"'), script.index('detailMenuButton("로그 확인"'))
         self.assertIn('id="pipelineDialog"', markup)
         self.assertIn('aria-labelledby="pipelineDialogTitle"', markup)
         self.assertIn('ui.pipelineDialog.showModal()', script)
@@ -386,7 +391,7 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('"강의노트 분석 완료"', script)
         self.assertIn('"강의 전사 실패"', script)
         self.assertIn('"강의노트 분석 실패"', script)
-        self.assertIn('id="notificationButton"', markup)
+        self.assertNotIn('id="notificationButton"', markup)
         self.assertIn('async function requestJsonBeforeDeadline(', script)
         self.assertNotIn('setRecorderState("starting");\n  await flushCourseSave();', script)
         self.assertIn('const SUPPORTED_UPLOAD_EXTENSIONS = new Set([', script)
@@ -1419,9 +1424,12 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(retried.error, "")
             self.assertEqual(len(json.loads(retried.quality_json)["attempts"]), 1)
 
+            store.update_recording(recording.id, review_status="queued", review_error="stale review")
             pipeline.cancel(recording.id)
             cancelled = store.get_recording(recording.id)
             self.assertEqual(cancelled.status, "cancelled")
+            self.assertEqual(cancelled.review_status, "none")
+            self.assertEqual(cancelled.review_error, "")
             self.assertEqual(len(json.loads(cancelled.quality_json)["attempts"]), 1)
             self.assertEqual((output / "실패 로그.wav").read_bytes(), b"original audio")
 
@@ -1669,6 +1677,21 @@ class RecorderTests(unittest.TestCase):
             self.assertFalse(note.exists())
             with self.assertRaises(KeyError):
                 store.get_recording(recording.id)
+
+            cancelled_audio = output / "중단됨.wav"
+            cancelled_audio.write_bytes(b"cancelled")
+            cancelled = store.create_recording(
+                "cancelled-menu-action", store.get(), "중단됨", "upload", ".wav", status="cancelled"
+            )
+            store.update_recording(
+                cancelled.id, audio_path=str(cancelled_audio), review_status="processing",
+                review_error="이전 검수 작업", completed_at=store.now(),
+            )
+            deleted_cancelled = client.delete(f"/api/recordings/{cancelled.id}/with-files")
+            self.assertEqual(deleted_cancelled.status_code, 200)
+            self.assertFalse(cancelled_audio.exists())
+            with self.assertRaises(KeyError):
+                store.get_recording(cancelled.id)
 
             orphan_audio = output / "파일만.wav"
             orphan_note = output / "파일만.md"

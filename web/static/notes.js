@@ -230,7 +230,7 @@ export async function openNote(id) {
     etag = "",
     excluded = new Set(),
     dirty = false;
-  for (const name of ["개요", "학습 정리", "키워드", "원문"])
+  for (const name of ["개요", "페이지별 해설", "용어집", "원문"])
     tabs.append(
       button(name, () => {
         current = name;
@@ -257,7 +257,7 @@ export async function openNote(id) {
     if (!data) return;
     body.replaceChildren();
     footer.replaceChildren();
-    footer.hidden = current !== "키워드";
+    footer.hidden = current !== "용어집";
     tabs
       .querySelectorAll("button")
       .forEach((b) =>
@@ -272,7 +272,7 @@ export async function openNote(id) {
           "note-error",
         ),
       );
-    if (current === "키워드") {
+    if (current === "용어집") {
       body.append(
         node(
           "p",
@@ -480,7 +480,7 @@ export async function openNote(id) {
     body.append(split);
   }
   function showPage(number) {
-    current = "학습 정리";
+    current = "페이지별 해설";
     navigatePage(number);
   }
   function navigatePage(number) {

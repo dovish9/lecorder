@@ -7,8 +7,8 @@
   <meta name="color-scheme" content="light dark" />
   <title>Lecorder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230078ff%22/><path d=%22M8 34h8l4-17 7 31 7-41 7 33 5-18 5 12h6%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%224%22/></svg>" />
-<link rel="stylesheet" href="/static/dashboard.css?v=20260922-unified-intake" />
-<link rel="stylesheet" href="/static/notes.css?v=20260922-unified-intake" />
+<link rel="stylesheet" href="/static/dashboard.css?v=20260922-dock-badge-right" />
+<link rel="stylesheet" href="/static/notes.css?v=20260922-terminology" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 </head>
 <body>
@@ -37,7 +37,6 @@
       <div class="toolbar-title"><h1 id="workspaceTitle">대시보드</h1><p id="workspaceDescription">녹음과 전사 작업의 현재 상태를 확인합니다.</p></div>
       <div class="toolbar-actions">
         <div class="server-status has-tooltip" id="serverPill" tabindex="0" role="status" aria-live="polite" data-tooltip="Whisper와 Qwen3의 실제 연결 상태입니다."><i></i><span id="serverText">서버 확인 중</span></div>
-        <button class="toolbar-icon has-tooltip" id="notificationButton" type="button" aria-label="완료 알림 켜기" data-tooltip="강의 전사·강의노트 분석 완료 알림 켜기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
         <a class="toolbar-icon has-tooltip" id="guideButton" href="/guide" aria-label="사용 안내 열기" data-tooltip="사용 안내"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 3.75h7.5l3 3v13.5H6.75zM14.25 3.75v3h3M9.5 11h5M9.5 14.5h5"/></svg></a>
         <button class="toolbar-icon has-tooltip" id="systemButton" type="button" aria-label="시스템 경로 설정 열기" data-tooltip="시스템 경로 설정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.7 3.65h4.6l.55 2.23c.48.2.93.46 1.34.77l2.18-.67 2.3 3.99-1.65 1.56a7 7 0 0 1 0 1.54l1.65 1.56-2.3 3.99-2.18-.67c-.41.31-.86.57-1.34.77l-.55 2.23H9.7l-.55-2.23a7.2 7.2 0 0 1-1.34-.77l-2.18.67-2.3-3.99 1.65-1.56a7 7 0 0 1 0-1.54L3.33 9.97l2.3-3.99 2.18.67c.41-.31.86-.57 1.34-.77z"/><circle cx="12" cy="12.3" r="2.65"/></svg></button>
       </div>
@@ -66,7 +65,7 @@
           <section class="course-document" aria-labelledby="courseNameLabel">
             <header class="course-heading"><label class="sr-only" id="courseNameLabel" for="courseName">선택한 강의 이름</label><input id="courseName" type="text" maxlength="80" readonly aria-readonly="true" /><span class="save-state has-tooltip" id="saveState" role="status" tabindex="0" data-tooltip="변경 사항은 자동 저장됩니다."><i></i>저장됨</span></header>
             <div class="settings-group"><h3>음성 인식</h3><section class="editor-section"><div class="editor-label"><h4>언어</h4><p>Whisper가 먼저 들을 언어</p></div><div class="language-control" role="radiogroup" aria-label="강의 언어"><label><input type="radio" name="language" value="ko" /><span>한국어</span></label><label><input type="radio" name="language" value="en" /><span>English</span></label><label><input type="radio" name="language" value="auto" /><span>자동 감지</span></label></div></section></div>
-            <section id="courseNotes" class="settings-group" aria-label="강의노트"></section><div class="settings-group"><h3>후처리</h3><div class="option-list"><label class="option-row"><span><strong>가독성 자동 정리</strong><small>Qwen3가 의미 경계에서 문단을 구성합니다.</small></span><input id="formatTranscript" type="checkbox" /></label><label class="option-row"><span><strong>Qwen3 문맥 검수</strong><small>수정 제안을 직접 승인하거나 거절합니다.</small></span><input id="llmEnabled" type="checkbox" /></label></div></div>
+            <section id="courseNotes" class="settings-group" aria-label="강의노트"></section>
           </section>
         </div>
       </section>
@@ -88,7 +87,7 @@
 </div>
 
 <aside class="command-dock" id="commandDock" data-record-state="idle" aria-label="빠른 녹음 도구">
-  <details class="dock-course-picker" id="dockCoursePicker"><summary id="dockCourseButton" aria-label="녹음할 강의 선택"><svg class="dock-course-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg><span><small>강의</small><strong id="dockCourseLabel">강의를 추가하세요</strong></span><svg class="dock-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="dock-course-menu" id="dockCourseMenu" role="listbox" aria-label="녹음할 강의"></div><select id="dockCourseSelect" aria-label="녹음할 강의" hidden tabindex="-1"></select></details>
+  <details class="dock-course-picker" id="dockCoursePicker"><summary id="dockCourseButton" aria-label="녹음할 강의 선택"><svg class="dock-course-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg><span><small>강의</small><span class="dock-course-title"><strong id="dockCourseLabel">강의를 추가하세요</strong></span></span><svg class="dock-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="dock-course-menu" id="dockCourseMenu" role="listbox" aria-label="녹음할 강의"></div><select id="dockCourseSelect" aria-label="녹음할 강의" hidden tabindex="-1"></select></details>
   <details class="dock-course-picker dock-note-picker" id="dockNotePicker">
     <summary id="dockNoteButton" aria-label="녹음에 사용할 강의노트 선택"><svg class="dock-course-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg><span><small>강의노트</small><strong id="dockNoteLabel">사용 안 함</strong></span><svg class="dock-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary>
     <div class="dock-course-menu" id="dockNoteMenu" role="listbox" aria-label="녹음에 사용할 강의노트"></div>
@@ -123,6 +122,6 @@
 <dialog class="pipeline-dialog" id="pipelineDialog" aria-labelledby="pipelineDialogTitle"><section class="pipeline-dialog-frame"><header><div><h2 id="pipelineDialogTitle">작업 로그</h2><p id="pipelineDialogSubtitle"></p></div><button class="dialog-close" id="closePipelineButton" type="button" aria-label="작업 로그 닫기">×</button></header><div class="pipeline-dialog-body" id="pipelineDialogBody"></div></section></dialog>
 <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><h2 id="confirmTitle">확인</h2><p id="confirmMessage"></p><div><button id="confirmCancel" value="cancel">취소</button><button id="confirmAccept" class="danger" value="confirm">확인</button></div></form></dialog>
 <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
-<script type="module" src="/static/dashboard.js?v=20260922-completion-notifications"></script>
+<script type="module" src="/static/dashboard.js?v=20260922-required-qwen"></script>
 </body>
 </html>

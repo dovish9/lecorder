@@ -1,4 +1,5 @@
 """Persistent lecture-note revisions with independent extraction and study workers."""
+from .ollama_status import require_ollama
 
 import hashlib
 import json
@@ -347,6 +348,11 @@ class NoteLibrary:
                     (revision_id, note_id),
                 )
             self.tokens[revision_id] = CancellationToken()
+            try:
+                require_ollama()
+            except RuntimeError as error:
+                self._update(revision_id, status="failed", study_status="failed", error=str(error))
+                return self.get(note_id)
             self.extract_queue.put(revision_id)
             return self.get(note_id)
 
@@ -473,6 +479,11 @@ class NoteLibrary:
             token = self.tokens.get(note["revision_id"])
             if token and token.cancelled:
                 self.tokens[note["revision_id"]] = CancellationToken()
+            try:
+                require_ollama()
+            except RuntimeError as error:
+                self._detail(note["revision_id"], number, {"detail_status": "failed", "analysis_error": str(error)})
+                return
             self._detail(note["revision_id"], number, {"detail_status": "pending"})
             self.study_queue.put((note["revision_id"], number))
 
@@ -482,6 +493,7 @@ class NoteLibrary:
         started = time.monotonic()
         try:
             token.check()
+            require_ollama()
             self._update(revision_id, status="extracting", error="")
             with self.store._connect() as db:
                 row = db.execute(
@@ -533,6 +545,11 @@ class NoteLibrary:
                 error=f"{failed}페이지 추출 실패" if failed else "",
                 seconds=time.monotonic() - started,
             )
+            try:
+                require_ollama()
+            except RuntimeError as error:
+                self._update(revision_id, study_status="failed", error=str(error))
+                return
             self.study_queue.put((revision_id, None))
         except TranscriptionCancelled:
             self._update(revision_id, status="cancelled", study_status="cancelled")
@@ -550,6 +567,7 @@ class NoteLibrary:
         token = self.tokens.setdefault(revision_id, CancellationToken())
         try:
             token.check()
+            require_ollama()
             if number is None:
                 self._update(revision_id, study_status="analyzing")
             else:
@@ -563,6 +581,7 @@ class NoteLibrary:
                 ):
                     continue
                 token.check()
+                require_ollama()
                 try:
                     result = analyze_page(
                         page,

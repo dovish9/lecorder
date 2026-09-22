@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .ollama_status import require_ollama
 
 import json
 import queue
@@ -208,19 +209,19 @@ class RecordingPipeline:
             recording = self.store.get_recording(recording_id)
             if recording.status != "recording" or recording.source_kind != "browser":
                 raise ValueError("녹음 중인 작업의 강의만 변경할 수 있습니다.")
-            course = self.store.get_course(course_id)
-            if recording.course_id == course.id:
+            course = self.store.selection_course(course_id)
+            if (recording.course_id or 0) == course.id:
                 return recording
             title = recording.title
-            automatic = re.fullmatch(re.escape(safe_name(recording.course_name)) + r"-(\d{1,2}월\d{1,2}일-[월화수목금토일])(?: \(\d+\))?", title)
+            automatic = re.fullmatch(re.escape(safe_name(recording.course_name if recording.course_id else "녹음")) + r"-(\d{1,2}월\d{1,2}일-[월화수목금토일])(?: \(\d+\))?", title)
             if automatic:
-                base = safe_name(f"{course.name}-{automatic.group(1)}")
+                base = safe_name(f"{course.name if course.id else '녹음'}-{automatic.group(1)}")
                 reserved = self.store.recording_titles(Path(recording.output_dir)) - {recording.title}
                 title = OutputFiles(Path(recording.output_dir)).available_title(base, reserved)
             with self.store._connect() as db:
                 db.execute("""UPDATE recordings SET course_id=?,course_name=?,title=?,language=?,
                     format_transcript=?,llm_enabled=?,note_revision_id=NULL,note_snapshot_json='{}'
-                    WHERE id=?""", (course.id, course.name, title, course.language,
+                    WHERE id=?""", (course.id or None, course.name, title, course.language,
                     int(course.format_transcript), int(course.llm_enabled), recording_id))
             return self.store.get_recording(recording_id)
 
@@ -303,6 +304,12 @@ class RecordingPipeline:
         with self._lock:
             if recording_id in self._queued:
                 return
+            try:
+                require_ollama()
+            except RuntimeError as error:
+                self.store.update_recording(recording_id, status="failed", error=str(error))
+                self.state.set("error", str(error), job_id=recording_id)
+                return
             self._cancellations.setdefault(recording_id, CancellationToken())
             self._queued.add(recording_id)
             self._queue.put(recording_id)
@@ -341,7 +348,7 @@ class RecordingPipeline:
     def delete_history(self, recording_id: str) -> None:
         with self._lock:
             recording = self.store.get_recording(recording_id)
-            if recording.review_status in {"queued", "processing"}:
+            if recording.status != "cancelled" and recording.review_status in {"queued", "processing"}:
                 raise ValueError("검수가 끝난 후 작업을 삭제하세요.")
             self.store.delete_recording_history(recording_id)
             shutil.rmtree(self.folder(recording_id), ignore_errors=True)
@@ -358,10 +365,10 @@ class RecordingPipeline:
             if course_id is not None:
                 if isinstance(course_id, bool) or not isinstance(course_id, int):
                     raise ValueError("강의를 선택하세요.")
-                self.store.get_course(course_id)
+                self.store.selection_course(course_id)
             if retain_note and target_course == previous.course_id and previous.note_revision_id:
                 lecture_note_id = self.notes._revision(previous.note_revision_id)['note_id']
-            revision = self.notes.bind(lecture_note_id, target_course, allow_pending=True)
+            revision = self.notes.bind(lecture_note_id, target_course or None, allow_pending=True)
             source = next((Path(value) for value in (previous.source_path, previous.audio_path)
                            if value and Path(value).is_file()), None)
             if source is None:
@@ -471,6 +478,12 @@ class RecordingPipeline:
                 return
             if recording.status != "queued":
                 raise ValueError("대기 중인 작업만 처리할 수 있습니다.")
+            try:
+                require_ollama()
+            except RuntimeError as error:
+                self.store.update_recording(recording_id, status="failed", error=str(error))
+                return
+            recording = self.store.update_recording(recording_id, llm_enabled=True, format_transcript=True)
             if recording.note_revision_id:
                 # Check even legacy queued uploads that predate the dependency marker.
                 # Do not acquire the speech inference slot while notes are unfinished.
@@ -724,6 +737,7 @@ class RecordingPipeline:
             segments_json=recording.segments_json if keep_note else "[]",
             breaks_json=recording.breaks_json if keep_note else "[]", quality_json=json.dumps(details),
             error="사용자가 전사 작업을 중단했습니다.", completed_at=self.store.now(),
+            review_status="none", review_error="",
         )
         shutil.rmtree(self.folder(recording_id), ignore_errors=True)
         self.state.set(

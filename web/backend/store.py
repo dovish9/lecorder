@@ -16,7 +16,6 @@ from .records import ActiveSettings, Course, Recording, StoredSuggestion
 class LectureStore:
     COURSE_FIELDS = {
         "name", "language",
-        "format_transcript", "llm_enabled",
     }
 
     def __init__(
@@ -179,8 +178,8 @@ class LectureStore:
             language=str(row["language"]),
             prompt=str(row["prompt"]),
             corrections=str(row["corrections"]),
-            format_transcript=bool(row["format_transcript"]),
-            llm_enabled=bool(row["llm_enabled"]),
+            format_transcript=True,
+            llm_enabled=True,
             updated_at=str(row["updated_at"]),
         )
 
@@ -204,6 +203,8 @@ class LectureStore:
                 "SELECT value FROM app_state WHERE key = 'active_course_id'"
             ).fetchone()
             course_id = int(row[0]) if row and row[0].isdigit() else 0
+            if row and row[0] == "0":
+                return 0
             exists = db.execute("SELECT 1 FROM courses WHERE id = ?", (course_id,)).fetchone()
             if exists:
                 return course_id
@@ -217,8 +218,11 @@ class LectureStore:
             )
             return course_id
 
+    def selection_course(self, course_id: int) -> Course:
+        return Course(0, "선택 안 함", language="auto", format_transcript=True, llm_enabled=True) if course_id == 0 else self.get_course(course_id)
+
     def select_course(self, course_id: int) -> Course:
-        course = self.get_course(course_id)
+        course = self.selection_course(course_id)
         with self._lock, self._connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO app_state(key, value) VALUES ('active_course_id', ?)",
@@ -296,9 +300,9 @@ class LectureStore:
         return active
 
     def get(self) -> ActiveSettings:
-        course = self.get_course(self.active_course_id())
+        course = self.selection_course(self.active_course_id())
         return ActiveSettings(
-            course_id=course.id,
+            course_id=course.id or None,
             course_name=course.name,
             language=course.language,
             prompt="",
@@ -338,7 +342,7 @@ class LectureStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (recording_id, settings.course_id, settings.course_name, title, source_kind,
                  extension, status, settings.language, settings.prompt, settings.corrections,
-                 int(settings.format_transcript), int(settings.llm_enabled), settings.llm_model,
+                 1, 1, settings.llm_model,
                  settings.output_dir, source_path, now),
             )
         return self.get_recording(recording_id)
@@ -359,7 +363,7 @@ class LectureStore:
             if row["status"] not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
             course = db.execute("SELECT * FROM courses WHERE id = ?", (course_id if course_id is not None else row["course_id"],)).fetchone()
-            if course_id is not None and course is None:
+            if course_id not in (None, 0) and course is None:
                 raise ValueError("강의를 찾지 못했습니다.")
             changes = dict(status="queued", source_path=str(source), error="", started_at="", completed_at="",
                            llm_model=DEFAULT_LLM_MODEL)
@@ -368,6 +372,9 @@ class LectureStore:
                 changes.update(course_id=course["id"], course_name=course["name"])
                 for name in ("language", "format_transcript", "llm_enabled"):
                     changes[name] = course[name]
+            if course_id == 0:
+                changes.update(course_id=None, course_name="선택 안 함", language="auto", format_transcript=1, llm_enabled=1)
+            changes.update(format_transcript=1, llm_enabled=1)
             changes.update(output_changes or {})
             assignments = ", ".join(f"{key} = ?" for key in changes)
             db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
@@ -379,7 +386,7 @@ class LectureStore:
             "title", "status", "source_path", "audio_path", "note_path", "duration_seconds",
             "processing_seconds", "transcript_text", "segments_json", "breaks_json",
             "quality_json", "error", "started_at", "completed_at",
-            "note_revision_id", "note_snapshot_json", "review_status", "review_error", "llm_model",
+            "note_revision_id", "note_snapshot_json", "review_status", "review_error", "llm_model", "llm_enabled", "format_transcript",
         }
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:

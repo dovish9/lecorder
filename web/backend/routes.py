@@ -453,7 +453,7 @@ def create_app(
             recording = lectures.get_recording(recording_id)
             if recording.status not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업의 제목만 수정할 수 있습니다.")
-            if recording.review_status in {"queued", "processing"}:
+            if recording.status != "cancelled" and recording.review_status in {"queued", "processing"}:
                 raise ValueError("검수가 끝난 후 파일을 수정하거나 삭제하세요.")
             root = Path(recording.output_dir).expanduser().resolve()
             targets: list[Path] = []
@@ -504,7 +504,7 @@ def create_app(
             recording = lectures.get_recording(recording_id)
             if recording.status not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업만 파일과 함께 삭제할 수 있습니다.")
-            if recording.review_status in {"queued", "processing"}:
+            if recording.status != "cancelled" and recording.review_status in {"queued", "processing"}:
                 raise ValueError("검수가 끝난 후 파일을 수정하거나 삭제하세요.")
             root = Path(recording.output_dir).expanduser().resolve()
             targets: list[Path] = []

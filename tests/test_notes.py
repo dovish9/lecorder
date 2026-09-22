@@ -23,11 +23,40 @@ from web.backend.state import JobState
 
 class NoteTests(unittest.TestCase):
     def setUp(self):
+        availability = patch("web.backend.ollama_status.ollama_ready", return_value=(True, True))
+        availability.start()
+        self.addCleanup(availability.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.env, self.output = fixtures.RecorderTests.environment(self.root)
         self.store = LectureStore(self.root / "test.db", self.env)
         self.notes = NoteLibrary(self.store, self.root / "notes", False)
+
+    def test_offline_ollama_fails_jobs_without_queuing_or_losing_outputs(self):
+        pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
+        row = self.store.create_recording('offline', self.store.get(), 'offline', 'upload', '.wav', '', 'queued')
+        audio = self.output / 'preserved.wav'
+        audio.write_bytes(b'original')
+        self.store.update_recording(row.id, audio_path=str(audio))
+        with patch('web.backend.ollama_status.ollama_ready', return_value=(False, False)):
+            pipeline.enqueue(row.id)
+            self.assertTrue(pipeline._queue.empty())
+            self.assertEqual(self.store.get_recording(row.id).status, 'failed')
+            self.assertEqual(audio.read_bytes(), b'original')
+            self.store.update_recording(row.id, status='completed', review_status='queued', transcript_text='preserved')
+            pipeline.reviews.enqueue(row.id)
+            result = self.store.get_recording(row.id)
+            self.assertEqual(result.review_status, 'failed')
+            self.assertEqual(result.transcript_text, 'preserved')
+            self.assertTrue(pipeline.reviews.queue.empty())
+            note = self.notes.register(self.store.active_course_id(), [('offline.pdf', io.BytesIO(b'%PDF-1.7 original'))])
+            self.assertEqual(note['status'], 'failed')
+            self.assertTrue(self.notes.extract_queue.empty())
+
+    def test_postprocessing_cannot_be_disabled(self):
+        course = self.store.update_course(self.store.active_course_id(), llm_enabled=False, format_transcript=False)
+        self.assertTrue(course.llm_enabled)
+        self.assertTrue(course.format_transcript)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -46,7 +75,7 @@ class NoteTests(unittest.TestCase):
         updated = pipeline.select_recording_course(recording.id, target.id)
         self.assertEqual(updated.title, '통계학-9월22일-화 (2)')
         self.assertEqual(updated.language, 'ko')
-        self.assertFalse(updated.llm_enabled)
+        self.assertTrue(updated.llm_enabled)
         self.assertIsNone(updated.note_revision_id)
         self.assertEqual(updated.source_path, recording.source_path)
         self.assertEqual((pipeline.folder(recording.id) / 'chunks/00000000.part').read_bytes(), b'preserved audio')
@@ -95,6 +124,46 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(audio.read_bytes(), b'original')
         self.assertFalse((self.output / 'new.wav').exists())
         self.assertEqual(self.store.get_recording(row.id).title, 'old')
+
+    def test_unassigned_recording_uses_raw_settings_and_can_change_courses(self):
+        note = self.ready()
+        old = self.store.get()
+        self.store.select_course(0)
+        settings = self.store.get()
+        self.assertIsNone(settings.course_id)
+        self.assertEqual(settings.language, 'auto')
+        self.assertTrue(settings.llm_enabled)
+        self.assertTrue(settings.format_transcript)
+        self.assertEqual(self.store.active_course_id(), 0)
+        pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
+        with self.assertRaises(ValueError):
+            pipeline.begin_chunked(settings, '녹음', '.webm', note['id'])
+        row = pipeline.begin_chunked(settings, '녹음-9월22일-화', '.webm')
+        self.assertIsNone(row.note_revision_id)
+        linked = pipeline.select_recording_course(row.id, old.course_id)
+        self.assertEqual(linked.title, f'{old.course_name}-9월22일-화')
+        raw = pipeline.select_recording_course(row.id, 0)
+        self.assertIsNone(raw.course_id)
+        self.assertEqual(raw.title, '녹음-9월22일-화')
+        self.assertTrue(raw.llm_enabled)
+        self.assertEqual(raw.language, 'auto')
+        self.assertEqual(json.loads(raw.note_snapshot_json), {})
+
+    def test_retranscription_can_remove_course_and_hints(self):
+        note = self.ready()
+        audio = self.output / 'raw.wav'; audio.write_bytes(b'audio')
+        row = self.store.create_recording('unassigned', self.store.get(), 'raw', 'upload', '.wav', '', 'completed')
+        self.store.update_recording(row.id, audio_path=str(audio), note_revision_id=note['revision_id'])
+        engine = fixtures.FakeTranscriber()
+        pipeline = RecordingPipeline(self.store, JobState(), engine, self.root / 'work', False)
+        queued = pipeline.retranscribe(row.id, course_id=0)
+        self.assertIsNone(queued.course_id)
+        self.assertIsNone(queued.note_revision_id)
+        self.assertTrue(queued.llm_enabled)
+        pipeline.process_next()
+        self.assertEqual(self.store.get_recording(row.id).status, 'completed')
+        self.assertEqual(engine.calls[0].language, 'auto')
+        self.assertFalse(engine.calls[0].note_keywords)
 
     def test_upload_and_recording_share_note_analysis_dependency(self):
         note = self.ready()

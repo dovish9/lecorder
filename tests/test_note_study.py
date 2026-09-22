@@ -6,6 +6,11 @@ from web.backend.transcription import CancellationToken
 
 
 class StudyValidationTests(unittest.TestCase):
+    def setUp(self):
+        availability = patch("web.backend.ollama_status.ollama_ready", return_value=(True, True))
+        availability.start()
+        self.addCleanup(availability.stop)
+
     def test_overview_rejects_invented_page_numbers(self):
         body = {"message": {"content": json.dumps({"summary": "개요", "markdown": "모평균 (99쪽)", "uncertainties": []})}}
         with self.assertRaises(ValueError):

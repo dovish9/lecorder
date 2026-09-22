@@ -16,6 +16,7 @@ from typing import Any, Callable
 import requests
 
 from .config import OLLAMA_URL, WHISPER_URL
+from .ollama_status import ollama_ready, require_ollama
 from .whisper_runtime import whisper_runtime
 from .inference import inference
 from .review_jobs import relevant_context
@@ -49,14 +50,6 @@ def port_ready(port: int) -> bool:
         return False
 
 
-def ollama_ready(model: str) -> tuple[bool, bool]:
-    try:
-        response = requests.get(OLLAMA_URL.rsplit("/", 1)[0] + "/tags", timeout=(1, 3))
-        response.raise_for_status()
-        installed = {str(item.get("name") or item.get("model") or "") for item in response.json().get("models", [])}
-        return True, model in installed
-    except (requests.RequestException, ValueError, AttributeError):
-        return False, False
 
 
 class Transcriber:
@@ -742,6 +735,7 @@ class Transcriber:
 
         def post_json(system: str, schema: dict[str, Any], content: str,
                       num_predict: int) -> dict[str, Any]:
+            require_ollama(options.llm_model)
             with inference.lease(cancellation=cancellation):
                 return perform_post(system, schema, content, num_predict)
 

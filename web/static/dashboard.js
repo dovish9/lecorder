@@ -1,4 +1,4 @@
-import {showCourseNotes, openNote, showRecordingNote} from "./notes.js?v=20260922-unified-intake";
+import {showCourseNotes, openNote, showRecordingNote} from "./notes.js?v=20260922-terminology";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,
@@ -34,7 +34,6 @@ const ui = {
   dockRecordClock: $("#dockRecordClock"),
   dockSoundMeter: $("#dockSoundMeter"),
   soundBars: [],
-  notificationButton: $("#notificationButton"),
   dockUploadButton: $("#dockUploadButton"),
   courseSearch: $("#courseSearch"),
   dashboardDate: $("#dashboardDate"),
@@ -55,8 +54,6 @@ const ui = {
   newCourseForm: $("#newCourseForm"),
   newCourseName: $("#newCourseName"),
   courseName: $("#courseName"),
-  formatTranscript: $("#formatTranscript"),
-  llmEnabled: $("#llmEnabled"),
   saveState: $("#saveState"),
   uploadDialog: $("#uploadDialog"),
   uploadForm: $("#uploadForm"),
@@ -197,40 +194,19 @@ function notificationPermission() {
   return "Notification" in window ? Notification.permission : "unsupported";
 }
 
-function renderNotificationButton() {
-  const permission = notificationPermission();
-  if (permission === "granted") {
-    ui.notificationButton.disabled = false;
-    ui.notificationButton.setAttribute("aria-label", "완료 알림 켜짐");
-    ui.notificationButton.dataset.tooltip = "강의 전사·강의노트 분석 완료 알림 켜짐";
-  } else if (permission === "denied") {
-    ui.notificationButton.disabled = true;
-    ui.notificationButton.setAttribute("aria-label", "브라우저 설정에서 알림을 허용하세요");
-    ui.notificationButton.dataset.tooltip = "브라우저 사이트 설정에서 알림을 허용하세요";
-  } else {
-    ui.notificationButton.disabled = permission === "unsupported";
-    ui.notificationButton.setAttribute("aria-label", "완료 알림 켜기");
-    ui.notificationButton.dataset.tooltip = permission === "unsupported"
-      ? "이 브라우저는 알림을 지원하지 않습니다"
-      : "강의 전사·강의노트 분석 완료 알림 켜기";
-  }
-}
-
-ui.notificationButton.addEventListener("click", async () => {
-  if (notificationPermission() !== "default") return;
-  const permission = await Notification.requestPermission();
-  renderNotificationButton();
-  if (permission === "granted") showToast("완료 알림을 켰습니다.", "success");
-});
-
 function notifyCompletion(title, body, open) {
   if (notificationPermission() !== "granted") return;
-  const notification = new Notification(title, {body, tag: `lecorder-${title}-${body}`});
-  notification.addEventListener("click", () => {
-    window.focus();
-    open();
-    notification.close();
-  });
+  try {
+    const notification = new Notification(title, {body, tag: `lecorder-${title}-${body}`});
+    notification.addEventListener("click", () => {
+      window.focus();
+      open();
+      notification.close();
+    });
+    notification.addEventListener("error", () => showToast("브라우저 알림을 표시하지 못했습니다. 사이트 및 macOS 알림 설정을 확인하세요.", "error"));
+  } catch (error) {
+    showToast(`브라우저 알림 발송 실패: ${error.message}`, "error");
+  }
 }
 
 function detectCompletionNotifications(data) {
@@ -238,13 +214,14 @@ function detectCompletionNotifications(data) {
   for (const recording of data.recordings || []) {
     const key = `recording:${recording.id}`;
     const previous = completionNotificationStates[key];
-    next[key] = recording.status;
-    if (previous && previous !== "completed" && recording.status === "completed") {
+    const workflowStatus = recordingWorkflowStatus(recording);
+    next[key] = workflowStatus;
+    if (previous && previous !== "completed" && workflowStatus === "completed") {
       notifyCompletion("강의 전사 완료", `${recording.course_name} · ${recording.title}`, () => {
         window.location.hash = `#/recordings/job/${encodeURIComponent(recording.id)}`;
       });
     }
-    if (previous && previous !== "failed" && recording.status === "failed") {
+    if (previous && previous !== "failed" && workflowStatus === "failed") {
       notifyCompletion("강의 전사 실패", recording.error || `${recording.course_name} · ${recording.title}`, () => {
         window.location.hash = `#/recordings/job/${encodeURIComponent(recording.id)}`;
       });
@@ -419,6 +396,12 @@ async function applyRoute() {
       window.location.replace("#/recordings");
       return;
     }
+    const targetEntry = app.libraryEntries.find(entry => entry.key === key);
+    const targetCourseId = targetEntry?.recording?.course_id || 0;
+    if (app.recordingState === "idle" && targetCourseId !== app.activeCourseId) {
+      await selectCourse(targetCourseId, {updateRoute:false});
+      window.history.replaceState(null, "", libraryRoute(targetEntry));
+    }
     app.selectedLibraryKey = key;
     renderLibrary();
     return;
@@ -442,7 +425,7 @@ function dateSuffix() {
 
 function automaticTitle() {
   const course = activeCourse();
-  const base = `${course?.name || "강의"}-${dateSuffix()}`;
+  const base = `${course?.name || "녹음"}-${dateSuffix()}`;
   const occupied = new Set([
     ...app.recordings.map((recording) => recording.title),
     ...app.storageItems.map((item) => item.name),
@@ -463,6 +446,17 @@ function renderCourseList() {
   ui.courseList.replaceChildren();
   const query = ui.courseSearch.value.trim().toLocaleLowerCase("ko");
   const visibleCourses = app.courses.filter((course) => !query || course.name.toLocaleLowerCase("ko").includes(query));
+  if (!query || "선택 안 함".includes(query)) {
+    const entry=document.createElement("div");
+    entry.className=`course-entry${!app.activeCourseId ? " active" : ""}`;
+    const button=document.createElement("button"); button.type="button"; button.className="course-item";
+    button.setAttribute("aria-current", String(!app.activeCourseId));
+    const label=document.createElement("span");label.textContent="선택 안 함";
+    const detail=document.createElement("small");detail.textContent="인식 힌트 없이 전사";
+    button.append(label,detail);
+    button.addEventListener("click",()=>void selectCourse(0,{updateRoute:true}));
+    entry.append(button);ui.courseList.append(entry);
+  }
   for (const course of visibleCourses) {
     const entry = document.createElement("div");
     entry.className = `course-entry${course.id === app.activeCourseId ? " active" : ""}`;
@@ -515,7 +509,7 @@ function renderCaptureControls() {
   ui.uploadCourseSelect.replaceChildren();
   ui.dockCourseMenu.replaceChildren();
   ui.uploadCourseMenu.replaceChildren();
-  for (const course of app.courses) {
+  for (const course of [{id:0,name:"선택 안 함"}, ...app.courses]) {
     for (const select of [ui.dockCourseSelect, ui.uploadCourseSelect]) {
       const option = document.createElement("option");
       option.value = String(course.id);
@@ -559,30 +553,24 @@ function renderCaptureControls() {
     uploadItem.addEventListener("click", () => void selectUploadCourse(course.id));
     ui.uploadCourseMenu.append(uploadItem);
   }
-  if (!app.courses.length) {
-    for (const select of [ui.dockCourseSelect, ui.uploadCourseSelect]) {
-      const option = document.createElement("option");
-      option.textContent = "강의를 추가하세요";
-      select.append(option);
-    }
-  }
   const locked = app.recordingState !== "idle";
   const selectedCourse = locked
     ? app.courses.find((course) => course.id === app.recordingCourseId)
     : activeCourse();
-  ui.dockCourseLabel.textContent = selectedCourse?.name || "강의를 추가하세요";
-  ui.uploadCourseLabel.textContent = activeCourse()?.name || "강의를 선택하세요";
-  ui.dockCourseButton.setAttribute("aria-disabled", String(!app.courses.length || !captureSettingsEditable()));
-  ui.dockCourseButton.tabIndex = app.courses.length ? 0 : -1;
-  ui.dockCourseSelect.disabled = !app.courses.length || !captureSettingsEditable();
+  ui.dockCourseLabel.textContent = selectedCourse?.name || "선택 안 함";
+  ui.uploadCourseLabel.textContent = activeCourse()?.name || "선택 안 함";
+  ui.dockCourseButton.setAttribute("aria-disabled", String(!captureSettingsEditable()));
+  ui.dockCourseButton.tabIndex = 0;
+  ui.dockCourseSelect.disabled = !captureSettingsEditable();
   ui.dockCourseLabel.title = selectedCourse?.name || "";
-  $("#dockNoteButton").setAttribute("aria-disabled", String(!captureSettingsEditable() || !app.courses.length));
-  ui.uploadCourseSelect.disabled = !app.courses.length || app.uploadInProgress;
-  ui.uploadCourseButton.setAttribute("aria-disabled", String(!app.courses.length || app.uploadInProgress));
-  ui.uploadCourseButton.tabIndex = app.courses.length && !app.uploadInProgress ? 0 : -1;
+  $("#dockNoteButton").setAttribute("aria-disabled", String(!captureSettingsEditable() || !captureCourseId));
+  ui.uploadCourseSelect.disabled = app.uploadInProgress;
+  ui.uploadCourseButton.setAttribute("aria-disabled", String(app.uploadInProgress));
+  ui.uploadCourseButton.tabIndex = !app.uploadInProgress ? 0 : -1;
   if (app.uploadInProgress) ui.uploadCoursePicker.removeAttribute("open");
-  ui.dockRecordButton.disabled = !app.courses.length || app.uploadInProgress || app.recordingState === "starting" || app.recordingState === "finalizing";
-  ui.dockUploadButton.disabled = !app.courses.length || app.uploadInProgress || locked;
+  ui.dockRecordButton.disabled = app.uploadInProgress || app.recordingState === "starting" || app.recordingState === "finalizing";
+  ui.dockUploadButton.disabled = app.uploadInProgress || locked;
+  renderCourseAlertBadges();
 }
 
 ui.courseSearch.addEventListener("input", renderCourseList);
@@ -592,11 +580,11 @@ ui.dockCourseSelect.addEventListener("change", async () => {
   renderDashboard();
 });
 ui.dockCourseButton.addEventListener("click", (event) => {
-  if (app.courses.length && captureSettingsEditable()) return;
+  if (captureSettingsEditable()) return;
   event.preventDefault();
 });
 ui.dockCourseButton.addEventListener("keydown", (event) => {
-  if (event.key !== "ArrowDown" || !app.courses.length || !captureSettingsEditable()) return;
+  if (event.key !== "ArrowDown" || !captureSettingsEditable()) return;
   event.preventDefault();
   ui.dockCoursePicker.setAttribute("open", "");
   ui.dockCourseMenu.querySelector('[aria-selected="true"]')?.focus();
@@ -609,7 +597,7 @@ ui.dockCoursePicker.addEventListener("keydown", (event) => {
 });
 
 async function selectUploadCourse(courseId) {
-  if (app.uploadInProgress || !app.courses.some((course) => course.id === courseId)) return;
+  if (app.uploadInProgress || (courseId !== 0 && !app.courses.some((course) => course.id === courseId))) return;
   ui.uploadCoursePicker.removeAttribute("open");
   ui.uploadCourseButton.setAttribute("aria-busy", "true");
   if (courseId !== app.activeCourseId) {
@@ -624,7 +612,7 @@ async function selectUploadCourse(courseId) {
 }
 
 ui.uploadCourseButton.addEventListener("click", (event) => {
-  if (app.courses.length && !app.uploadInProgress) return;
+  if (!app.uploadInProgress) return;
   event.preventDefault();
 });
 ui.uploadCoursePicker.addEventListener("toggle", () => {
@@ -716,7 +704,7 @@ async function deleteCourseById(courseId) {
     const wasActive = course.id === app.activeCourseId;
     const data = await requestJson(`/api/courses/${course.id}`, {method: "DELETE"});
     app.courses = app.courses.filter((item) => item.id !== course.id);
-    app.activeCourseId = data.active_course_id;
+    app.activeCourseId = data.active_course_id || 0;
     renderCourseList();
     if (wasActive) renderCourse(activeCourse());
     window.location.hash = courseRoute();
@@ -726,11 +714,13 @@ async function deleteCourseById(courseId) {
 }
 
 function renderCourse(course) {
+  for (const input of [ui.courseName, ...$$('input[name="language"]')]) input.disabled = !course;
   if (!course) {
     app.hydrating = true;
-    ui.courseName.value = "강의를 추가하세요";
-    ui.formatTranscript.checked = false;
-    ui.llmEnabled.checked = false;
+    ui.courseName.value = "선택 안 함";
+    void showCourseNotes(null);
+    $('input[name="language"][value="auto"]').checked = true;
+    setSaveState("", "인식 힌트 없이 전사");
     ui.dashboardCourseName.textContent = "강의 없음";
     ui.dashboardCourseLink.href = "#/courses";
     app.hydrating = false;
@@ -739,8 +729,6 @@ function renderCourse(course) {
   app.hydrating = true;
   ui.courseName.value = course.name;
   void showCourseNotes(course.id);
-  ui.formatTranscript.checked = course.format_transcript;
-  ui.llmEnabled.checked = course.llm_enabled;
   const language = $(`input[name="language"][value="${course.language}"]`);
   if (language) language.checked = true;
   ui.dashboardCourseName.textContent = course.name;
@@ -753,8 +741,6 @@ function coursePayload() {
   return {
     name: ui.courseName.value.trim(),
     language: $('input[name="language"]:checked')?.value || "ko",
-    format_transcript: ui.formatTranscript.checked,
-    llm_enabled: ui.llmEnabled.checked,
   };
 }
 
@@ -835,7 +821,8 @@ async function selectCourse(courseId, {updateRoute = false} = {}) {
     const index = app.courses.findIndex((course) => course.id === data.course.id);
     if (index >= 0) app.courses[index] = data.course;
     renderCourseList();
-    renderCourse(data.course);
+    renderCourse(data.course.id ? data.course : null);
+    renderLibrary();
     if (updateRoute) window.location.hash = courseRoute(data.course.id);
   } catch (error) {
     setSaveState("error", error.message);
@@ -889,7 +876,6 @@ $$('input[name="language"]').forEach((input) => input.addEventListener("change",
   renderCourseList();
   scheduleCourseSave(0);
 }));
-[ui.formatTranscript, ui.llmEnabled].forEach((input) => input.addEventListener("change", () => scheduleCourseSave(0)));
 
 ui.uploadTitle.addEventListener("input", () => {
   app.uploadTitleAutomatic = false;
@@ -978,7 +964,7 @@ function setRecorderState(state) {
   if (!active && state !== "idle") $("#dockNotePicker").removeAttribute("open");
   ui.dockRecordLabel.textContent = active ? "종료" : finalizing ? "저장 중" : state === "starting" ? "연결 중" : "녹음";
   ui.dockRecordButton.setAttribute("aria-label", active ? "녹음 종료 후 전사" : finalizing ? "녹음 저장 중" : state === "starting" ? "마이크 연결 중" : "녹음 시작");
-  ui.dockRecordButton.disabled = !app.courses.length || ["starting", "finalizing"].includes(state);
+  ui.dockRecordButton.disabled = ["starting", "finalizing"].includes(state);
   ui.dockPauseButton.disabled = !active;
   ui.dockPauseButton.setAttribute("aria-label", state === "paused" ? "녹음 계속" : "녹음 일시정지");
   ui.dockPauseButton.setAttribute("aria-pressed", String(state === "paused"));
@@ -1333,11 +1319,11 @@ $("#dockNotePicker").addEventListener("toggle", () => {
   }
 });
 $("#dockNoteButton").addEventListener("click", event => {
-  if (!captureSettingsEditable() || !app.courses.length) event.preventDefault();
+  if (!captureSettingsEditable() || !(app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId)) event.preventDefault();
 });
 $("#dockNotePicker").addEventListener("keydown", event => {
   if (event.key === "Escape") { $("#dockNotePicker").removeAttribute("open"); $("#dockNoteButton").focus(); }
-  if (event.key === "ArrowDown" && event.target === $("#dockNoteButton") && captureSettingsEditable()) {
+  if (event.key === "ArrowDown" && event.target === $("#dockNoteButton") && captureSettingsEditable() && (app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId)) {
     event.preventDefault(); $("#dockNotePicker").setAttribute("open", "");
     $("#dockNoteMenu button")?.focus();
   }
@@ -1383,7 +1369,8 @@ async function selectDockCourse(courseId) {
       const data = await requestJson(`/api/recordings/${recordingId}/course`, {
         method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({course_id:courseId}),
       });
-      app.recordingCourseId = data.recording.course_id;
+      app.recordingCourseId = data.recording.course_id || 0;
+      renderLibrary();
       app.recordingTitle = data.recording.title;
       ui.dockRecordingTitle.textContent = app.recordingTitle;
       recordingNoteSaved = "";
@@ -1399,7 +1386,7 @@ async function selectDockCourse(courseId) {
 }
 
 async function startDockRecording() {
-  if (!app.courses.length || app.recordingState !== "idle") return;
+  if (app.recordingState !== "idle") return;
   ui.dockCoursePicker.removeAttribute("open");
   setRecorderState("starting");
   try {
@@ -1597,7 +1584,21 @@ function storageCoverage(storage) {
   };
 }
 
+function recordingWorkflowStatus(recording) {
+  if (recording.status === "completed") {
+    if (["queued", "processing"].includes(recording.review_status)) return recording.review_status;
+    if (recording.review_status === "failed") return "failed";
+  }
+  return recording.status;
+}
+
+function pendingReview(recording) {
+  return recording.status === "completed" && ["queued", "processing"].includes(recording.review_status);
+}
+
 function recordingCategory(recording, storage) {
+  if (pendingReview(recording)) return "active";
+  if (recording.review_status === "failed") return "problem";
   const counts = recording.suggestion_counts || {};
   if (["recording", "recoverable", "queued", "processing", "cancelling"].includes(recording.status)) return "active";
   if (recording.status === "completed" && recording.error) return "problem";
@@ -1663,6 +1664,8 @@ function libraryRoute(entry) {
 }
 
 function libraryState(entry) {
+  if (entry.recording && pendingReview(entry.recording)) return entry.recording.review_status === "queued" ? "검수 대기" : "검수 중";
+  if (entry.recording?.review_status === "failed") return "검수 실패";
   const {hasAudio, hasMarkdown} = storageCoverage(entry.storage);
   if (entry.kind === "file") {
     if (hasAudio && hasMarkdown) return "오디오 + Markdown · 작업 기록 없음";
@@ -1679,23 +1682,61 @@ function libraryState(entry) {
   return recordingStatusLabels[entry.recording.status] || entry.recording.status;
 }
 
+function libraryAlertCounts(entries) {
+  const byCourse = new Map();
+  let total = 0;
+  for (const entry of entries) {
+    if (!["review", "problem"].includes(entry.category)) continue;
+    total += 1;
+    const courseId = entry.recording?.course_id || 0;
+    byCourse.set(courseId, (byCourse.get(courseId) || 0) + 1);
+  }
+  return {total, byCourse};
+}
+
+function notificationBadge(count) {
+  const badge = document.createElement("span");
+  badge.className = "notification-count";
+  badge.textContent = String(count);
+  badge.setAttribute("aria-label", `확인할 알림 ${count}개`);
+  return badge;
+}
+
+function renderCourseAlertBadges() {
+  const {byCourse} = libraryAlertCounts(app.libraryEntries || []);
+  const selectedCourseId = (app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId) || 0;
+  const title = ui.dockCourseLabel.parentElement;
+  title.querySelector(".notification-count")?.remove();
+  const selectedCount = byCourse.get(selectedCourseId) || 0;
+  if (selectedCount) title.append(notificationBadge(selectedCount));
+  for (const option of ui.dockCourseMenu.querySelectorAll("[data-course-id]")) {
+    option.querySelector(".notification-count")?.remove();
+    const count = byCourse.get(Number(option.dataset.courseId)) || 0;
+    option.classList.toggle("has-alert", count > 0);
+    if (count) option.append(notificationBadge(count));
+  }
+}
+
 function renderLibrary() {
   app.libraryEntries = sortLibraryEntries(deriveLibraryEntries(), ui.librarySort.value);
   const query = ui.librarySearch.value.trim().toLocaleLowerCase("ko");
   const filter = ui.libraryFilter.value;
-  const visible = app.libraryEntries.filter((entry) => {
+  const selectedCourseId = (app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId) || 0;
+  const courseEntries = app.libraryEntries.filter(entry => (entry.recording?.course_id || 0) === selectedCourseId);
+  const visible = courseEntries.filter((entry) => {
     const recording = entry.recording;
     const text = `${recording?.title || entry.storage.name} ${recording?.course_name || ""}`.toLocaleLowerCase("ko");
     return (!query || text.includes(query)) && (filter === "all" || entry.category === filter);
   });
   ui.libraryList.replaceChildren();
-  const attention = app.libraryEntries.filter((entry) => ["review", "problem"].includes(entry.category)).length;
+  const attention = libraryAlertCounts(app.libraryEntries).total;
+  renderCourseAlertBadges();
   ui.libraryBadge.hidden = attention === 0;
   ui.libraryBadge.textContent = String(attention);
   if (!visible.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = app.libraryEntries.length ? "조건에 맞는 녹음이 없습니다." : "아직 보관된 녹음이 없습니다.";
+    empty.textContent = "녹음이 없습니다.";
     ui.libraryList.append(empty);
   }
   visible.forEach((entry) => {
@@ -1713,14 +1754,18 @@ function renderLibrary() {
     title.textContent = entry.recording?.title || entry.storage.name;
     const meta = document.createElement("small");
     meta.textContent = `${entry.recording?.course_name || "강의 기록 없음"} · ${shortDate(entry.timestamp)}`;
-    copy.append(title, meta);
+    const nameRow = document.createElement("span");
+    nameRow.className = "library-name-row";
+    nameRow.append(title);
+    if (["review", "problem"].includes(entry.category)) nameRow.append(notificationBadge(1));
+    copy.append(nameRow, meta);
     const state = document.createElement("span");
     state.className = "library-state";
     state.textContent = libraryState(entry);
     link.append(symbol, copy, state);
     ui.libraryList.append(link);
   });
-  const selected = app.libraryEntries.find((entry) => entry.key === app.selectedLibraryKey);
+  const selected = courseEntries.find((entry) => entry.key === app.selectedLibraryKey);
   if (app.selectedLibraryKey && !selected) {
     app.selectedLibraryKey = null;
     if (app.activeView === "recordings") window.history.replaceState(null, "", "#/recordings");
@@ -2290,23 +2335,23 @@ function createDetailMenu(entry, title) {
   const recording = entry.recording;
   const final = recording && ["completed", "failed", "cancelled"].includes(recording.status);
   const interrupted = recording && ["recording", "recoverable"].includes(recording.status) && recording.id !== app.recordingId;
-  if (final || !recording) panel.append(detailMenuButton("수정", () => beginEntryTitleEdit(entry, title, menu)));
+  if (final || !recording) panel.append(detailMenuButton("이름 수정", () => beginEntryTitleEdit(entry, title, menu)));
   if (hasPipelineLog(recording)) {
-    panel.append(detailMenuButton("로그 보기", (button) => openPipelineLog(recording, button)));
+    panel.append(detailMenuButton("로그 확인", (button) => openPipelineLog(recording, button)));
   }
   if (recording && ["queued", "processing"].includes(recording.status)) {
     panel.append(detailMenuButton("처리 중단", (button) => cancelTranscription(recording, button)));
   }
+  if (final) {
+    panel.append(detailMenuButton("다시 전사", (button) => retryRecording(recording, button)));
+  } else if (interrupted) {
+    panel.append(detailMenuButton("녹음 복구", (button) => retryRecording(recording, button)));
+  }
   if (recording?.status === "completed" && !["queued","processing"].includes(recording.review_status)) {
-    panel.append(detailMenuButton("검수 다시 하기", async () => {
+    panel.append(detailMenuButton("다시 검수", async () => {
       await requestJson(`/api/recordings/${recording.id}/review`, {method:"POST"});
       await refreshStatus();
     }));
-  }
-  if (final) {
-    panel.append(detailMenuButton("다시 전사하기", (button) => retryRecording(recording, button)));
-  } else if (interrupted) {
-    panel.append(detailMenuButton("녹음 복구", (button) => retryRecording(recording, button)));
   }
   if (final || interrupted) panel.append(detailMenuButton("기록 삭제", (button) => deleteRecordingHistory(recording, button), {danger: true}));
   if (final || (!recording && entry.storage?.files?.length)) {
@@ -2527,7 +2572,7 @@ async function loadUploadNotes(selected = "") {
   $("#uploadNoteLabel").textContent = "불러오는 중…";
   $("#uploadNoteMenu").replaceChildren();
   try {
-    const {notes} = await requestJson(`/api/courses/${app.activeCourseId}/notes`);
+    const {notes} = app.activeCourseId ? await requestJson(`/api/courses/${app.activeCourseId}/notes`) : {notes:[]};
     if (serial !== uploadNoteRequest) return;
     const options = [{id:"", title:"사용 안 함", status:"ready"}, ...notes];
     app.uploadNoteId = options.some(n => n.id === selected && ["ready","partial","queued","extracting"].includes(n.status)) ? selected : "";
@@ -2536,7 +2581,7 @@ async function loadUploadNotes(selected = "") {
       $("#uploadNoteLabel").textContent = chosen?.title || "사용 안 함";
       $("#uploadNoteLabel").title = chosen?.title || "사용 안 함";
       const pending = chosen && (["queued","extracting"].includes(chosen.status) || ["pending","analyzing"].includes(chosen.study_status));
-      $("#uploadNoteHint").textContent = pending ? "분석 완료 후 전사합니다. 분석 실패·중단 시 전사를 시작하지 않습니다." : "선택한 노트의 키워드와 문맥을 전사에 활용합니다.";
+      $("#uploadNoteHint").textContent = !app.activeCourseId ? "강의를 선택하지 않아 인식 힌트 없이 전사합니다." : pending ? "분석 완료 후 전사합니다. 분석 실패·중단 시 전사를 시작하지 않습니다." : "선택한 노트의 키워드와 문맥을 전사에 활용합니다.";
       $("#uploadNoteMenu").replaceChildren();
       for (const note of options) {
         const button = document.createElement("button"); button.type="button"; button.className="upload-course-option";
@@ -2611,22 +2656,17 @@ function setUploadBusy(busy) {
 }
 
 async function openUploadDialog(recording = null) {
-  if (!app.courses.length) {
-    showToast("먼저 파일에 연결할 강의를 추가하세요.", "error");
-    window.location.hash = "#/courses";
-    return;
-  }
   if (app.recordingState !== "idle") return;
   resetUploadSelection();
   app.retranscribeRecording = recording;
   ui.uploadDialog.dataset.mode = recording ? "retranscribe" : "upload";
   $("#uploadNotePicker").open=false;
   ui.uploadCoursePicker.open=false;
-  if (recording && recording.course_id !== app.activeCourseId) await selectCourse(recording.course_id);
-  $("#uploadDialogTitle").textContent = recording ? "다시 전사하기" : "파일 가져오기";
+  if (recording && recording.course_id !== app.activeCourseId) await selectCourse(recording.course_id || 0);
+  $("#uploadDialogTitle").textContent = recording ? "다시 전사" : "파일 가져오기";
   $("#uploadDialog header p").textContent = recording ? "기존 음성으로 다시 전사합니다. 이름과 강의, 강의노트를 변경할 수 있습니다." : "오디오나 동영상을 전사 대기열에 추가합니다.";
-  ui.uploadButton.textContent = recording ? "다시 전사하기" : "대기열에 추가";
-  ui.closeUploadButton.setAttribute("aria-label", recording ? "다시 전사하기 닫기" : "파일 가져오기 닫기");
+  ui.uploadButton.textContent = recording ? "다시 전사" : "대기열에 추가";
+  ui.closeUploadButton.setAttribute("aria-label", recording ? "다시 전사 닫기" : "파일 가져오기 닫기");
   ui.dropZone.disabled = Boolean(recording);
   if (recording) {
     app.uploadTitleAutomatic = false;
@@ -2660,7 +2700,7 @@ ui.uploadDialog.addEventListener("close", () => {
 });
 ui.uploadCourseSelect.addEventListener("change", async () => {
   const courseId = Number(ui.uploadCourseSelect.value);
-  if (courseId) await selectUploadCourse(courseId);
+  await selectUploadCourse(courseId);
 });
 ui.dropZone.addEventListener("click", () => ui.uploadFile.click());
 ui.uploadFile.addEventListener("change", () => selectUploadFile(ui.uploadFile.files[0]));
@@ -2711,7 +2751,7 @@ ui.uploadForm.addEventListener("submit", async (event) => {
     const result = app.retranscribeRecording
       ? await requestJson(`/api/recordings/${encodeURIComponent(app.retranscribeRecording.id)}/retranscribe`, {
           method: "POST", headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({title:ui.uploadTitle.value, course_id:app.activeCourseId, lecture_note_id:lectureNoteId}),
+          body: JSON.stringify({title:ui.uploadTitle.value, course_id:app.activeCourseId || 0, lecture_note_id:lectureNoteId}),
         })
       : await requestJson("/api/upload", {method: "POST", body: data});
     renderRecordings([result.recording, ...app.recordings.filter((item) => item.id !== result.recording.id)]);
@@ -3041,7 +3081,7 @@ function createPipelineDetail(recording) {
 }
 
 function renderQueue(recordings) {
-  const jobs = [...recordings, ...(app.noteJobs || []).map(note => ({...note, kind: "note"}))];
+  const jobs = [...recordings.map(recording => ({...recording, reviewPending:pendingReview(recording), status:recordingWorkflowStatus(recording)})), ...(app.noteJobs || []).map(note => ({...note, kind: "note"}))];
   const active = jobs.filter((item) => ["processing", "cancelling"].includes(item.status));
   const queued = jobs
     .filter((item) => item.status === "queued")
@@ -3075,8 +3115,8 @@ function renderQueue(recordings) {
     const title = document.createElement("strong");
     title.textContent = recording.title;
     const meta = document.createElement("small");
-    const position = isQueued ? (recording.waiting_for_note ? "강의노트 분석 완료 대기" : "전사 대기") : recordingStatusLabels[recording.status] || "처리 중";
-    const noteStage = {extracting: "원문 추출", study: "학습 정리", detail: `${recording.number}쪽 상세 해설`}[recording.stage];
+    const position = recording.reviewPending ? (isQueued ? "검수 대기" : "검수 중") : isQueued ? (recording.waiting_for_note ? "강의노트 분석 완료 대기" : "전사 대기") : recordingStatusLabels[recording.status] || "처리 중";
+    const noteStage = {extracting: "원문 추출", study: "해설 생성", detail: `${recording.number}쪽 상세 해설`}[recording.stage];
     const completed = recording.stage === "extracting" ? recording.extracted_pages : recording.analyzed_pages;
     const progress = !isQueued && recording.page_count ? ` · ${completed}/${recording.page_count}쪽 처리` : "";
     meta.textContent = isNote
@@ -3089,6 +3129,9 @@ function renderQueue(recordings) {
     if (isNote && recording.status === "processing") {
       link.classList.add("has-pipeline");
       link.append(createNoteQueuePipeline(recording));
+    } else if (!isNote && recording.reviewPending) {
+      link.classList.add("has-pipeline");
+      link.append(createQueuePipeline(recording, {phase:"polishing", message:isQueued ? "검수 대기 · 전사 원문은 저장되었습니다." : "Qwen3.5 검수 및 결과 저장 중"}));
     } else if (!isNote && recording.status === "processing" && app.job?.job_id === recording.id) {
       link.classList.add("has-pipeline");
       link.append(createQueuePipeline(recording, app.job));
@@ -3102,7 +3145,7 @@ function createQueuePipeline(recording, job) {
   const stages = [
     {phase: "processing", label: "변환·전사"},
     {phase: "refining", label: "품질 확인"},
-    ...(recording.llm_enabled ? [{phase: "polishing", label: "Qwen3"}] : []),
+    ...(recording.llm_enabled ? [{phase: "polishing", label: "검수"}] : []),
     {phase: "saving", label: "저장"},
   ];
   return createStagePipeline(stages, phase, job.message || phaseLabels[phase] || "처리 중");
@@ -3114,18 +3157,43 @@ function createNoteQueuePipeline(note) {
   }
   const stages = [
     {phase: "extracting", label: "원문 추출"},
-    {phase: "keywords", label: "키워드"},
-    {phase: "study", label: "학습 정리"},
+    {phase: "keywords", label: "용어집 생성"},
+    {phase: "study", label: "해설 생성"},
   ];
+  const {phase, message} = noteQueueProgress(note);
+  return createStagePipeline(stages, phase, message);
+}
+
+function noteQueueProgress(note) {
+  if (note.stage === "detail") return {phase:"detail", message:`${note.number}쪽 상세 해설 생성 중`};
   const total = Number(note.page_count) || 0;
   const extracting = note.stage === "extracting";
   const done = Number(extracting ? note.extracted_pages : note.analyzed_pages) || 0;
   const phase = extracting && total > 0 && done >= total ? "keywords" : note.stage;
-  const message = phase === "keywords" ? "전사에 사용할 키워드 추출 중"
+  const message = phase === "keywords" ? "전사에 사용할 용어집 생성 중"
     : extracting ? (total ? `원문 추출 · ${done}/${total}쪽 처리` : "문서 변환·페이지 준비 중")
     : total && done >= total ? "페이지 분석 처리 종료 · 개요 정리 중"
-    : `학습 정리 · ${done}/${total}쪽 처리`;
-  return createStagePipeline(stages, phase, message);
+    : `해설 생성 · ${done}/${total}쪽 처리`;
+  return {phase, message};
+}
+
+function statusCardActivity(job, notes, recordings = []) {
+  const review = recordings.find(item => pendingReview(item) && item.review_status === "processing") || recordings.find(pendingReview);
+  if (review && !["processing", "refining", "polishing", "saving", "cancelling"].includes(job.phase)) {
+    return {phase:review.review_status === "queued" ? "queued" : "polishing", label:review.review_status === "queued" ? "검수 대기" : "Qwen3.5 검수 중", title:review.title, message:"전사 원문은 저장되었습니다. 검수 결과를 기다리고 있습니다."};
+  }
+  const phase = job.phase || "idle";
+  const activeSpeech = ["processing", "refining", "polishing", "saving", "cancelling"].includes(phase);
+  const note = activeSpeech ? null : notes.find(item => item.status === "processing")
+    || notes.find(item => item.status === "queued");
+  if (note) return {
+    phase: note.status === "processing" ? "processing" : "queued",
+    label: note.status === "processing" ? "강의노트 분석 중" : "강의노트 분석 대기",
+    title: note.title,
+    message: note.status === "processing" ? noteQueueProgress(note).message : "분석 작업이 시작되기를 기다리고 있습니다.",
+  };
+  return {phase, label:phaseLabels[phase] || phase, title:job.title || "준비되어 있습니다",
+    message:job.message || "강의를 선택하고 작업을 시작하세요."};
 }
 
 function createStagePipeline(stages, phase, messageText) {
@@ -3424,14 +3492,14 @@ function renderStatus(data) {
     ui.serverPill.className = "server-status has-tooltip ready";
     ui.serverText.textContent = needsLlm ? "Whisper + Qwen3 준비됨" : "Whisper 준비됨";
   }
-  const phase = data.job.phase || "idle";
   app.job = data.job || {};
-  ui.progressCard.dataset.phase = phase;
-  ui.progressKicker.textContent = phaseLabels[phase] || phase;
-  ui.progressTitle.textContent = data.job.title || "준비되어 있습니다";
-  ui.progressMessage.textContent = data.job.message || "강의를 선택하고 작업을 시작하세요.";
-  renderSuggestions(data.job.suggestions || []);
   app.noteJobs = data.note_jobs || [];
+  const activity = statusCardActivity(app.job, app.noteJobs, data.recordings || []);
+  ui.progressCard.dataset.phase = activity.phase;
+  ui.progressKicker.textContent = activity.label;
+  ui.progressTitle.textContent = activity.title;
+  ui.progressMessage.textContent = activity.message;
+  renderSuggestions(app.job.suggestions || []);
   renderRecordings(data.recordings || []);
 }
 
@@ -3463,10 +3531,9 @@ async function refreshStatus() {
 
 async function initialize() {
   try {
-    renderNotificationButton();
     const data = await requestJson("/api/bootstrap", {cache: "no-store"});
     app.courses = data.courses;
-    app.activeCourseId = data.active_course_id;
+    app.activeCourseId = data.active_course_id || 0;
     renderCourseList();
     renderCourse(activeCourse());
     renderEnvironment(data.environment);
