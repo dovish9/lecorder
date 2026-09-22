@@ -380,6 +380,13 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('function stopDockRecording()', script)
         self.assertIn('function frequencyBandLevel(', script)
         self.assertIn('async function acquireMicrophone(timeoutMs = 12000)', script)
+        self.assertIn('function detectCompletionNotifications(data)', script)
+        self.assertIn('new Notification(title', script)
+        self.assertIn('"강의 전사 완료"', script)
+        self.assertIn('"강의노트 분석 완료"', script)
+        self.assertIn('"강의 전사 실패"', script)
+        self.assertIn('"강의노트 분석 실패"', script)
+        self.assertIn('id="notificationButton"', markup)
         self.assertIn('async function requestJsonBeforeDeadline(', script)
         self.assertNotIn('setRecorderState("starting");\n  await flushCourseSave();', script)
         self.assertIn('const SUPPORTED_UPLOAD_EXTENSIONS = new Set([', script)
@@ -397,7 +404,7 @@ class RecorderTests(unittest.TestCase):
         self.assertIn('className = "review-comparison"', script)
         self.assertIn('function appendHighlightedReviewContext', script)
         self.assertIn('progress.setAttribute("aria-label"', script)
-        self.assertIn('"승인하고 학습"', script)
+        self.assertIn('"승인하고 반영"', script)
         self.assertIn('.review-comparison{', dashboard_css)
         self.assertIn('@container (max-width:600px)', dashboard_css)
         self.assertIn('["반복 보호", quality.repetition_fallback_seconds', script)
@@ -1763,7 +1770,7 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual((output / "복구.webm").read_bytes(), b"saved")
             self.assertFalse(pipeline.folder(recording.id).exists())
 
-    def test_accepting_suggestion_updates_note_and_course_corrections(self) -> None:
+    def test_accepting_suggestion_updates_note_without_learning_corrections(self) -> None:
         class SuggestedTranscriber(FakeTranscriber):
             def transcribe(self, source, options, incoming=None, progress=None,
                            cancellation=None) -> Result:

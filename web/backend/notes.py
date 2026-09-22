@@ -173,6 +173,20 @@ class NoteLibrary:
             items.append(item)
         return items
 
+    def completion_items(self):
+        """Small, current note states used to detect newly completed analyses."""
+        with self.store._connect() as db:
+            rows = db.execute("""
+                SELECT n.id AS note_id, n.title, n.course_id, c.name AS course_name,
+                       r.id AS revision_id, r.status, r.study_status, r.error
+                FROM lecture_notes n
+                JOIN note_revisions r ON r.id=n.revision_id
+                LEFT JOIN courses c ON c.id=n.course_id
+                WHERE n.deleted=0
+                ORDER BY r.created_at DESC
+            """).fetchall()
+        return [dict(row) for row in rows]
+
     def pages(self, revision_id):
         with self.store._connect() as db:
             rows = db.execute(

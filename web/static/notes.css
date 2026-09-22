@@ -43,7 +43,7 @@
 .note-dialog button,
 .note-dialog select,
 .note-dialog input:not([type="checkbox"]),
-#courseNotes button {
+#courseNotes .note-toolbar button {
   font: inherit;
   font-size: 12px;
   color: var(--ink);
@@ -54,11 +54,11 @@
   min-height: 28px;
 }
 .note-dialog button,
-#courseNotes button {
+#courseNotes .note-toolbar button {
   cursor: pointer;
 }
 .note-dialog button:hover,
-#courseNotes button:hover {
+#courseNotes .note-toolbar button:hover {
   background: var(--surface);
 }
 .note-dialog button:disabled {
@@ -66,7 +66,7 @@
   cursor: default;
 }
 .note-dialog :focus-visible,
-#courseNotes button:focus-visible {
+#courseNotes .note-toolbar button:focus-visible {
   outline: 3px solid var(--blue-soft);
   outline-offset: 2px;
 }
@@ -93,16 +93,13 @@
   font-weight: 400;
 }
 #courseNotes {
-  padding: 22px 0 4px;
+  padding: 26px 0 6px;
 }
 #courseNotes > .note-toolbar {
   margin-bottom: 12px;
 }
 #courseNotes h3 {
   margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
 }
 .note-list {
   border: 0.5px solid var(--line);
@@ -113,17 +110,33 @@
   margin: 0;
   padding: 20px 14px;
 }
-#courseNotes .note-row {
+.note-list .note-row {
   display: flex;
   align-items: center;
   gap: 13px;
   width: 100%;
-  padding: 13px 14px;
+  min-height: 68px;
+  padding: 14px 16px;
+  color: var(--ink);
+  background: var(--raised);
+  font: inherit;
+  cursor: pointer;
   border: 0;
   border-radius: 0;
   text-align: left;
 }
-#courseNotes .note-row + .note-row {
+.note-list .note-row:hover {
+  background: var(--surface);
+}
+.note-list .note-row:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -3px;
+}
+.note-row .note-muted {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.note-list .note-row + .note-row {
   border-top: 0.5px solid var(--line);
 }
 .note-row-copy {
@@ -133,7 +146,8 @@
   flex: 1;
 }
 .note-title {
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.4;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -391,63 +405,6 @@
   background: var(--blue);
   filter: brightness(0.94);
 }
-/* A compact companion to the existing floating recording controls. */
-.command-dock > .dock-note-picker {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 390px;
-  max-width: calc(100vw - 32px);
-  padding: 10px 12px;
-  border: 0.5px solid var(--line2);
-  border-radius: 12px;
-  background: var(--raised);
-  box-shadow: 0 6px 22px #0002;
-  color: var(--ink);
-}
-.dock-note-picker label {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--muted);
-}
-.dock-note-picker select {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  font-size: 12px;
-  padding: 4px 2px;
-  color: var(--ink);
-  text-overflow: ellipsis;
-}
-.dock-note-picker span {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 10px;
-}
-.dock-note-picker button {
-  flex-shrink: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 18px;
-  padding: 0 4px;
-  cursor: pointer;
-}
-.dock-note-picker :focus-visible {
-  outline: 3px solid var(--blue-soft);
-  outline-offset: 2px;
-}
-.note-retranscribe-title {
-  overflow-wrap: anywhere;
-  color: var(--muted);
-}
-
 .note-overview {
   max-width: 760px;
   margin: 0 auto;

@@ -113,7 +113,7 @@ button,a{-webkit-tap-highlight-color:transparent}
 .save-state.saving i{background:var(--orange)}
 .save-state.error i{background:var(--red)}
 .settings-group{padding-top:26px}
-.settings-group>h3{margin:0 0 8px;color:var(--muted);font-size:11px}
+.settings-group>h3,.settings-group>.note-toolbar>h3{margin:0 0 8px;color:var(--muted);font-size:11px}
 .settings-group:not(:last-child){padding-bottom:6px;border-bottom:.5px solid var(--line)}
 .editor-section{display:grid;grid-template-columns:150px minmax(0,1fr);gap:22px;padding:14px 0}
 .editor-label h4{margin:0;font-size:12px}
@@ -308,7 +308,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .course-action,.course-rename-form button{font-size:12px}
 .course-heading input{font-size:32px}
 .save-state{font-size:12px}
-.settings-group>h3{font-size:13px}
+.settings-group>h3,.settings-group>.note-toolbar>h3{font-size:13px}
 .editor-label h4{font-size:15px}
 .editor-label p{font-size:12px}
 .editor-section textarea{font-size:14px}
@@ -1398,3 +1398,33 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .dock-course-picker{width:auto}
 .dock-course-picker>.dock-course-menu{right:0;left:0;width:100%}
 }
+
+/* Fixed-width capture selectors; long names never resize the recording controls. */
+.command-dock #dockCoursePicker{flex:0 0 132px;width:132px;max-width:132px}
+.command-dock #dockNotePicker{flex:0 0 220px;width:220px;max-width:220px}
+.command-dock .dock-course-option>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.command-dock .dock-recording-session{min-width:0;flex-shrink:1;margin-right:6px}
+.command-dock .dock-recording-copy{min-width:0}
+.command-dock .dock-recording-copy time{flex-shrink:0;margin-left:6px;margin-right:4px}
+.command-dock .dock-recording-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:1100px){
+  .command-dock .dock-recording-copy strong{display:none}
+  .command-dock .dock-frequency{width:30px}
+  .command-dock #dockCoursePicker{flex-basis:112px;width:112px;max-width:112px}
+  .command-dock #dockNotePicker{flex-basis:190px;width:190px;max-width:190px}
+}
+@media(max-width:700px){
+  .command-dock{flex-wrap:wrap;justify-content:center;border-radius:25px}
+  .command-dock #dockCoursePicker{flex:0 0 106px;width:106px;max-width:106px}
+  .command-dock #dockNotePicker{flex:0 0 176px;width:176px;max-width:176px}
+  .command-dock .dock-divider{display:none}
+  .command-dock .dock-course-picker>summary small{display:block}
+  .command-dock .dock-recording-session{margin-right:6px}
+}
+
+.upload-course-picker[open]{z-index:5}
+#uploadNoteHint{color:var(--muted);font-size:12px;line-height:1.5}
+.upload-course-option:disabled{opacity:.45;cursor:not-allowed}
+
+.upload-dialog[data-mode="retranscribe"] .upload-drop-zone{min-height:76px;padding:16px;display:flex;gap:14px;text-align:left;border-style:solid;opacity:1;color:var(--ink);cursor:default}
+.upload-dialog[data-mode="retranscribe"] .upload-drop-zone>svg{width:24px;height:24px}

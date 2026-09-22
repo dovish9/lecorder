@@ -32,6 +32,95 @@ class NoteTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_recording_course_change_preserves_chunks_and_updates_settings(self):
+        note = self.ready()
+        old = self.store.get()
+        target = self.store.create_course('통계학')
+        self.store.update_course(target.id, language='ko', llm_enabled=False)
+        pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
+        recording = pipeline.begin_chunked(old, f'{old.course_name}-9월22일-화', '.webm', note['id'])
+        pipeline.save_chunk(recording.id, 0, io.BytesIO(b'preserved audio'))
+        same = pipeline.select_recording_course(recording.id, old.course_id)
+        self.assertEqual(same.note_revision_id, note['revision_id'])
+        (self.output / '통계학-9월22일-화.mp4').write_bytes(b'existing')
+        updated = pipeline.select_recording_course(recording.id, target.id)
+        self.assertEqual(updated.title, '통계학-9월22일-화 (2)')
+        self.assertEqual(updated.language, 'ko')
+        self.assertFalse(updated.llm_enabled)
+        self.assertIsNone(updated.note_revision_id)
+        self.assertEqual(updated.source_path, recording.source_path)
+        self.assertEqual((pipeline.folder(recording.id) / 'chunks/00000000.part').read_bytes(), b'preserved audio')
+        with self.assertRaises(ValueError):
+            pipeline.select_recording_note(recording.id, note['id'])
+        self.store.update_recording(recording.id, status='completed')
+        with self.assertRaises(ValueError):
+            pipeline.select_recording_course(recording.id, old.course_id)
+
+    def test_recording_course_change_preserves_custom_title(self):
+        target = self.store.create_course('다른 강의')
+        pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
+        recording = pipeline.begin_chunked(self.store.get(), '직접 정한 제목', '.webm')
+        self.assertEqual(pipeline.select_recording_course(recording.id, target.id).title, '직접 정한 제목')
+
+    def test_retranscription_changes_course_title_without_duplicating_audio(self):
+        old = self.store.get()
+        target = self.store.create_course('물리학2')
+        self.store.update_course(target.id, language='en', llm_enabled=False)
+        note = self.ready()
+        audio = self.output / 'old.wav'; audio.write_bytes(b'original audio')
+        markdown = self.output / 'old.md'; markdown.write_text('[audio](old.wav) previous result')
+        row = self.store.create_recording('rename-retry', old, 'old', 'upload', '.wav', '', 'completed')
+        self.store.update_recording(row.id, audio_path=str(audio), note_path=str(markdown), transcript_text='previous result')
+        pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
+        queued = pipeline.retranscribe(row.id, note['id'], retain_note=False, course_id=target.id, title='new')
+        self.assertEqual(queued.id, row.id)
+        self.assertEqual(queued.course_id, target.id)
+        self.assertEqual(queued.language, 'en')
+        self.assertEqual(queued.transcript_text, 'previous result')
+        self.assertEqual(Path(queued.audio_path).read_bytes(), b'original audio')
+        self.assertIn('new.wav', Path(queued.note_path).read_text())
+        self.assertFalse(audio.exists())
+        pipeline.process_next()
+        self.assertEqual(self.store.get_recording(row.id).status, 'completed')
+        self.assertEqual(len(list(self.output.glob('*.wav'))), 1)
+
+    def test_retranscription_rename_rolls_back_on_database_failure(self):
+        audio = self.output / 'old.wav'; audio.write_bytes(b'original')
+        row = self.store.create_recording('rollback', self.store.get(), 'old', 'upload', '.wav', '', 'completed')
+        self.store.update_recording(row.id, audio_path=str(audio))
+        pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
+        with patch.object(self.store, 'queue_retranscription', side_effect=RuntimeError('db failure')):
+            with self.assertRaises(RuntimeError):
+                pipeline.retranscribe(row.id, title='new')
+        self.assertEqual(audio.read_bytes(), b'original')
+        self.assertFalse((self.output / 'new.wav').exists())
+        self.assertEqual(self.store.get_recording(row.id).title, 'old')
+
+    def test_upload_and_recording_share_note_analysis_dependency(self):
+        note = self.ready()
+        revision = note['revision_id']
+        self.notes._update(revision, study_status='pending')
+        engine = fixtures.FakeTranscriber()
+        pipeline = RecordingPipeline(self.store, JobState(), engine, self.root / 'work', False)
+        upload = pipeline.create_upload(self.store.get(), 'upload', '.wav', io.BytesIO(b'audio'), note['id'])
+        self.assertTrue(upload.public()['waiting_for_note'])
+        pipeline.process_next()
+        self.assertEqual(engine.calls, [])
+        recording = pipeline.begin_chunked(self.store.get(), 'recording', '.webm')
+        selected = pipeline.select_recording_note(recording.id, note['id'])
+        self.assertTrue(json.loads(selected.note_snapshot_json)['waiting_for_analysis'])
+        pipeline.select_recording_note(recording.id, None)
+        self.assertFalse(json.loads(self.store.get_recording(recording.id).note_snapshot_json).get('waiting_for_analysis', False))
+        # Old queued jobs without the new marker must also be gated at execution.
+        self.store.update_recording(upload.id, note_snapshot_json=json.dumps(self.notes.snapshot(revision)))
+        pipeline.process_next()
+        self.assertTrue(self.store.get_recording(upload.id).public()['waiting_for_note'])
+        self.assertEqual(engine.calls, [])
+        self.notes._update(revision, study_status='completed')
+        pipeline.process_next()
+        self.assertEqual(len(engine.calls), 1)
+        self.assertEqual(self.store.get_recording(upload.id).status, 'completed')
+
     def test_retranscription_waits_for_selected_revision_and_survives_reload(self):
         note = self.ready()
         revision = note['revision_id']
@@ -79,6 +168,17 @@ class NoteTests(unittest.TestCase):
         self.assertEqual(len(engine.calls), 1)
         self.assertEqual(self.store.get_recording(row.id).status, 'cancelled')
         self.assertEqual(self.store.get_recording(row.id).transcript_text, 'previous')
+
+    def test_completion_items_expose_only_current_note_state(self):
+        note = self.ready()
+        items = self.notes.completion_items()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["note_id"], note["id"])
+        self.assertEqual(items[0]["revision_id"], note["revision_id"])
+        self.assertEqual(items[0]["status"], "ready")
+        self.assertEqual(items[0]["study_status"], "completed")
+        self.assertEqual(items[0]["course_id"], self.store.active_course_id())
+        self.assertEqual(items[0]["error"], "")
 
     def test_failed_note_dependency_preserves_previous_result(self):
         for terminal in ('failed', 'cancelled'):

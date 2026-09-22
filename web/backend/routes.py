@@ -122,6 +122,7 @@ def create_app(
             "settings": current.public(),
             "job": state.get(),
             "note_jobs": workflow.notes.queue_items(),
+            "notes": workflow.notes.completion_items(),
             "recordings": [recording_payload(item, counts[item.id]) for item in recordings],
         }
 
@@ -235,6 +236,21 @@ def create_app(
             return jsonify(ok=True, recording=recording_payload(recording)), 201
         except Exception as error:
             return jsonify(error=str(error)), 500
+
+    @app.patch("/api/recordings/<recording_id>/course")
+    @serialize_outputs
+    def select_recording_course(recording_id: str):
+        payload = request.get_json(silent=True) or {}
+        try:
+            course_id = payload.get("course_id")
+            if isinstance(course_id, bool) or not isinstance(course_id, int):
+                raise ValueError("강의를 선택하세요.")
+            recording = workflow.select_recording_course(recording_id, course_id)
+            return jsonify(ok=True, recording=recording_payload(recording))
+        except KeyError as error:
+            return jsonify(error=error.args[0]), 404
+        except (TypeError, ValueError) as error:
+            return jsonify(error=str(error)), 400
 
     @app.patch("/api/recordings/<recording_id>/lecture-note")
     @serialize_outputs
@@ -527,10 +543,11 @@ def create_app(
             return jsonify(error=str(error)), 404
 
     @app.post("/api/recordings/<recording_id>/retranscribe")
+    @serialize_outputs
     def retranscribe_recording(recording_id: str):
         try:
             payload = request.get_json(silent=True) or {}
-            recording = workflow.retranscribe(recording_id, payload.get("lecture_note_id"), retain_note="lecture_note_id" not in payload)
+            recording = workflow.retranscribe(recording_id, payload.get("lecture_note_id"), retain_note="lecture_note_id" not in payload, course_id=payload.get("course_id"), title=payload.get("title"))
             return jsonify(ok=True, recording=recording_payload(recording)), 202
         except KeyError as error:
             return jsonify(error=error.args[0]), 404

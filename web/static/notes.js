@@ -54,61 +54,42 @@ function modal(title) {
   return d;
 }
 
-export async function chooseNote(
-  courseId,
-  revisionId = null,
-  recordingTitle = null,
-) {
-  if (!courseId) return null;
-  const { notes } = await api(`/api/courses/${courseId}/notes`);
-  return new Promise((resolve) => {
-    const d = modal(
-      recordingTitle ? "다시 전사하기" : "전사에 사용할 강의노트",
-    );
-    if (recordingTitle)
-      d.append(node("p", recordingTitle, "note-retranscribe-title"));
-    const label = node("label", "강의노트");
-    const select = node("select");
-    select.setAttribute("aria-label", "전사 강의노트");
-    select.append(new Option("사용 안 함", ""));
-    for (const note of notes) {
-      const option = new Option(
-        `${note.title} · ${statuses[note.status] || note.status}`,
-        note.id,
-      );
-      const waiting = ["queued", "extracting"].includes(note.status) || ["pending", "analyzing"].includes(note.study_status);
-      option.disabled = !(recordingTitle ? ["ready", "partial", "queued", "extracting"] : ["ready", "partial"]).includes(note.status);
-      if (recordingTitle && waiting) option.textContent = `${note.title} · 분석 완료 후 전사`;
-      option.selected =
-        (note.revision_id === revisionId || note.id === revisionId) &&
-        !option.disabled;
-      select.append(option);
-    }
-    label.append(select);
-    d.append(
-      label,
-      node(
-        "p",
-        recordingTitle ? "선택한 노트가 분석 대기·진행 중이면 완료 후 전사합니다. 분석 실패·중단 시 전사도 시작하지 않습니다." : "선택한 노트의 키워드는 음성 인식에, 원문은 Qwen 검수에 사용됩니다.",
-      ),
-    );
-    let submitted = false;
-    d.append(
-      button(recordingTitle ? "다시 전사하기" : "계속", () => {
-        submitted = true;
-        resolve(select.value || null);
-        d.close();
-      }),
-    );
-    d.addEventListener(
-      "close",
-      () => {
-        if (!submitted) resolve(undefined);
-      },
-      { once: true },
-    );
-    d.showModal();
-  });
+function createNoteRow(item) {
+  const row = button("", () => openNote(item.id));
+  row.className = "note-row";
+  const icon = node("span", "", "note-document-icon");
+  icon.setAttribute("aria-hidden", "true");
+  const copy = node("span", null, "note-row-copy");
+  copy.append(
+    node("strong", item.title, "note-title"),
+    node(
+      "span",
+      `${statuses[item.status]} · ${item.page_count || 0}쪽 · 학습 정리 ${statuses[item.study_status] || item.study_status}`,
+      "note-muted",
+    ),
+  );
+  const chevron = node("span", "›", "note-chevron");
+  chevron.setAttribute("aria-hidden", "true");
+  row.append(icon, copy, chevron);
+  return row;
+}
+
+export async function showRecordingNote(host, noteId) {
+  const list = node("div", null, "note-list");
+  host.append(list);
+  if (!noteId) {
+    list.append(node("p", "사용 안 함", "note-muted"));
+    return;
+  }
+  list.append(node("p", "강의노트를 불러오는 중입니다.", "note-muted"));
+  try {
+    const {note} = await api(`/api/notes/${encodeURIComponent(noteId)}`);
+    if (!host.isConnected) return;
+    list.replaceChildren(createNoteRow(note));
+    if (note.deleted) list.append(node("p", "목록에서 제거된 강의노트입니다.", "note-muted"));
+  } catch (error) {
+    if (host.isConnected) list.replaceChildren(node("p", `강의노트를 불러오지 못했습니다. ${error.message}`, "note-muted"));
+  }
 }
 
 let activeCourse = null,
@@ -144,23 +125,7 @@ export async function showCourseNotes(courseId) {
           ),
         );
       for (const item of notes) {
-        const row = button("", () => openNote(item.id));
-        row.className = "note-row";
-        const icon = node("span", "", "note-document-icon");
-        icon.setAttribute("aria-hidden", "true");
-        const copy = node("span", null, "note-row-copy");
-        copy.append(
-          node("strong", item.title, "note-title"),
-          node(
-            "span",
-            `${statuses[item.status]} · ${item.page_count || 0}쪽 · 학습 정리 ${statuses[item.study_status] || item.study_status}`,
-            "note-muted",
-          ),
-        );
-        const chevron = node("span", "›", "note-chevron");
-        chevron.setAttribute("aria-hidden", "true");
-        row.append(icon, copy, chevron);
-        list.append(row);
+        list.append(createNoteRow(item));
       }
       if (
         notes.some(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -15,7 +16,8 @@ import requests
 
 from .config import DB_FILE
 from .engine import Transcriber
-from .files import OutputFiles
+from .files import OutputFiles, safe_name
+from .output_files import rename_output_files
 from .markdown import render_note, transcript_text
 from .records import ActiveSettings, Recording
 from .state import JobState
@@ -189,9 +191,38 @@ class RecordingPipeline:
             shutil.rmtree(folder, ignore_errors=True)
             raise
 
+    @staticmethod
+    def _note_analysis_pending(revision):
+        return revision['status'] in {'queued', 'extracting'} or revision['study_status'] in {'pending', 'analyzing'}
+
     def _bind_note(self, recording, revision):
-        return self.store.update_recording(recording.id, note_revision_id=revision,
-            note_snapshot_json=json.dumps(self.notes.snapshot(revision), ensure_ascii=False))
+        with self.notes.lock:
+            waiting = revision and self._note_analysis_pending(self.notes._revision(revision))
+            snapshot = ({"waiting_for_analysis": True, "keywords": [], "pages": []}
+                        if waiting else self.notes.snapshot(revision))
+            return self.store.update_recording(recording.id, note_revision_id=revision,
+                note_snapshot_json=json.dumps(snapshot, ensure_ascii=False))
+
+    def select_recording_course(self, recording_id: str, course_id: int):
+        with self._lock:
+            recording = self.store.get_recording(recording_id)
+            if recording.status != "recording" or recording.source_kind != "browser":
+                raise ValueError("녹음 중인 작업의 강의만 변경할 수 있습니다.")
+            course = self.store.get_course(course_id)
+            if recording.course_id == course.id:
+                return recording
+            title = recording.title
+            automatic = re.fullmatch(re.escape(safe_name(recording.course_name)) + r"-(\d{1,2}월\d{1,2}일-[월화수목금토일])(?: \(\d+\))?", title)
+            if automatic:
+                base = safe_name(f"{course.name}-{automatic.group(1)}")
+                reserved = self.store.recording_titles(Path(recording.output_dir)) - {recording.title}
+                title = OutputFiles(Path(recording.output_dir)).available_title(base, reserved)
+            with self.store._connect() as db:
+                db.execute("""UPDATE recordings SET course_id=?,course_name=?,title=?,language=?,
+                    format_transcript=?,llm_enabled=?,note_revision_id=NULL,note_snapshot_json='{}'
+                    WHERE id=?""", (course.id, course.name, title, course.language,
+                    int(course.format_transcript), int(course.llm_enabled), recording_id))
+            return self.store.get_recording(recording_id)
 
     def select_recording_note(self, recording_id: str, lecture_note_id: str | None):
         with self._lock:
@@ -315,7 +346,7 @@ class RecordingPipeline:
             self.store.delete_recording_history(recording_id)
             shutil.rmtree(self.folder(recording_id), ignore_errors=True)
 
-    def retranscribe(self, recording_id: str, lecture_note_id: str | None = None, *, retain_note=True) -> Recording:
+    def retranscribe(self, recording_id: str, lecture_note_id: str | None = None, *, retain_note=True, course_id=None, title=None) -> Recording:
         """Re-run the same job, preserving its output until replacement succeeds."""
         with self._lock:
             previous = self.store.get_recording(recording_id)
@@ -323,9 +354,14 @@ class RecordingPipeline:
                 raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
             if previous.review_status in {"queued", "processing"}:
                 raise ValueError("검수가 끝난 후 다시 전사하세요.")
-            if retain_note and previous.note_revision_id:
+            target_course = previous.course_id if course_id is None else course_id
+            if course_id is not None:
+                if isinstance(course_id, bool) or not isinstance(course_id, int):
+                    raise ValueError("강의를 선택하세요.")
+                self.store.get_course(course_id)
+            if retain_note and target_course == previous.course_id and previous.note_revision_id:
                 lecture_note_id = self.notes._revision(previous.note_revision_id)['note_id']
-            revision = self.notes.bind(lecture_note_id, previous.course_id, allow_pending=True)
+            revision = self.notes.bind(lecture_note_id, target_course, allow_pending=True)
             source = next((Path(value) for value in (previous.source_path, previous.audio_path)
                            if value and Path(value).is_file()), None)
             if source is None:
@@ -338,14 +374,36 @@ class RecordingPipeline:
                     shutil.copy2(source, working)
             except OSError as error:
                 raise ValueError("원본 음성 파일을 읽거나 작업용 사본을 만들 수 없습니다.") from error
-            recording = self.store.queue_retranscription(recording_id, working)
+            changes = {}
+            rollback = lambda: None
+            if title is not None:
+                if not isinstance(title, str) or not title.strip():
+                    raise ValueError("저장할 파일 이름을 입력해 주세요.")
+                title = safe_name(title.strip()[:160])
+                if title != previous.title:
+                    reserved = self.store.recording_titles(Path(previous.output_dir))
+                    if title in reserved:
+                        raise ValueError("같은 이름의 작업이 이미 있습니다.")
+                    fields, targets = [], []
+                    root = Path(previous.output_dir).resolve()
+                    for field in ("audio_path", "note_path"):
+                        value = getattr(previous, field)
+                        if value and Path(value).is_file():
+                            path = Path(value).resolve()
+                            if path.parent != root:
+                                raise ValueError("저장 폴더 밖의 파일은 이름을 수정할 수 없습니다.")
+                            fields.append(field)
+                            targets.append(path)
+                    destinations, rollback = rename_output_files(targets, title)
+                    changes.update(zip(fields, map(str, destinations)))
+                    changes["title"] = title
+            try:
+                recording = self.store.queue_retranscription(recording_id, working,
+                    course_id=course_id, output_changes=changes)
+            except Exception:
+                rollback()
+                raise
             recording = self._bind_note(recording, revision)
-            if revision:
-                note_revision = self.notes._revision(revision)
-                if note_revision['status'] in {'queued', 'extracting'} or note_revision['study_status'] in {'pending', 'analyzing'}:
-                    recording = self.store.update_recording(recording_id, note_snapshot_json=json.dumps({
-                        "waiting_for_analysis": True, "keywords": [], "pages": [],
-                    }))
             self._cancellations[recording_id] = CancellationToken()
             self._cancel_stages.pop(recording_id, None)
             self.enqueue(recording_id)
@@ -413,17 +471,22 @@ class RecordingPipeline:
                 return
             if recording.status != "queued":
                 raise ValueError("대기 중인 작업만 처리할 수 있습니다.")
-            if json.loads(recording.note_snapshot_json).get("waiting_for_analysis"):
-                # Wait before acquiring the speech inference slot, so note analysis can finish.
+            if recording.note_revision_id:
+                # Check even legacy queued uploads that predate the dependency marker.
+                # Do not acquire the speech inference slot while notes are unfinished.
                 with self.notes.lock:
                     revision = self.notes._revision(recording.note_revision_id)
-                    if revision['status'] in {'queued', 'extracting'} or revision['study_status'] in {'pending', 'analyzing'}:
+                    waiting = json.loads(recording.note_snapshot_json).get("waiting_for_analysis")
+                    if self._note_analysis_pending(revision):
+                        if not waiting:
+                            self._bind_note(recording, recording.note_revision_id)
                         return
-                    if revision['status'] not in {'ready', 'partial'} or revision['study_status'] != 'completed':
-                        self.store.update_recording(recording_id, status="failed",
-                            error="선택한 강의노트 분석이 실패하거나 중단되어 재전사를 시작하지 않았습니다. 노트를 다시 분석하거나 다른 노트를 선택하세요.")
-                        return
-                    recording = self._bind_note(recording, recording.note_revision_id)
+                    if waiting:
+                        if revision['status'] not in {'ready', 'partial'} or revision['study_status'] != 'completed':
+                            self.store.update_recording(recording_id, status="failed",
+                                error="선택한 강의노트 분석이 실패하거나 중단되어 전사를 시작하지 않았습니다. 노트를 다시 분석하거나 다른 노트를 선택하세요.")
+                            return
+                        recording = self._bind_note(recording, recording.note_revision_id)
             cancellation = self._cancellations.setdefault(recording_id, CancellationToken())
             recording = self.store.update_recording(
                 recording_id, status="processing", started_at=self.store.now(), error=""

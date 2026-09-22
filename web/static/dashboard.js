@@ -1,4 +1,4 @@
-import {showCourseNotes, chooseNote, openNote} from "./notes.js?v=20260922-note-wait";
+import {showCourseNotes, openNote, showRecordingNote} from "./notes.js?v=20260922-unified-intake";
 import {
   deletePendingChunk,
   deleteRecordingRecovery,
@@ -34,6 +34,7 @@ const ui = {
   dockRecordClock: $("#dockRecordClock"),
   dockSoundMeter: $("#dockSoundMeter"),
   soundBars: [],
+  notificationButton: $("#notificationButton"),
   dockUploadButton: $("#dockUploadButton"),
   courseSearch: $("#courseSearch"),
   dashboardDate: $("#dashboardDate"),
@@ -172,6 +173,105 @@ const app = {
 };
 
 const VIEW_STORAGE_KEY = "lecorder-view";
+const COMPLETION_NOTIFICATION_STATES_KEY = "lecorder-completion-notification-states-v1";
+
+function loadCompletionNotificationStates() {
+  try {
+    return JSON.parse(window.localStorage.getItem(COMPLETION_NOTIFICATION_STATES_KEY) || "{}");
+  } catch (_) {
+    return {};
+  }
+}
+
+let completionNotificationStates = loadCompletionNotificationStates();
+
+function saveCompletionNotificationStates() {
+  try {
+    window.localStorage.setItem(COMPLETION_NOTIFICATION_STATES_KEY, JSON.stringify(completionNotificationStates));
+  } catch (_) {
+    // Notifications can still work for this open page if storage is unavailable.
+  }
+}
+
+function notificationPermission() {
+  return "Notification" in window ? Notification.permission : "unsupported";
+}
+
+function renderNotificationButton() {
+  const permission = notificationPermission();
+  if (permission === "granted") {
+    ui.notificationButton.disabled = false;
+    ui.notificationButton.setAttribute("aria-label", "완료 알림 켜짐");
+    ui.notificationButton.dataset.tooltip = "강의 전사·강의노트 분석 완료 알림 켜짐";
+  } else if (permission === "denied") {
+    ui.notificationButton.disabled = true;
+    ui.notificationButton.setAttribute("aria-label", "브라우저 설정에서 알림을 허용하세요");
+    ui.notificationButton.dataset.tooltip = "브라우저 사이트 설정에서 알림을 허용하세요";
+  } else {
+    ui.notificationButton.disabled = permission === "unsupported";
+    ui.notificationButton.setAttribute("aria-label", "완료 알림 켜기");
+    ui.notificationButton.dataset.tooltip = permission === "unsupported"
+      ? "이 브라우저는 알림을 지원하지 않습니다"
+      : "강의 전사·강의노트 분석 완료 알림 켜기";
+  }
+}
+
+ui.notificationButton.addEventListener("click", async () => {
+  if (notificationPermission() !== "default") return;
+  const permission = await Notification.requestPermission();
+  renderNotificationButton();
+  if (permission === "granted") showToast("완료 알림을 켰습니다.", "success");
+});
+
+function notifyCompletion(title, body, open) {
+  if (notificationPermission() !== "granted") return;
+  const notification = new Notification(title, {body, tag: `lecorder-${title}-${body}`});
+  notification.addEventListener("click", () => {
+    window.focus();
+    open();
+    notification.close();
+  });
+}
+
+function detectCompletionNotifications(data) {
+  const next = {};
+  for (const recording of data.recordings || []) {
+    const key = `recording:${recording.id}`;
+    const previous = completionNotificationStates[key];
+    next[key] = recording.status;
+    if (previous && previous !== "completed" && recording.status === "completed") {
+      notifyCompletion("강의 전사 완료", `${recording.course_name} · ${recording.title}`, () => {
+        window.location.hash = `#/recordings/job/${encodeURIComponent(recording.id)}`;
+      });
+    }
+    if (previous && previous !== "failed" && recording.status === "failed") {
+      notifyCompletion("강의 전사 실패", recording.error || `${recording.course_name} · ${recording.title}`, () => {
+        window.location.hash = `#/recordings/job/${encodeURIComponent(recording.id)}`;
+      });
+    }
+  }
+  for (const note of data.notes || []) {
+    const key = `note:${note.revision_id}`;
+    const current = `${note.status}/${note.study_status}`;
+    const previous = completionNotificationStates[key];
+    next[key] = current;
+    if (previous && previous !== "ready/completed" && previous !== "partial/completed" &&
+        ["ready/completed", "partial/completed"].includes(current)) {
+      notifyCompletion("강의노트 분석 완료", `${note.course_name} · ${note.title}`, () => {
+        window.location.hash = courseRoute(note.course_id);
+        window.setTimeout(() => { void openNote(note.note_id); }, 0);
+      });
+    }
+    if (previous && previous !== current && (note.status === "failed" || note.study_status === "failed")) {
+      notifyCompletion("강의노트 분석 실패", note.error || `${note.course_name} · ${note.title}`, () => {
+        window.location.hash = courseRoute(note.course_id);
+        window.setTimeout(() => { void openNote(note.note_id); }, 0);
+      });
+    }
+  }
+  completionNotificationStates = next;
+  saveCompletionNotificationStates();
+}
 
 ui.closeReviewButton.addEventListener("click", () => {
   stopReviewAudio();
@@ -210,6 +310,7 @@ document.addEventListener("click", (event) => {
   $$(".detail-menu[open]").forEach((menu) => {
     if (!menu.contains(event.target)) menu.removeAttribute("open");
   });
+  if (!$("#dockNotePicker").contains(event.target)) $("#dockNotePicker").removeAttribute("open");
   if (ui.dockCoursePicker.open && !ui.dockCoursePicker.contains(event.target)) {
     ui.dockCoursePicker.removeAttribute("open");
   }
@@ -409,6 +510,7 @@ function renderCourseList() {
 }
 
 function renderCaptureControls() {
+  const captureCourseId = app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId;
   ui.dockCourseSelect.replaceChildren();
   ui.uploadCourseSelect.replaceChildren();
   ui.dockCourseMenu.replaceChildren();
@@ -426,21 +528,17 @@ function renderCaptureControls() {
     item.className = "dock-course-option";
     item.dataset.courseId = String(course.id);
     item.setAttribute("role", "option");
-    item.setAttribute("aria-selected", String(course.id === app.activeCourseId));
+    item.setAttribute("aria-selected", String(course.id === captureCourseId));
     const check = document.createElement("span");
     check.className = "dock-course-check";
     check.setAttribute("aria-hidden", "true");
-    check.textContent = course.id === app.activeCourseId ? "✓" : "";
+    check.textContent = course.id === captureCourseId ? "✓" : "";
     const name = document.createElement("span");
     name.textContent = course.name;
     item.append(check, name);
     item.addEventListener("click", async () => {
-      if (app.recordingState !== "idle") return;
       ui.dockCoursePicker.removeAttribute("open");
-      if (course.id !== app.activeCourseId) {
-        await selectCourse(course.id, {updateRoute: app.activeView === "courses"});
-        renderDashboard();
-      }
+      await selectDockCourse(course.id);
       ui.dockCourseButton.focus({preventScroll: true});
     });
     ui.dockCourseMenu.append(item);
@@ -474,9 +572,11 @@ function renderCaptureControls() {
     : activeCourse();
   ui.dockCourseLabel.textContent = selectedCourse?.name || "강의를 추가하세요";
   ui.uploadCourseLabel.textContent = activeCourse()?.name || "강의를 선택하세요";
-  ui.dockCourseButton.setAttribute("aria-disabled", String(!app.courses.length || locked));
+  ui.dockCourseButton.setAttribute("aria-disabled", String(!app.courses.length || !captureSettingsEditable()));
   ui.dockCourseButton.tabIndex = app.courses.length ? 0 : -1;
-  ui.dockCourseSelect.disabled = !app.courses.length || locked;
+  ui.dockCourseSelect.disabled = !app.courses.length || !captureSettingsEditable();
+  ui.dockCourseLabel.title = selectedCourse?.name || "";
+  $("#dockNoteButton").setAttribute("aria-disabled", String(!captureSettingsEditable() || !app.courses.length));
   ui.uploadCourseSelect.disabled = !app.courses.length || app.uploadInProgress;
   ui.uploadCourseButton.setAttribute("aria-disabled", String(!app.courses.length || app.uploadInProgress));
   ui.uploadCourseButton.tabIndex = app.courses.length && !app.uploadInProgress ? 0 : -1;
@@ -487,17 +587,16 @@ function renderCaptureControls() {
 
 ui.courseSearch.addEventListener("input", renderCourseList);
 ui.dockCourseSelect.addEventListener("change", async () => {
-  if (app.recordingState !== "idle") return;
   const courseId = Number(ui.dockCourseSelect.value);
-  await selectCourse(courseId, {updateRoute: app.activeView === "courses"});
+  await selectDockCourse(courseId);
   renderDashboard();
 });
 ui.dockCourseButton.addEventListener("click", (event) => {
-  if (app.courses.length && app.recordingState === "idle") return;
+  if (app.courses.length && captureSettingsEditable()) return;
   event.preventDefault();
 });
 ui.dockCourseButton.addEventListener("keydown", (event) => {
-  if (event.key !== "ArrowDown" || !app.courses.length || app.recordingState !== "idle") return;
+  if (event.key !== "ArrowDown" || !app.courses.length || !captureSettingsEditable()) return;
   event.preventDefault();
   ui.dockCoursePicker.setAttribute("open", "");
   ui.dockCourseMenu.querySelector('[aria-selected="true"]')?.focus();
@@ -519,6 +618,7 @@ async function selectUploadCourse(courseId) {
   }
   ui.uploadCourseSelect.value = String(app.activeCourseId);
   setUploadTitlePreset();
+  void loadUploadNotes();
   ui.uploadCourseButton.removeAttribute("aria-busy");
   ui.uploadCourseButton.focus({preventScroll: true});
 }
@@ -726,6 +826,11 @@ async function selectCourse(courseId, {updateRoute = false} = {}) {
   try {
     const data = await requestJson(`/api/courses/${courseId}/select`, {method: "POST"});
     app.activeCourseId = data.course.id;
+    if (app.recordingState === "idle") {
+      recordingNoteSaved = "";
+      $("#dockNoteSelect").replaceChildren(new Option("사용 안 함", ""));
+      renderNotePicker();
+    }
     app.reviewingRecordingId = null;
     const index = app.courses.findIndex((course) => course.id === data.course.id);
     if (index >= 0) app.courses[index] = data.course;
@@ -750,6 +855,11 @@ ui.newCourseForm.addEventListener("submit", async (event) => {
     });
     app.courses.push(data.course);
     app.activeCourseId = data.course.id;
+    if (app.recordingState === "idle") {
+      recordingNoteSaved = "";
+      $("#dockNoteSelect").replaceChildren(new Option("사용 안 함", ""));
+      renderNotePicker();
+    }
     app.reviewingRecordingId = null;
     ui.newCourseName.value = "";
     renderCourseList();
@@ -855,13 +965,17 @@ function resetSoundBars() {
 }
 
 function setRecorderState(state) {
+  if (state === "idle" && app.recordingState !== "idle") {
+    recordingNoteSaved = "";
+    $("#dockNoteSelect").replaceChildren(new Option("사용 안 함", ""));
+    renderNotePicker();
+  }
   app.recordingState = state;
   ui.commandDock.dataset.recordState = state;
   const active = ["recording", "paused"].includes(state);
   const finalizing = state === "finalizing";
-  $("#dockNotePicker").hidden = !active && !finalizing;
-  $("#dockNoteSelect").disabled = !active;
-  $("#dockNoteRefresh").disabled = !active;
+  $("#dockNoteSelect").disabled = !["idle", "recording", "paused"].includes(state);
+  if (!active && state !== "idle") $("#dockNotePicker").removeAttribute("open");
   ui.dockRecordLabel.textContent = active ? "종료" : finalizing ? "저장 중" : state === "starting" ? "연결 중" : "녹음";
   ui.dockRecordButton.setAttribute("aria-label", active ? "녹음 종료 후 전사" : finalizing ? "녹음 저장 중" : state === "starting" ? "마이크 연결 중" : "녹음 시작");
   ui.dockRecordButton.disabled = !app.courses.length || ["starting", "finalizing"].includes(state);
@@ -1156,16 +1270,49 @@ async function recoverRecordingSessions(recordings) {
 let recordingNoteSave = Promise.resolve();
 let recordingNoteSaved = "";
 let recordingNoteLoad = 0;
+let captureSettingsSaving = false;
+function captureSettingsEditable() {
+  return !captureSettingsSaving && ["idle", "recording", "paused"].includes(app.recordingState);
+}
+function renderNotePicker() {
+  const select = $("#dockNoteSelect");
+  const label = $("#dockNoteLabel");
+  label.textContent = select.selectedOptions[0]?.textContent || "사용 안 함";
+  label.title = label.textContent;
+  const menu = $("#dockNoteMenu");
+  menu.replaceChildren();
+  for (const option of select.options) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "dock-course-option";
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(option.selected));
+    item.disabled = option.disabled;
+    const check = document.createElement("span");
+    check.className = "dock-course-check";
+    check.textContent = option.selected ? "✓" : "";
+    const text = document.createElement("span");
+    text.textContent = option.textContent;
+    item.append(check, text);
+    item.addEventListener("click", () => {
+      if (!captureSettingsEditable()) return;
+      $("#dockNotePicker").removeAttribute("open");
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+    });
+    menu.append(item);
+  }
+}
 async function loadRecordingNotes() {
   const serial = ++recordingNoteLoad;
-  const recordingId = app.recordingId;
+  const courseId = app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId;
+  if (!courseId) return;
   const select = $("#dockNoteSelect");
-  const status = $("#dockNoteStatus");
-  status.textContent = "불러오는 중";
   try {
-    const {notes} = await requestJson(`/api/courses/${app.recordingCourseId}/notes`);
-    if (serial !== recordingNoteLoad || recordingId !== app.recordingId) return;
-    const selected = select.value;
+    const {notes} = await requestJson(`/api/courses/${courseId}/notes`);
+    if (serial !== recordingNoteLoad || courseId !== (app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId)) return;
+    const selected = recordingNoteSaved;
+    const existingLabel = select.selectedOptions[0]?.textContent;
     select.replaceChildren(new Option("사용 안 함", ""));
     for (const note of notes) {
       const ready = ["ready", "partial"].includes(note.status);
@@ -1173,25 +1320,36 @@ async function loadRecordingNotes() {
       option.disabled = !ready;
       select.append(option);
     }
-    // A saved snapshot remains valid even when its note is hidden later.
-    if (selected && !notes.some(note => note.id === selected)) {
-      select.append(new Option("기존에 선택한 노트", selected));
-    }
+    if (selected && !notes.some(note => note.id === selected)) select.append(new Option(existingLabel || "기존에 선택한 노트", selected));
     select.value = selected;
-    status.textContent = notes.length ? "" : "등록된 노트 없음";
-  } catch (error) {
-    if (recordingId !== app.recordingId) return;
-    status.textContent = "목록을 불러오지 못함";
-    showToast(error.message, "error");
-  }
+    renderNotePicker();
+  } catch (error) { showToast(error.message, "error"); }
 }
-$("#dockNoteRefresh").addEventListener("click", () => void loadRecordingNotes());
+$("#dockNotePicker").addEventListener("toggle", () => {
+  if ($("#dockNotePicker").open) {
+    ui.dockCoursePicker.removeAttribute("open");
+    renderNotePicker();
+    void loadRecordingNotes();
+  }
+});
+$("#dockNoteButton").addEventListener("click", event => {
+  if (!captureSettingsEditable() || !app.courses.length) event.preventDefault();
+});
+$("#dockNotePicker").addEventListener("keydown", event => {
+  if (event.key === "Escape") { $("#dockNotePicker").removeAttribute("open"); $("#dockNoteButton").focus(); }
+  if (event.key === "ArrowDown" && event.target === $("#dockNoteButton") && captureSettingsEditable()) {
+    event.preventDefault(); $("#dockNotePicker").setAttribute("open", "");
+    $("#dockNoteMenu button")?.focus();
+  }
+});
 $("#dockNoteSelect").addEventListener("change", () => {
   const select = $("#dockNoteSelect");
-  const recordingId = app.recordingId;
   const selected = select.value;
-  $("#dockNoteStatus").textContent = "저장 중";
-  select.disabled = true;
+  if (app.recordingState === "idle") { recordingNoteSaved = selected; renderNotePicker(); return; }
+  if (!captureSettingsEditable()) return;
+  const recordingId = app.recordingId;
+  captureSettingsSaving = true;
+  renderCaptureControls();
   recordingNoteSave = recordingNoteSave.then(async () => {
     try {
       await requestJson(`/api/recordings/${recordingId}/lecture-note`, {
@@ -1199,16 +1357,46 @@ $("#dockNoteSelect").addEventListener("change", () => {
         body: JSON.stringify({lecture_note_id: selected || null}),
       });
       recordingNoteSaved = selected;
-      $("#dockNoteStatus").textContent = "저장됨";
-    } catch (error) {
-      select.value = recordingNoteSaved;
-      $("#dockNoteStatus").textContent = "저장 실패";
-      showToast(`강의노트 선택을 저장하지 못했습니다: ${error.message}`, "error");
-    } finally {
-      select.disabled = !["recording", "paused"].includes(app.recordingState);
-    }
+      await refreshStatus();
+    } catch (error) { select.value = recordingNoteSaved; showToast(error.message, "error"); }
+    finally { captureSettingsSaving = false; renderNotePicker(); renderCaptureControls(); }
   });
 });
+ui.dockCoursePicker.addEventListener("toggle", () => {
+  if (ui.dockCoursePicker.open) $("#dockNotePicker").removeAttribute("open");
+});
+
+async function selectDockCourse(courseId) {
+  if (!captureSettingsEditable()) return;
+  if (app.recordingState === "idle") {
+    await selectCourse(courseId, {updateRoute: app.activeView === "courses"});
+    renderDashboard();
+    return;
+  }
+  if (courseId === app.recordingCourseId) return;
+  const recordingId = app.recordingId;
+  captureSettingsSaving = true;
+  renderCaptureControls();
+  recordingNoteSave = recordingNoteSave.then(async () => {
+    try {
+      await flushCourseSave({requireSaved: true});
+      const data = await requestJson(`/api/recordings/${recordingId}/course`, {
+        method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({course_id:courseId}),
+      });
+      app.recordingCourseId = data.recording.course_id;
+      app.recordingTitle = data.recording.title;
+      ui.dockRecordingTitle.textContent = app.recordingTitle;
+      recordingNoteSaved = "";
+      $("#dockNoteSelect").replaceChildren(new Option("사용 안 함", ""));
+      renderNotePicker();
+      await updateRecordingSession(recordingId, {title:app.recordingTitle}).catch(() => {});
+      await loadRecordingNotes();
+      await refreshStatus();
+    } catch (error) { showToast(`강의 변경 실패: ${error.message}`, "error"); }
+    finally { captureSettingsSaving = false; renderCaptureControls(); }
+  });
+  await recordingNoteSave;
+}
 
 async function startDockRecording() {
   if (!app.courses.length || app.recordingState !== "idle") return;
@@ -1239,7 +1427,7 @@ async function startDockRecording() {
     const prepared = await requestJsonBeforeDeadline("/api/recordings", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({title: app.recordingTitle, extension}),
+      body: JSON.stringify({title: app.recordingTitle, extension, lecture_note_id: recordingNoteSaved || null}),
     });
     app.recordingId = prepared.recording.id;
     app.recordingTitle = prepared.recording.title;
@@ -1282,8 +1470,7 @@ async function startDockRecording() {
     updateClock();
     app.clockTimer = window.setInterval(updateClock, 250);
     setRecorderState("recording");
-    recordingNoteSaved = "";
-    $("#dockNoteSelect").replaceChildren(new Option("사용 안 함", ""));
+    renderNotePicker();
     void loadRecordingNotes();
   } catch (error) {
     stopMediaStream();
@@ -2167,6 +2354,12 @@ function renderLibraryDetail(entry) {
   }
   ui.libraryDetail.append(back, header);
 
+  if (entry.recording) {
+    const noteSection = detailSection("선택한 강의노트");
+    ui.libraryDetail.append(noteSection);
+    void showRecordingNote(noteSection, entry.recording.lecture_note_id);
+  }
+
   const files = detailSection("원음과 결과 파일");
   const fileList = document.createElement("div");
   fileList.className = "storage-file-list";
@@ -2325,6 +2518,74 @@ function selectUploadFile(file) {
   ui.uploadMessage.textContent = "";
 }
 
+let uploadNoteRequest = 0;
+async function loadUploadNotes(selected = "") {
+  const serial = ++uploadNoteRequest;
+  app.uploadNoteId = "";
+  app.uploadNotesLoading = true;
+  app.uploadNotesError = "";
+  $("#uploadNoteLabel").textContent = "불러오는 중…";
+  $("#uploadNoteMenu").replaceChildren();
+  try {
+    const {notes} = await requestJson(`/api/courses/${app.activeCourseId}/notes`);
+    if (serial !== uploadNoteRequest) return;
+    const options = [{id:"", title:"사용 안 함", status:"ready"}, ...notes];
+    app.uploadNoteId = options.some(n => n.id === selected && ["ready","partial","queued","extracting"].includes(n.status)) ? selected : "";
+    const render = () => {
+      const chosen = options.find(n => n.id === app.uploadNoteId);
+      $("#uploadNoteLabel").textContent = chosen?.title || "사용 안 함";
+      $("#uploadNoteLabel").title = chosen?.title || "사용 안 함";
+      const pending = chosen && (["queued","extracting"].includes(chosen.status) || ["pending","analyzing"].includes(chosen.study_status));
+      $("#uploadNoteHint").textContent = pending ? "분석 완료 후 전사합니다. 분석 실패·중단 시 전사를 시작하지 않습니다." : "선택한 노트의 키워드와 문맥을 전사에 활용합니다.";
+      $("#uploadNoteMenu").replaceChildren();
+      for (const note of options) {
+        const button = document.createElement("button"); button.type="button"; button.className="upload-course-option";
+        button.setAttribute("role","option"); button.setAttribute("aria-selected",String(note.id === app.uploadNoteId));
+        button.disabled = !(app.retranscribeRecording ? ["ready","partial","queued","extracting"] : ["ready","partial"]).includes(note.status);
+        const check = document.createElement("span"); check.className="upload-course-check"; check.textContent=note.id === app.uploadNoteId ? "✓" : "";
+        const label=document.createElement("span"); label.textContent=note.title + (button.disabled ? " · 준비되지 않음" : "");
+        button.append(check,label);
+        button.addEventListener("click",()=>{if(app.uploadInProgress)return; app.uploadNoteId=note.id; render(); $("#uploadNotePicker").open=false; $("#uploadNoteButton").focus();});
+        $("#uploadNoteMenu").append(button);
+      }
+    };
+    render();
+  } catch(error) {
+    if(serial!==uploadNoteRequest)return;
+    app.uploadNotesError = error.message;
+    $("#uploadNoteLabel").textContent="목록 다시 불러오기";
+    $("#uploadNoteHint").textContent=`목록을 불러오지 못했습니다: ${error.message}`;
+  } finally { if(serial===uploadNoteRequest)app.uploadNotesLoading=false; }
+}
+$("#uploadNoteButton").addEventListener("click",event=>{if(app.uploadInProgress || app.uploadNotesLoading)event.preventDefault(); else if(app.uploadNotesError){event.preventDefault();void loadUploadNotes();}});
+$("#uploadNotePicker").addEventListener("toggle",()=>{
+  $("#uploadNoteButton").setAttribute("aria-expanded",String($("#uploadNotePicker").open));
+  if($("#uploadNotePicker").open)ui.uploadCoursePicker.open=false;
+});
+ui.uploadCoursePicker.addEventListener("toggle",()=>{if(ui.uploadCoursePicker.open)$("#uploadNotePicker").open=false;});
+$("#uploadNotePicker").addEventListener("keydown",event=>{
+  if(event.key==="Escape") {event.preventDefault();event.stopPropagation();$("#uploadNotePicker").open=false;$("#uploadNoteButton").focus();}
+  if(["ArrowDown","ArrowUp"].includes(event.key)) {
+    event.preventDefault(); if(app.uploadInProgress || app.uploadNotesLoading)return;
+    $("#uploadNotePicker").open=true;
+    const buttons=[...$("#uploadNoteMenu").querySelectorAll("button:not(:disabled)")];
+    const index=buttons.indexOf(document.activeElement);
+    buttons[(index+(event.key==="ArrowDown"?1:-1)+buttons.length)%buttons.length]?.focus();
+  }
+});
+// Only a click that starts and ends outside a dialog dismisses its backdrop.
+let backdropDialog = null;
+document.addEventListener("pointerdown",event=>{
+  const d=event.target;
+  const r=d instanceof HTMLDialogElement ? d.getBoundingClientRect() : null;
+  backdropDialog=r && (event.clientX<r.left || event.clientX>r.right || event.clientY<r.top || event.clientY>r.bottom) ? d : null;
+},true);
+document.addEventListener("click",event=>{
+  if(event.target!==backdropDialog || !backdropDialog?.open)return;
+  if(backdropDialog===ui.uploadDialog && app.uploadInProgress)return;
+  backdropDialog.close(); backdropDialog=null;
+},true);
+
 function resetUploadSelection() {
   app.selectedFile = null;
   app.uploadTitleAutomatic = true;
@@ -2343,10 +2604,13 @@ function setUploadBusy(busy) {
   for (const control of [ui.closeUploadButton, ui.cancelUploadButton, ui.uploadCourseSelect, ui.uploadFile, ui.dropZone, ui.uploadTitle, ui.uploadButton]) {
     control.disabled = busy;
   }
+  ui.dropZone.disabled = busy || Boolean(app.retranscribeRecording);
+  $("#uploadNoteButton").setAttribute("aria-disabled", String(busy));
+  if(busy) $("#uploadNotePicker").open=false;
   renderCaptureControls();
 }
 
-function openUploadDialog() {
+async function openUploadDialog(recording = null) {
   if (!app.courses.length) {
     showToast("먼저 파일에 연결할 강의를 추가하세요.", "error");
     window.location.hash = "#/courses";
@@ -2354,6 +2618,23 @@ function openUploadDialog() {
   }
   if (app.recordingState !== "idle") return;
   resetUploadSelection();
+  app.retranscribeRecording = recording;
+  ui.uploadDialog.dataset.mode = recording ? "retranscribe" : "upload";
+  $("#uploadNotePicker").open=false;
+  ui.uploadCoursePicker.open=false;
+  if (recording && recording.course_id !== app.activeCourseId) await selectCourse(recording.course_id);
+  $("#uploadDialogTitle").textContent = recording ? "다시 전사하기" : "파일 가져오기";
+  $("#uploadDialog header p").textContent = recording ? "기존 음성으로 다시 전사합니다. 이름과 강의, 강의노트를 변경할 수 있습니다." : "오디오나 동영상을 전사 대기열에 추가합니다.";
+  ui.uploadButton.textContent = recording ? "다시 전사하기" : "대기열에 추가";
+  ui.closeUploadButton.setAttribute("aria-label", recording ? "다시 전사하기 닫기" : "파일 가져오기 닫기");
+  ui.dropZone.disabled = Boolean(recording);
+  if (recording) {
+    app.uploadTitleAutomatic = false;
+    ui.uploadTitle.value = recording.title;
+    ui.dropTitle.textContent = recording.audio_name || recording.title;
+    ui.dropDescription.textContent = "기존 음성 유지";
+  }
+  void loadUploadNotes(recording?.lecture_note_id || "");
   renderCaptureControls();
   ui.uploadCourseSelect.value = String(app.activeCourseId);
   setUploadTitlePreset();
@@ -2364,7 +2645,7 @@ function closeUploadDialog() {
   if (!app.uploadInProgress && ui.uploadDialog.open) ui.uploadDialog.close();
 }
 
-ui.dockUploadButton.addEventListener("click", openUploadDialog);
+ui.dockUploadButton.addEventListener("click", () => void openUploadDialog());
 ui.closeUploadButton.addEventListener("click", closeUploadDialog);
 ui.cancelUploadButton.addEventListener("click", closeUploadDialog);
 ui.uploadDialog.addEventListener("cancel", (event) => {
@@ -2396,7 +2677,7 @@ ui.dropZone.addEventListener("drop", (event) => selectUploadFile(event.dataTrans
 ui.uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (app.uploadInProgress) return;
-  if (!app.selectedFile) {
+  if (!app.selectedFile && !app.retranscribeRecording) {
     ui.uploadMessage.className = "upload-message error";
     ui.uploadMessage.textContent = "먼저 녹음 파일을 선택하세요.";
     return;
@@ -2408,31 +2689,37 @@ ui.uploadForm.addEventListener("submit", async (event) => {
     ui.uploadMessage.textContent = "저장할 파일 이름을 입력하세요.";
     return;
   }
-  let lectureNoteId;
+  const lectureNoteId = app.uploadNoteId || null;
   try {
     await flushCourseSave({requireSaved: true});
-    lectureNoteId = await chooseNote(app.activeCourseId);
-    if (lectureNoteId === undefined) return;
+    if (app.uploadNotesError) throw new Error("강의노트 목록을 다시 불러와 주세요.");
+    if (app.uploadNotesLoading) throw new Error("강의노트 목록을 불러오는 중입니다.");
   } catch (error) {
     ui.uploadMessage.className = "upload-message error";
     ui.uploadMessage.textContent = error.message;
     return;
   }
+  if (app.uploadInProgress || !ui.uploadDialog.open) return;
   setUploadBusy(true);
   ui.uploadMessage.className = "upload-message";
   ui.uploadMessage.textContent = "파일을 안전하게 저장하는 중입니다.";
   const data = new FormData();
-  data.append("file", app.selectedFile, app.selectedFile.name);
+  if (app.selectedFile) data.append("file", app.selectedFile, app.selectedFile.name);
   data.append("title", ui.uploadTitle.value);
   if (lectureNoteId) data.append("lecture_note_id", lectureNoteId);
   try {
-    const result = await requestJson("/api/upload", {method: "POST", body: data});
+    const result = app.retranscribeRecording
+      ? await requestJson(`/api/recordings/${encodeURIComponent(app.retranscribeRecording.id)}/retranscribe`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({title:ui.uploadTitle.value, course_id:app.activeCourseId, lecture_note_id:lectureNoteId}),
+        })
+      : await requestJson("/api/upload", {method: "POST", body: data});
     renderRecordings([result.recording, ...app.recordings.filter((item) => item.id !== result.recording.id)]);
     await refreshStatus();
     await refreshStorage();
     setUploadBusy(false);
     ui.uploadDialog.close();
-    showToast("파일을 전사 대기열에 추가했습니다.", "success", {
+    showToast("전사 작업을 대기열에 추가했습니다.", "success", {
       label: "보관함에서 보기",
       run: () => { window.location.hash = `#/recordings/job/${encodeURIComponent(result.recording.id)}`; },
     });
@@ -2592,11 +2879,8 @@ async function retryRecording(recording, button) {
     } else {
       const retranscribe = ["completed", "failed", "cancelled"].includes(recording.status);
       const action = retranscribe ? "retranscribe" : "retry";
-      const note = retranscribe ? await chooseNote(recording.course_id, recording.lecture_note_id, recording.title) : null;
-      if (note === undefined) return;
-      await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/${action}`, {
-        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({lecture_note_id:note})});
-      if (retranscribe) showToast("다시 전사할 작업을 대기열에 추가했습니다.", "success");
+      if (retranscribe) { await openUploadDialog(recording); return; }
+      await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/${action}`, {method:"POST"});
     }
     await refreshStatus();
   } catch (error) {
@@ -3087,7 +3371,7 @@ function renderReviewItems(suggestions) {
     if (suggestion.status === "pending") {
       const actions = document.createElement("div");
       actions.className = "review-actions";
-      for (const [action, label] of [["reject", "거절"], ["accept", "승인하고 학습"]]) {
+      for (const [action, label] of [["reject", "거절"], ["accept", "승인하고 반영"]]) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = action === "accept" ? "accept" : "reject";
@@ -3122,6 +3406,7 @@ function renderReviewItems(suggestions) {
 }
 
 function renderStatus(data) {
+  detectCompletionNotifications(data);
   const needsLlm = data.settings.llm_enabled !== false;
   if (!data.whisper_ready && data.whisper_state === "idle") {
     ui.serverPill.className = "server-status has-tooltip ready";
@@ -3178,6 +3463,7 @@ async function refreshStatus() {
 
 async function initialize() {
   try {
+    renderNotificationButton();
     const data = await requestJson("/api/bootstrap", {cache: "no-store"});
     app.courses = data.courses;
     app.activeCourseId = data.active_course_id;

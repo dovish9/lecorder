@@ -350,7 +350,7 @@ class LectureStore:
             raise KeyError("작업을 찾지 못했습니다.")
         return self._recording(row)
 
-    def queue_retranscription(self, recording_id: str, source: Path) -> Recording:
+    def queue_retranscription(self, recording_id: str, source: Path, *, course_id=None, output_changes=None) -> Recording:
         """Snapshot the linked course's current settings for this new attempt."""
         with self._lock, self._connect() as db:
             row = db.execute("SELECT * FROM recordings WHERE id = ?", (recording_id,)).fetchone()
@@ -358,14 +358,17 @@ class LectureStore:
                 raise KeyError("작업을 찾지 못했습니다.")
             if row["status"] not in {"completed", "failed", "cancelled"}:
                 raise ValueError("완료·실패·중단된 작업만 다시 전사할 수 있습니다.")
-            course = db.execute("SELECT * FROM courses WHERE id = ?", (row["course_id"],)).fetchone()
+            course = db.execute("SELECT * FROM courses WHERE id = ?", (course_id if course_id is not None else row["course_id"],)).fetchone()
+            if course_id is not None and course is None:
+                raise ValueError("강의를 찾지 못했습니다.")
             changes = dict(status="queued", source_path=str(source), error="", started_at="", completed_at="",
                            llm_model=DEFAULT_LLM_MODEL)
             # Deleted courses retain the job's snapshot; never borrow the selected course.
             if course is not None:
-                changes.update(course_name=course["name"])
+                changes.update(course_id=course["id"], course_name=course["name"])
                 for name in ("language", "format_transcript", "llm_enabled"):
                     changes[name] = course[name]
+            changes.update(output_changes or {})
             assignments = ", ".join(f"{key} = ?" for key in changes)
             db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
                        (*changes.values(), recording_id))
