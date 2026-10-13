@@ -66,7 +66,12 @@ def create_app(
         workflow = pipeline or RecordingPipeline(lectures, state, engine,
             work_root=lectures.path.parent / "recordings", start_worker=False)
     services.workflow = workflow
+    from .live_transcription import LiveTranscription
+    from .live_http import register as register_live_http
+    services.live = LiveTranscription(workflow, services.platform)
+    workflow.live = services.live
     app = Flask(__name__, static_folder=str(ROOT / "web" / "static"))
+    register_live_http(app, services.live)
     app.extensions["recording_pipeline"] = workflow
     app.extensions["lecorder_services"] = services
 
@@ -85,7 +90,7 @@ def create_app(
     def capabilities():
         return jsonify(services.platform.capabilities())
 
-    app.register_blueprint(note_routes(workflow.notes, workflow.reviews))
+    app.register_blueprint(note_routes(workflow.notes, workflow.reviews, services.live))
     app.register_blueprint(ai_routes(lectures.ai))
 
     def serialize_outputs(handler):
@@ -103,7 +108,14 @@ def create_app(
 
     def recording_payload(recording: Recording, counts: dict[str, int] | None = None) -> dict[str, Any]:
         data = recording.public()
+        data['has_live_draft'] = services.live.has_draft(recording)
         data["total_processing_seconds"] = lectures.total_processing_seconds(recording)
+        active_live = services.live.active
+        if active_live and not active_live.stopped.is_set() and (recording.status in {"queued", "processing"} or recording.review_status in {'queued', 'processing'}):
+            settings = json.loads(recording.ai_settings_json or '{}')
+            area = 'llm' if recording.review_status in {'queued', 'processing'} else 'speech'
+            data['waiting_for_live'] = settings.get(area, {}).get('managed', False)
+
         data["lecture_note_id"] = workflow.notes.revision(recording.note_revision_id)["note_id"] if recording.note_revision_id else None
         data["suggestion_counts"] = (
             counts if counts is not None else lectures.suggestion_counts([recording.id])[recording.id]
@@ -149,12 +161,19 @@ def create_app(
             llm_status = provider_status("llm")
         recordings = lectures.list_recordings(30)
         counts = lectures.suggestion_counts([item.id for item in recordings])
+        note_jobs = workflow.notes.queue_items()
+        active_live = services.live.active
+        if active_live and not active_live.stopped.is_set():
+            for item in note_jobs:
+                managed = item.pop('managed_llm', None)
+                item['waiting_for_live'] = managed is None or bool(managed)
         return {
+            "live_recording_id": services.live.active.recording_id if services.live.active and not services.live.active.stopped.is_set() else None,
             "speech": speech_status,
             "llm": llm_status,
             "settings": current.public(),
             "job": state.get(),
-            "note_jobs": workflow.notes.queue_items(),
+            "note_jobs": note_jobs,
             "notes": workflow.notes.completion_items(),
             "recordings": [recording_payload(item, counts[item.id]) for item in recordings],
         }

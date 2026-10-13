@@ -43,6 +43,7 @@ export function setupAISettings() {
     panels.replaceChildren(); if(area==='paths'||!draft)return;
     const local=['llama_cpp','whisper_cpp'].includes(draft.provider);
     const top=element('div','ai-settings-intro');top.append(element('h3','',area==='speech'?'음성을 텍스트로':'검수와 강의노트 분석'),element('p','',area==='speech'?'언어와 강의노트 인식 힌트는 각 작업의 설정을 따릅니다.':'검수·개요·페이지 해설·의미 검증에 같은 모델을 사용합니다.'));panels.append(top);
+    if(area==='speech')panels.append(element('p','ai-privacy','실시간 초안: 로컬 large-v3-turbo · 녹음 종료 후 전체 전사는 아래 제공자와 모델을 사용합니다.'));
     panels.append(picker('제공자',providers[area],draft.provider,id=>{
       draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};key='';checked=false;render();
     }));

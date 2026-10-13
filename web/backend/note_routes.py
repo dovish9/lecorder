@@ -6,7 +6,7 @@ import json
 from flask import Blueprint, jsonify, request, send_file
 
 
-def note_routes(library, reviews):
+def note_routes(library, reviews, live=None):
     routes = Blueprint("notes", __name__)
 
     @routes.errorhandler(ValueError)
@@ -100,7 +100,8 @@ def note_routes(library, reviews):
                 except (TypeError, json.JSONDecodeError):
                     value[field] = {}
             return value
-        return jsonify(runs=[public_run(row) for row in rows], review_runs=[public_run(row) for row in reviews])
+        return jsonify(runs=[public_run(row) for row in rows], review_runs=[public_run(row) for row in reviews],
+                       live_events=live.log(recording_id) if live else [])
 
     @routes.post("/api/recordings/<recording_id>/review")
     def review(recording_id):

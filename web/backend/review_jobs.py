@@ -245,6 +245,10 @@ class ReviewQueue:
                     saving_seconds = time.monotonic() - saving_started
                     suggestion_count = len(suggestions)
                     restore_required = False
+                    from .services import current_services
+                    services = current_services()
+                    if services and services.live:
+                        services.live.has_draft(updated)
                 except Exception:
                     if published:
                         backup.replace(note)

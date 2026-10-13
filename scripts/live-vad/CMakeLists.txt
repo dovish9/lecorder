@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(lecorder_vad LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_library(WHISPER_LIBRARY whisper PATHS "${WHISPER_DIR}/build/src" "${WHISPER_DIR}/build/src/Release" NO_DEFAULT_PATH REQUIRED)
+add_executable(lecorder-vad main.cpp)
+target_include_directories(lecorder-vad PRIVATE "${WHISPER_DIR}/include" "${WHISPER_DIR}/ggml/include")
+target_link_libraries(lecorder-vad PRIVATE "${WHISPER_LIBRARY}")
+set_target_properties(lecorder-vad PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${WHISPER_DIR}/build/bin")

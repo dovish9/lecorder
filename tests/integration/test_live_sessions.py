@@ -1,0 +1,63 @@
+import io
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch, Mock
+
+from tests.support import RecorderCase
+from web.backend.routes import create_app
+from web.backend.store import LectureStore
+from web.backend.live_transcription import LiveSession
+
+
+class LiveSessionContractTests(RecorderCase):
+    def setUp(self):
+        super().setUp()
+        temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        env, _ = self.environment(root)
+        self.store = LectureStore(root/'test.db', env)
+        self.app = create_app(store=self.store)
+        self.services = self.app.extensions['lecorder_services']
+        self.addCleanup(self.services.close)
+        self.workflow = self.services.workflow
+        self.row = self.workflow.begin_chunked(self.store.get(), 'test', '.webm')
+        self.client = self.app.test_client()
+
+    def test_live_failure_does_not_block_original_chunks_and_generations_are_checked(self):
+        with patch('web.backend.live_transcription.runtime_for', side_effect=RuntimeError('missing model')):
+            response = self.client.post(f'/api/recordings/{self.row.id}/live', json={})
+            self.assertEqual(response.status_code, 200)
+            session = self.services.live.active
+            self.assertTrue(session.stopped.wait(2))
+        self.assertEqual(session.state, 'failed')
+        self.workflow.save_chunk(self.row.id, 0, io.BytesIO(b'original audio'))
+        self.assertEqual((self.workflow.folder(self.row.id)/'chunks/00000000.part').read_bytes(), b'original audio')
+        self.assertEqual(self.store.get_recording(self.row.id).status, 'recording')
+        prefix = f'/api/recordings/{self.row.id}/live'
+        self.assertEqual(self.client.put(prefix+'/old/pcm?sequence=0&start=0',data=b'\0\0').status_code, 409)
+        self.assertEqual(self.client.put(prefix+f'/{session.id}/pcm?sequence=0&start=0',data=b'\0'*64002).status_code, 413)
+        self.assertEqual(self.client.get(prefix).json['live']['state'], 'failed')
+
+    def test_draft_survives_final_failure_until_review_commits_or_recording_is_deleted(self):
+        live = self.services.live
+        session = LiveSession(live, self.row.id, {})
+        session.state = 'stopped'; session.persist()
+        row = self.store.update_recording(self.row.id, status='failed')
+        self.assertTrue(live.has_draft(row))
+        row = self.store.update_recording(self.row.id, status='completed', note_path='final.md', review_status='failed')
+        self.assertTrue(live.has_draft(row))
+        row = self.store.update_recording(self.row.id, review_status='completed')
+        self.assertFalse(live.has_draft(row))
+        self.assertFalse(live.folder(row.id).exists())
+
+    def test_original_finalization_stops_live_before_queueing(self):
+        live = Mock(); self.workflow.live = live
+        self.workflow.save_chunk(self.row.id, 0, io.BytesIO(b'original'))
+        with patch.object(self.workflow, '_preserve_intake', side_effect=lambda row: row):
+            self.workflow.finalize_chunked(self.row.id, 3)
+        live.end.assert_called_once_with(self.row.id)
+        self.assertEqual(Path(self.row.source_path).read_bytes(), b'original')
+        priority, _, item = self.workflow._queue.get_nowait()
+        self.assertEqual((priority,item), (0,self.row.id))

@@ -44,13 +44,15 @@ class Transcriber(SpeechProcessing, SpeechQuality, ReviewEngine):
         conversion_started = time.monotonic()
         self._convert(source, wav, cancellation)
         conversion_seconds = time.monotonic() - conversion_started
-        with inference.lease(speech=True, cancellation=cancellation), runtime_for(current("speech")).session(cancellation):
+        config = current("speech")
+        with inference.lease(speech=True, cancellation=cancellation,
+                             local=config.get("managed", False)), runtime_for(config).session(cancellation):
             options = self._with_note_hint(options, cancellation)
-            whispered = self._whisper_chunked(wav, options, incoming, progress, cancellation)
-            if options.retry_low_confidence and current("speech")["provider"] == "whisper_cpp":
-                whispered = self._retry_low_confidence(
-                    wav, options, whispered, incoming, progress, cancellation
-                )
+        whispered = self._whisper_chunked(wav, options, incoming, progress, cancellation)
+        if options.retry_low_confidence and config["provider"] == "whisper_cpp":
+            whispered = self._retry_low_confidence(
+                wav, options, whispered, incoming, progress, cancellation
+            )
         corrected_segments = whispered.segments
         items = [segment.text for segment in corrected_segments]
         qwen_started = time.monotonic()

@@ -165,7 +165,7 @@ class ChunkTests(unittest.TestCase):
         response.json.return_value={'text':'test','duration':1,'segments':[{'start':0,'end':1,'text':'test'}]}
         with tempfile.TemporaryDirectory() as d:
             wav=Path(d)/'audio.wav';wav.write_bytes(b'wav')
-            with patch('web.backend.speech_processing.request_json',return_value=response.json.return_value) as post:
+            with patch('web.backend.speech_processing.runtime_for'), patch('web.backend.speech_processing.request_json',return_value=response.json.return_value) as post:
                 Transcriber._whisper(wav,Options(language='ko',recognition_hint='물리학 용어'),None)
                 self.assertEqual(post.call_args.kwargs['multipart']['prompt'], '물리학 용어')
                 Transcriber._whisper(wav,Options(language='en'),{'no_context':'false'})

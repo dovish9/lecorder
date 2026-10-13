@@ -401,6 +401,10 @@ export function createLibrary(context) {
       void showRecordingNote(noteSection, entry.recording.lecture_note_id);
     }
 
+    if (entry.recording?.source_kind === "browser" && (entry.recording.has_live_draft || entry.recording.status === 'recording')) {
+      ui.libraryDetail.append(actions.livePreview(entry.recording));
+      void actions.refreshLivePreview();
+    }
     const files = detailSection("원음과 결과 파일");
     const fileList = document.createElement("div");
     fileList.className = "storage-file-list";

@@ -173,6 +173,8 @@ class RecordingIntake:
         recording = self.store.get_recording(recording_id)
         if recording.status not in {"recording", "recoverable"}:
             raise ValueError("완료할 수 없는 녹음 작업입니다.")
+        if getattr(self, "live", None):
+            self.live.end(recording_id)
         chunks = sorted((self.folder(recording_id) / "chunks").glob("*.part"))
         if not chunks:
             raise ValueError("저장된 녹음 조각이 없습니다.")
@@ -204,11 +206,13 @@ class RecordingIntake:
         recording = self._preserve_intake(recording)
         self.state.set("queued", f"{recording.title} 녹음을 안전하게 저장하고 대기열에 추가했습니다.",
                        job_id=recording.id, title=recording.title, course_id=recording.course_id)
-        self.enqueue(recording_id)
+        self.enqueue(recording_id, priority=0)
         return recording
 
 
     def discard(self, recording_id: str) -> None:
+        if getattr(self, "live", None):
+            self.live.forget(recording_id)
         self.store.discard_recording(recording_id)
         shutil.rmtree(self.folder(recording_id), ignore_errors=True)
 
@@ -220,6 +224,8 @@ class RecordingIntake:
                 raise ValueError("검수가 끝난 후 작업을 삭제하세요.")
             self.store.delete_recording_history(recording_id)
             shutil.rmtree(self.folder(recording_id), ignore_errors=True)
+            if getattr(self, 'live', None):
+                self.live.forget(recording_id)
 
 
     def retranscribe(self, recording_id: str, lecture_note_id: str | None = None, *, retain_note=True, course_id=None, title=None) -> Recording:

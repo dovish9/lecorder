@@ -196,6 +196,7 @@ export function stageTime(seconds) {
 export function hasPipelineLog(recording) {
   return Boolean(recording && (
     recording.error
+    || recording.has_live_draft
     || Number(recording.quality?.pipeline_version) >= 1
     || Array.isArray(recording.quality?.attempts)
   ));

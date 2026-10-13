@@ -142,6 +142,19 @@ export function createActivity(context) {
       block.append(Object.assign(document.createElement('p'), {className:'pipeline-settings',textContent: modelInfo + (isReview ? ` · 요청 ${metrics.requests ?? 0}회 · 제안 ${metrics.suggestion_count ?? 0}개 · ${usageInfo}` : '')}));
       section.append(block);
     }
+    const events = history.live_events?.length ? history.live_events : (recording.quality?.live_events || []);
+    if (events.length) {
+      const details = document.createElement('details');
+      details.className = 'pipeline-run';
+      details.append(Object.assign(document.createElement('summary'), {textContent: '실시간 초안 · large-v3-turbo (최종 처리 시간에서 제외)'}));
+      const names = {resource_ready: '자원 대기', model_ready: '모델 로드', segment_started: '구간 시작', segment: '초안 구간', displayed: '화면 반영 지연', gap: '초안 누락', failed: '실시간 실패', stopped: '모델 해제', heartbeat_expired: '브라우저 연결 끊김'};
+      for (const event of events) {
+        const line = document.createElement('div'); line.className = 'pipeline-stage';
+        line.append(Object.assign(document.createElement('span'), {textContent: names[event.event] || event.event}), Object.assign(document.createElement('strong'), {textContent: stageTime(event.processing_seconds ?? event.waiting_seconds ?? event.latency_seconds)}), Object.assign(document.createElement('small'), {textContent: event.reason || (event.start != null ? `${event.start.toFixed(1)}초부터 · ${event.duration?.toFixed(1) || 0}초 구간` : '')}));
+        details.append(line);
+      }
+      section.append(details);
+    }
     const total = document.createElement("div");
     total.className = "pipeline-stage pipeline-total";
     total.append(Object.assign(document.createElement("span"), {textContent: "총 걸린 시간"}), Object.assign(document.createElement("strong"), {textContent: stageTime(aggregate)}), Object.assign(document.createElement("small"), {textContent: "대기열 시간 제외 · 전사·저장·LLM 검수 합계"}));
@@ -191,6 +204,7 @@ export function createActivity(context) {
       meta.textContent = isNote
         ? `${recording.course_name || "강의노트"} · ${noteStage}${progress}`
         : `${recording.course_name} · ${position}`;
+      if (recording.waiting_for_live) meta.textContent = `${recording.course_name} · 실시간 전사 종료 대기`;
       copy.append(title, meta);
       const state = document.createElement("b");
       state.textContent = isQueued ? "대기" : isNote ? "분석 중" : recording.status === "cancelling" ? "중단 중" : "처리 중";

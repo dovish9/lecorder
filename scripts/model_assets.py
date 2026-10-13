@@ -102,7 +102,7 @@ def check(packages_only=False):
     if packages_only:
         return
     deps = dependencies()
-    for relative in ('whisper.cpp/build/bin/whisper-server', 'llama.cpp/build/bin/llama-server',
+    for relative in ('whisper.cpp/build/bin/whisper-server', 'whisper.cpp/build/bin/lecorder-vad', 'llama.cpp/build/bin/llama-server',
                      'kiwi/bin/kiwi-helper', 'vision/bin/vision-ocr'):
         path = deps / relative
         if not path.is_file() or not os.access(path, os.X_OK):

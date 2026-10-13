@@ -19,4 +19,7 @@ fi
 cmake -S "$DEST" -B "$DEST/build" -DGGML_METAL=ON
 cmake --build "$DEST/build" --config Release -j "$JOBS"
 [[ -x "$DEST/build/bin/whisper-server" ]]
+cmake -S "$ROOT/scripts/live-vad" -B "$DEST/build/lecorder-vad" -DWHISPER_DIR="$DEST"
+cmake --build "$DEST/build/lecorder-vad" --config Release -j "$JOBS"
+[[ -x "$DEST/build/bin/lecorder-vad" ]]
 echo "Whisper 준비 완료: $DEST"

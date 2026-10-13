@@ -22,6 +22,7 @@ class Services:
     ai: AISettings
     ocr: OCR
     workflow: object = None
+    live: object = None
 
     @classmethod
     def create(cls, data_dir, *, platform=None, worker=None, ocr=None):
@@ -45,6 +46,8 @@ class Services:
                 self.workflow.start()
 
     def close(self):
+        if self.live:
+            self.live.close()
         if self.workflow:
             self.workflow.close()
         self.runtimes.close()

@@ -125,7 +125,7 @@ def _generate(messages, schema, *, max_tokens=2048, temperature=0, cancellation=
     else:
         raise ProviderError('지원하지 않는 LLM 제공자입니다.')
     queued = time.monotonic()
-    with inference.lease(cancellation=cancellation):
+    with inference.lease(cancellation=cancellation, local=config.get("managed", False)):
         waiting = time.monotonic() - queued
         start = time.monotonic()
         if provider == 'llama_cpp':
@@ -187,7 +187,7 @@ def check_connection(area, config, key=None):
         return {k: response[k] for k in ('model', 'provider', 'seconds')}
     if config['provider'] == 'whisper_cpp':
         key = configured_settings().credentials.get(config) if key is None else key
-        with inference.lease(speech=True), runtime_for(config).session():
+        with inference.lease(speech=True, local=config.get('managed', False)), runtime_for(config).session():
             result = request_json(config['base_url'] + '/health', method='GET',
                                   headers={'Authorization': 'Bearer ' + key} if key else None)
             if result.get('status') != 'ok':

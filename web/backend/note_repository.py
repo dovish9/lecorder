@@ -81,7 +81,7 @@ class NoteRepository:
             rows = db.execute("""
                 SELECT n.id AS note_id, n.title, c.name AS course_name,
                        r.id AS revision_id, r.status, r.study_status, r.page_count,
-                       r.created_at,
+                       r.created_at, json_extract(r.ai_settings, '$.llm.managed') AS managed_llm,
                        (SELECT COUNT(*) FROM note_pages p WHERE p.revision_id=r.id)
                            AS extracted_pages,
                        (SELECT COUNT(*) FROM note_pages p WHERE p.revision_id=r.id
@@ -96,6 +96,7 @@ class NoteRepository:
             details = db.execute("""
                 SELECT n.id AS note_id, n.title, c.name AS course_name,
                        d.revision_id, d.number, r.created_at,
+                       COALESCE(json_extract(d.payload, '$.ai_settings.llm.managed'), json_extract(r.ai_settings, '$.llm.managed')) AS managed_llm,
                        json_extract(d.payload, '$.detail_status') AS status
                 FROM note_details d JOIN lecture_notes n ON n.revision_id=d.revision_id
                 JOIN note_revisions r ON r.id=d.revision_id

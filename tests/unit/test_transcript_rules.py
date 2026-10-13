@@ -19,6 +19,12 @@ from web.backend.transcription import Options, TranscriptSegment, WhisperResult
 from tests.support import RecorderCase
 
 class TranscriptRulesTests(RecorderCase):
+    def setUp(self):
+        super().setUp()
+        runtime = patch('web.backend.speech_processing.runtime_for')
+        runtime.start()
+        self.addCleanup(runtime.stop)
+
     def test_reviewer_requests_suggestions_and_applies_only_verifiable_edits(self) -> None:
         options = Options(language="ko", course_name="통계학", recognition_hint="모집단, 표본", llm_model="test")
         self.assertIn("과목명: 통계학", reviewer_prompt(options))

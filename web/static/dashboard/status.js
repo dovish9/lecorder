@@ -13,6 +13,7 @@ export function createStatus(context) {
     ui.serverText.textContent = missing ? 'AI 연결 확인 필요' : loading ? '로컬 모델 로드 중' : '음성 전사 · LLM 준비됨';
     app.job = data.job || {};
     app.noteJobs = data.note_jobs || [];
+    app.liveRecordingId = data.live_recording_id;
     const activity = statusCardActivity(app.job, app.noteJobs, data.recordings || []);
     ui.progressCard.dataset.phase = activity.phase;
     ui.progressKicker.textContent = activity.label;

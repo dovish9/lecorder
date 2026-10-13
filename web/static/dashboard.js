@@ -3,6 +3,7 @@ import {setupAISettings} from "./ai-settings.js";
 import {createShell} from "./dashboard/shell.js";
 import {createRouting} from "./dashboard/routing.js";
 import {createCourses} from "./dashboard/courses.js";
+import {createLive} from "./dashboard/live.js";
 import {createCapture} from "./dashboard/capture.js";
 import {createPlayer} from "./dashboard/player.js";
 import {createLibrary} from "./dashboard/library.js";
@@ -34,6 +35,7 @@ context.listen(systemDarkMode, "change", syncThemeColor);
 Object.assign(context.actions, createShell(context));
 Object.assign(context.actions, createRouting(context));
 Object.assign(context.actions, createCourses(context));
+Object.assign(context.actions, createLive(context));
 Object.assign(context.actions, createCapture(context));
 Object.assign(context.actions, createPlayer(context));
 Object.assign(context.actions, createLibrary(context));
@@ -46,6 +48,7 @@ Object.assign(context.actions, createStatus(context));
 
 window.addEventListener("pagehide", event => {
   if (event.persisted) return;
+  context.actions.stopLive();
   controller.abort();
   timers.forEach(window.clearInterval);
 });

@@ -32,7 +32,7 @@ cp .env.example .env  # 새 설치에서만 실행; 기존 설정을 덮어쓰�
 2. **Python·Homebrew 도구 준비:** pyenv가 있으면 설치된 Python 3.13 중 최신 패치 버전을 사용하고, 없으면 pyenv로 3.13을 추가 설치합니다. pyenv가 없으면 기존 `python3` 또는 `python`을 사용하고, Python 자체가 없을 때만 Homebrew의 최신 안정 버전 `python`을 설치합니다. CMake는 Homebrew에 없을 때 설치합니다. 기존 Git(Apple Git 포함)을 사용하며 pyenv 전역·로컬 버전 설정은 변경하지 않습니다.
 3. **Python 패키지 설치:** 선택한 Python에 `requirements.txt`를 설치·검사합니다. 기존 Python은 3.11 이상이어야 하며 패키지 호환성 검사 실패 시 중단합니다. Homebrew처럼 직접 설치가 제한된 Python은 `dependencies/python/site-packages`에 패키지를 설치합니다. 설치 성공 시 Python 경로를 기록하고 `start.command`가 같은 환경을 사용합니다.
 4. **네이티브 빌드:** 고정된 소스로 Whisper → llama.cpp → Kiwi helper → Vision helper를 빌드합니다. 이 단계에서는 모델을 내려받지 않습니다.
-5. **모델·데이터 준비:** Whisper large-v3·Silero VAD·토크나이저, LLM GGUF·이미지 projector, Kiwi 모델·사전을 내려받고 체크섬을 검증합니다. 필수 실행 파일·패키지·모델 검사까지 통과해야 설치 완료로 표시합니다. AI 서버는 시작하지 않습니다.
+5. **모델·데이터 준비:** Whisper large-v3·large-v3-turbo·Silero VAD·토크나이저, LLM GGUF·이미지 projector, Kiwi 모델·사전을 내려받고 체크섬을 검증합니다. 필수 실행 파일·패키지·모델 검사까지 통과해야 설치 완료로 표시합니다. AI 서버는 시작하지 않습니다.
 
 모델 다운로드에는 상당한 디스크 공간과 시간이 필요합니다. 실패하면 원인을 해결하고 같은 명령을 다시 실행하세요. 기존 빌드 산출물과 검증된 모델을 재사용하며, 다운로드에 실패한 임시 파일은 제거합니다. 기존 모델의 체크섬이 다르면 임의로 덮어쓰지 않으므로 해당 파일을 별도로 보관하고 재시도하세요.
 
@@ -124,6 +124,7 @@ python scripts/doctor.py            # 설치 상태 읽기, 모델을 로드하�
 python -m unittest tests.native.test_setup  # macOS 설치 순서·실패 처리, 격리된 도구 사용
 python scripts/verify_transcription.py sample.wav --language ko --llm --report memories/verification.json
 python scripts/verify_runtime.py sample.wav --report memories/runtime-verification.json
+python scripts/verify-live.py sample.wav --language ko --final --report memories/live-verification.json  # 16 kHz mono PCM WAV, 실제 속도로 공급
 ```
 
 마지막 두 명령은 실제 모델을 사용하며 기본 포트 18080/18081과 임시 작업 폴더를 사용합니다. 필요한 도구·모델·표본이 없으면 실패합니다. `--speech-port`, `--llm-port`로 포트를 바꿀 수 있습니다. 실제 모델·OCR와 브라우저 검증은 CI의 모델 없는 검증과 구분합니다. 외부 제공자는 API 키 없이 계약만 테스트할 수 있으며 실사용 검증으로 간주하지 않습니다.
@@ -133,3 +134,9 @@ python scripts/verify_runtime.py sample.wav --report memories/runtime-verificati
 사용 흐름은 앱의 **사용 안내**(`/guide`)에 설명되어 있습니다.
 
 설치 미리보기(`--dry-run`)는 패키지 설치·빌드·다운로드를 실행하지 않습니다. 기존 모델은 파일 존재 여부만 표시하고, 실제 설치에서 체크섬을 검증합니다. 최종 검사는 네이티브 도구를 `--help`로 실행해 라이브러리 로딩 실패와 비정상 종료도 확인합니다. 서버 시작·모델 추론 검사는 포함하지 않습니다.
+
+### 녹음 중 실시간 초안
+
+마이크 녹음 중 로컬 `large-v3-turbo`가 발화 단위 초안을 만듭니다. AudioWorklet의 16 kHz PCM과 Silero VAD 헬퍼를 사용하며, 원음 저장 경로와 분리되어 초안 실패·전송 지연에도 원음은 보존됩니다. 녹음 종료 후 선택된 음성 제공자로 전체 원음을 처리하고 LLM 검수를 진행합니다. 초안은 최종 검수 입력으로 사용하지 않습니다.
+
+녹음 중 다른 앱 관리 로컬 AI 작업은 요청 경계에서 대기합니다. 일시정지는 예약을 유지하고, 종료·폐기·30초 생존 신호 만료 시 turbo와 예약을 정리합니다. 사용자 지정 서버와 외부 API는 예약 대상이 아닙니다. 실시간 모델·VAD 헬퍼는 기본 설치 과정에 포함되며 추가 런타임 패키지는 필요하지 않습니다.

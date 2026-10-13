@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from .media import request as media_request
+from .inference import inference
+from .ai_runtime import runtime_for
 import tempfile
 import time
 import wave
@@ -203,11 +205,14 @@ class SpeechProcessing:
             config = current('speech')
             from .ai_settings import configured_settings
             key = configured_settings().credentials.get(config) if not config.get('managed') else ''
-            payload = request_json(
-                config['base_url'] + '/inference',
-                headers={'Authorization': 'Bearer ' + key} if key else {},
-                multipart={'file': wav, **request_data}, cancellation=cancellation, timeout=14400,
-            )
+            with inference.lease(speech=True, cancellation=cancellation,
+                                 local=config.get('managed', False)), runtime_for(config).session(cancellation):
+                request_started = time.monotonic()
+                payload = request_json(
+                    config['base_url'] + '/inference',
+                    headers={'Authorization': 'Bearer ' + key} if key else {},
+                    multipart={'file': wav, **request_data}, cancellation=cancellation, timeout=14400,
+                )
             if cancellation:
                 cancellation.check()
             return cls._whisper_result(payload), time.monotonic() - request_started

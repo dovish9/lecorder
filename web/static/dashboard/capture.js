@@ -150,6 +150,7 @@ export function createCapture(context) {
     window.clearInterval(app.clockTimer);
     app.clockTimer = null;
     stopSoundMeter();
+    actions.stopLive?.();
   }
 
   async function uploadChunk(recordingId, index, blob, {attempts = 3, timeoutMs = 5000} = {}) {
@@ -543,6 +544,7 @@ export function createCapture(context) {
       updateClock();
       app.clockTimer = window.setInterval(updateClock, 250);
       setRecorderState("recording");
+      void actions.startLive?.(app.recordingId, app.mediaStream);
       renderNotePicker();
       void loadRecordingNotes();
     } catch (error) {
@@ -577,12 +579,14 @@ export function createCapture(context) {
     if (!app.mediaRecorder) return;
     if (app.mediaRecorder.state === "recording") {
       app.mediaRecorder.pause();
+      actions.pauseLive?.(true);
       app.pausedAt = Date.now();
       setRecorderState("paused");
     } else if (app.mediaRecorder.state === "paused") {
       app.pausedDuration += Date.now() - app.pausedAt;
       app.pausedAt = 0;
       app.mediaRecorder.resume();
+      actions.pauseLive?.(false);
       setRecorderState("recording");
     }
   });

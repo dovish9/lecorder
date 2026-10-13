@@ -1509,3 +1509,17 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .ai-settings-actions,.ai-key-line{display:flex;justify-content:space-between;gap:12px;align-items:center}.ai-key-line{font-size:11px;color:var(--muted)}
 .ai-settings-actions button,.ai-text-button{padding:7px 11px;border:.5px solid var(--line2);border-radius:7px;background:var(--raised);font-size:12px;color:var(--ink)}.ai-check{color:var(--blue)!important}.ai-text-button{border:0;color:var(--red);padding:3px}
 @media(max-width:600px){.ai-field{grid-template-columns:1fr;gap:6px}.system-settings-tabs{margin-inline:18px}.ai-settings-panel{max-height:48vh}.ai-key-line{align-items:flex-start;flex-direction:column}}
+
+.live-preview{margin:20px 0;padding:18px;border:.5px solid var(--line);border-radius:12px;background:var(--raised);min-width:0}
+.live-preview header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;margin-bottom:12px}
+.live-preview h3{margin:0;font-size:15px}
+.live-preview-status{font-size:12px;color:var(--muted)}
+.live-preview-text{max-height:360px;overflow:auto;overflow-wrap:anywhere;line-height:1.8;font-size:14px}
+.live-preview-text:empty:before{content:'발화가 끝나면 초안이 여기에 표시됩니다.';color:var(--muted)}
+.live-preview-text p{margin:0 0 10px}
+.live-preview-text time{display:inline-block;margin-right:10px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.live-preview>button{margin-top:10px;color:var(--blue);background:var(--blue-soft);border:0;border-radius:7px;padding:7px 11px;cursor:pointer}
+details.pipeline-run>summary{padding:14px;font-size:13px;font-weight:600;cursor:pointer;list-style:none}
+details.pipeline-run>summary::-webkit-details-marker{display:none}
+details.pipeline-run>summary::before{content:'›';display:inline-block;margin-right:8px;color:var(--muted)}
+details.pipeline-run[open]>summary::before{transform:rotate(90deg)}

@@ -45,7 +45,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
         self.engine = engine
         self.work_root = work_root
         self.work_root.mkdir(parents=True, exist_ok=True)
-        self._queue: queue.Queue[str] = queue.Queue()
+        self._queue = queue.PriorityQueue()
         self._queued: set[str] = set()
         self._cancellations: dict[str, CancellationToken] = {}
         self._cancel_stages: dict[str, str] = {}
@@ -71,6 +71,8 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
 
     def close(self):
         self._stopping.set()
+        if getattr(self, 'live', None):
+            self.live.close()
         with self._lock:
             for token in list(self._cancellations.values()):
                 token.cancel()
@@ -86,7 +88,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
             yield
 
 
-    def enqueue(self, recording_id: str) -> None:
+    def enqueue(self, recording_id: str, priority=1) -> None:
         with self._lock:
             if self._stopping.is_set() or recording_id in self._queued:
                 return
@@ -98,7 +100,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
                 return
             self._cancellations.setdefault(recording_id, CancellationToken())
             self._queued.add(recording_id)
-            self._queue.put(recording_id)
+            self._queue.put((priority, time.monotonic_ns(), recording_id))
 
     def cancel(self, recording_id: str) -> Recording:
         with self._lock:
@@ -131,7 +133,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
     def _run(self) -> None:
         while not self._stopping.is_set():
             try:
-                recording_id = self._queue.get(timeout=.25)
+                _, _, recording_id = self._queue.get(timeout=.25)
             except queue.Empty:
                 continue
             try:
@@ -151,7 +153,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
                     time.sleep(1)
 
     def process_next(self) -> None:
-        recording_id = self._queue.get_nowait()
+        _, _, recording_id = self._queue.get_nowait()
         try:
             self.process(recording_id)
         finally:
@@ -162,7 +164,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
     def _finish_queue_entry(self, recording_id: str) -> bool:
         try:
             if not self._stopping.is_set() and self.store.get_recording(recording_id).status == "queued":
-                self._queue.put(recording_id)
+                self._queue.put((1, time.monotonic_ns(), recording_id))
                 return True
         except KeyError:
             pass
@@ -300,6 +302,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
             segments = [segment.public() for segment in result.segments]
             breaks = set(result.paragraph_breaks)
             pipeline_details = {
+                "live_events": self.live.log(recording.id) if getattr(self, 'live', None) else [],
                 "pipeline_version": 2,
                 "conversion_seconds": round(result.conversion_seconds, 3),
                 "whisper_primary_seconds": round(result.whisper_primary_seconds, 3),
