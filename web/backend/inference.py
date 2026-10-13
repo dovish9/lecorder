@@ -2,6 +2,8 @@
 
 from contextlib import contextmanager
 import threading
+import time
+from .execution_metrics import add_wait
 
 
 class InferenceCoordinator:
@@ -12,6 +14,7 @@ class InferenceCoordinator:
 
     @contextmanager
     def lease(self, speech=False, cancellation=None):
+        queued = time.monotonic()
         with self._condition:
             if speech:
                 self._speech_waiters += 1
@@ -24,6 +27,7 @@ class InferenceCoordinator:
                     cancellation.check()
                 self._busy = True
             finally:
+                add_wait(time.monotonic() - queued)
                 if speech:
                     self._speech_waiters -= 1
         try:

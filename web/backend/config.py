@@ -7,6 +7,8 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
+from .platforms import host
+from .atomic import write_text
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[2]
@@ -47,7 +49,10 @@ def _read_env(path: Path = ENV_FILE) -> dict[str, str]:
         key, raw_value = line.split("=", 1)
         key = key.strip()
         try:
-            parsed = shlex.split(raw_value.strip(), posix=True)
+            lexer = shlex.shlex(raw_value.strip(), posix=True)
+            lexer.whitespace_split = True
+            lexer.escape = ""  # paths are data, not shell commands (C:\Users\...)
+            parsed = list(lexer)
             values[key] = parsed[0] if parsed else ""
         except ValueError:
             values[key] = raw_value.strip().strip('"\'')
@@ -69,9 +74,7 @@ DB_FILE = ROOT / "web" / "data" / "lecorder.db"
 APP_PORT = int(os.getenv("LECORDER_PORT", "5055"))
 WHISPER_PORT = int(os.getenv("WHISPER_PORT", "8080"))
 WHISPER_URL = os.getenv("WHISPER_URL", f"http://127.0.0.1:{WHISPER_PORT}/inference")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-DEFAULT_LLM_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
-NOTE_VISION_MODEL = os.getenv("NOTE_VISION_MODEL", DEFAULT_LLM_MODEL)
+DEFAULT_LLM_MODEL = "Qwen3.5-9B"
 
 
 @dataclass(frozen=True)
@@ -87,7 +90,7 @@ class Environment:
         output = Path(self.output_dir).expanduser()
         data["checks"] = {
             "project": (project / "app.py").is_file() and (project / "web/backend").is_dir(),
-            "whisper": (whisper / "build/bin/whisper-server").is_file(),
+            "whisper": host.executable(whisper / "build/bin", "whisper-server").is_file(),
             "model": (whisper / "models/ggml-large-v3.bin").is_file(),
             "vad_model": (whisper / "models/ggml-silero-v6.2.0.bin").is_file(),
             "output": output.is_dir(),
@@ -150,11 +153,8 @@ class EnvironmentStore:
             lines = [
                 "# Lecorder paths — dashboard managed",
                 *(f"{env_key}={shlex.quote(value)}" for env_key, value in managed_values.items()),
-                f"OLLAMA_MODEL={shlex.quote(existing.get('OLLAMA_MODEL', DEFAULT_LLM_MODEL))}",
                 *(f"{key}={shlex.quote(value)}" for key, value in sorted(preserved.items())),
                 "",
             ]
-            temporary = self.path.with_suffix(".env.tmp")
-            temporary.write_text("\n".join(lines), encoding="utf-8")
-            temporary.replace(self.path)
+            write_text(self.path, "\n".join(lines))
             return updated

@@ -36,9 +36,9 @@ def hint_terms(terms):
     return selected
 
 
-def candidates(pages):
+def candidates(pages, cancellation=None):
     terms = {}
-    korean = noun_terms([page["text"] for page in pages])
+    korean = noun_terms([page["text"] for page in pages], cancellation)
     for page, nouns in zip(pages, korean):
         local = Counter(term for term in nouns if term not in STOP)
         # Build contiguous phrases inside stop-word boundaries, not arbitrary 3-word chunks.

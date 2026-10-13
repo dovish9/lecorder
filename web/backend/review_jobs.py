@@ -1,16 +1,20 @@
+from .ai_settings import using, defaults
+from .execution_metrics import collect, current_trace
 """Review completed transcripts without withholding Whisper output."""
-from .ollama_status import require_ollama
+from .ai_providers import require_llm
 
 import json
 import queue
 import shutil
+from .services import start_thread
 import threading
+import time
 import uuid
 from dataclasses import replace, asdict
 from pathlib import Path
 from .config import DEFAULT_LLM_MODEL
 from .markdown import render_note, transcript_text
-from .transcription import Options, CancellationToken
+from .transcription import Options, CancellationToken, TranscriptionCancelled
 
 
 def relevant_context(snapshot, text):
@@ -34,36 +38,51 @@ class ReviewQueue:
         self.store, self.engine, self.lock = store, engine, lock
         self.queue = queue.Queue()
         self.pending = set()
+        self.cancellations = {}
+        self._threads = []
+        self._stopping = threading.Event()
         if start_worker:
-            with store._connect() as db:
-                interrupted = db.execute(
-                    "SELECT id FROM recordings WHERE review_status IN ('processing','failed','queued')"
-                ).fetchall()
-            for row in interrupted:
-                try:
-                    self._restore_backup(store.get_recording(row["id"]))
-                except OSError as error:
-                    store.update_recording(
-                        row["id"],
-                        review_status="failed",
-                        review_error=f"기존 Markdown 복구 실패: {error}",
-                    )
-            with store._connect() as db:
-                db.execute(
-                    "UPDATE review_runs SET status='failed',completed_at=?,error='앱 종료로 검수가 중단됐습니다.' WHERE completed_at=''",
-                    (store.now(),),
+            self.start()
+
+    def start(self):
+        if self._threads or self._stopping.is_set():
+            return
+        with self.store.transaction() as db:
+            interrupted = db.execute(
+                "SELECT id FROM recordings WHERE review_status IN ('processing','failed','queued')"
+            ).fetchall()
+        for row in interrupted:
+            try:
+                self._restore_backup(self.store.get_recording(row["id"]))
+            except OSError as error:
+                self.store.update_recording(
+                    row["id"],
+                    review_status="failed",
+                    review_error=f"기존 Markdown 복구 실패: {error}",
                 )
-                db.execute(
-                    "UPDATE recordings SET review_status='failed',review_error='앱 종료로 검수가 중단됐습니다.' WHERE review_status='processing'"
-                )
-                rows = db.execute(
-                    "SELECT id FROM recordings WHERE status='completed' AND review_status='queued'"
-                ).fetchall()
-            for row in rows:
-                self.enqueue(row["id"])
-            threading.Thread(
-                target=self._run, name="transcript-review", daemon=True
-            ).start()
+        with self.store.transaction() as db:
+            db.execute(
+                "UPDATE review_runs SET status='failed',completed_at=?,error='앱 종료로 검수가 중단됐습니다.' WHERE completed_at=''",
+                (self.store.now(),),
+            )
+            db.execute(
+                "UPDATE recordings SET review_status='failed',review_error='앱 종료로 검수가 중단됐습니다.' WHERE review_status='processing'"
+            )
+            rows = db.execute(
+                "SELECT id FROM recordings WHERE status='completed' AND review_status='queued'"
+            ).fetchall()
+        for row in rows:
+            self.enqueue(row["id"])
+        self._threads.append(start_thread(self._run, "transcript-review"))
+
+    def close(self):
+        self._stopping.set()
+        with self.lock:
+            for token in list(self.cancellations.values()):
+                token.cancel()
+        for thread in self._threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=10)
 
     @staticmethod
     def _restore_backup(row):
@@ -76,10 +95,10 @@ class ReviewQueue:
 
     def enqueue(self, recording_id):
         with self.lock:
-            if recording_id in self.pending:
+            if self._stopping.is_set() or recording_id in self.pending:
                 return
             try:
-                require_ollama()
+                require_llm((json.loads(self.store.get_recording(recording_id).ai_settings_json) or defaults())["llm"])
             except RuntimeError as error:
                 self.store.update_recording(recording_id, review_status="failed", review_error=str(error))
                 return
@@ -87,8 +106,11 @@ class ReviewQueue:
             self.queue.put(recording_id)
 
     def retry(self, recording_id):
+        snapshot = self.store.ai.snapshot()
         with self.lock:
             row = self.store.get_recording(recording_id)
+            if recording_id in self.pending:
+                raise ValueError("이전 검수 작업을 정리 중입니다. 잠시 후 다시 시도하세요.")
             if row.status != "completed" or row.review_status in {
                 "queued",
                 "processing",
@@ -96,30 +118,56 @@ class ReviewQueue:
                 raise ValueError("완료된 전사의 검수만 다시 시작할 수 있습니다.")
             self._restore_backup(row)
             self.store.update_recording(
-                recording_id, review_status="queued", review_error="", llm_model=DEFAULT_LLM_MODEL, llm_enabled=True, format_transcript=True
+                recording_id, review_status="queued", review_error="", llm_model=snapshot["llm"]["model"], ai_settings_json=json.dumps(snapshot), llm_enabled=True, format_transcript=True, last_operation="review"
             )
             self.enqueue(recording_id)
 
+    def cancel(self, recording_id):
+        with self.lock:
+            row = self.store.get_recording(recording_id)
+            if row.review_status not in {"queued", "processing"}:
+                return row
+            token = self.cancellations.get(recording_id)
+            if token:
+                token.cancel()
+            return self.store.update_recording(
+                recording_id, review_status="cancelled", review_error=""
+            )
+
     def process(self, recording_id):
+        try:
+            row = self.store.get_recording(recording_id)
+        except KeyError:
+            return
+        with using(json.loads(row.ai_settings_json) or defaults()), collect():
+            return self._process(recording_id)
+
+    def _process(self, recording_id):
         backup = temporary = None
         published = False
         restore_required = False
         run_id = None
         stats = None
+        started = None
+        review_seconds = 0.0
+        saving_seconds = 0.0
+        segment_count = 0
+        suggestion_count = 0
         try:
             with self.lock:
                 row = self.store.get_recording(recording_id)
-                if row.status != "completed" or row.review_status != "queued":
+                if self._stopping.is_set() or row.status != "completed" or row.review_status != "queued":
                     return
                 self._restore_backup(row)
                 run_id = uuid.uuid4().hex
                 settings = {
                     "language": row.language,
                     "model": row.llm_model,
+                    "ai_settings": json.loads(row.ai_settings_json),
                     "format_text": row.format_transcript,
                     "note_revision_id": row.note_revision_id,
                 }
-                with self.store._connect() as db:
+                with self.store.transaction() as db:
                     db.execute(
                         "INSERT INTO review_runs(id,recording_id,started_at,status,settings) VALUES (?,?,?,?,?)",
                         (
@@ -130,9 +178,13 @@ class ReviewQueue:
                             json.dumps(settings),
                         ),
                     )
-                row = self.store.update_recording(recording_id, review_status="processing", llm_enabled=True, format_transcript=True, llm_model=DEFAULT_LLM_MODEL)
-            require_ollama()
+                row = self.store.update_recording(recording_id, review_status="processing", llm_enabled=True, format_transcript=True)
+                cancellation = CancellationToken()
+                self.cancellations[recording_id] = cancellation
+                started = time.monotonic()
+            require_llm((json.loads(self.store.get_recording(recording_id).ai_settings_json) or defaults())["llm"])
             segments = json.loads(row.segments_json)
+            segment_count = len(segments)
             snapshot = json.loads(row.note_snapshot_json)
             options = Options(
                 language=row.language,
@@ -140,8 +192,9 @@ class ReviewQueue:
                 review_context=json.dumps(snapshot, ensure_ascii=False),
                 format_text=row.format_transcript,
                 llm_model=row.llm_model,
+                ai_settings=json.loads(row.ai_settings_json) or defaults(),
             )
-            total, failed, suggestions, breaks, stats = self.engine._review_items(
+            total, failed, suggestions, breaks, stats = self.engine.review(
                 [s["text"] for s in segments],
                 options,
                 progress=None,
@@ -150,11 +203,13 @@ class ReviewQueue:
                     for index, segment in enumerate(segments, 1)
                     if isinstance(segment.get("avg_logprob"), (int, float))
                 },
-                cancellation=CancellationToken(),
+                cancellation=cancellation,
             )
+            cancellation.check()
+            review_seconds = max(0, time.monotonic() - started - max(stats.waiting_seconds, current_trace()["waiting_seconds"]))
             if failed:
                 raise ValueError(
-                    f"Qwen 검수 {failed}/{total}구간 실패. 전사 원문은 보존했습니다."
+                    f"LLM 검수 {failed}/{total}구간 실패. 전사 원문은 보존했습니다."
                 )
             indices = {int(s.removeprefix("s")) for s in breaks}
             with self.lock:
@@ -183,33 +238,56 @@ class ReviewQueue:
                     restore_required = True
 
                 try:
+                    saving_started = time.monotonic()
                     self.store.commit_result(
                         updated, [s.public() for s in suggestions], publish
                     )
+                    saving_seconds = time.monotonic() - saving_started
+                    suggestion_count = len(suggestions)
                     restore_required = False
                 except Exception:
                     if published:
                         backup.replace(note)
                         restore_required = False
                     raise
+        except TranscriptionCancelled:
+            self.store.update_recording(recording_id, review_status="cancelled", review_error="")
         except Exception as error:
             try:
-                self.store.update_recording(
-                    recording_id, review_status="failed", review_error=str(error)[:1000]
-                )
+                with self.lock:
+                    if self.store.get_recording(recording_id).review_status != "cancelled":
+                        self.store.update_recording(
+                            recording_id, review_status="failed", review_error=str(error)[:1000]
+                        )
             except KeyError:
                 pass
         finally:
             if run_id:
                 try:
                     current = self.store.get_recording(recording_id)
-                    with self.store._connect() as db:
+                    elapsed = time.monotonic() - started if started is not None else 0.0
+                    metrics = asdict(stats) if stats else {}
+                    metrics.update({
+                        "pipeline_version": 2,
+                        "provider_calls": current_trace()["provider_calls"],
+                        "llm_seconds": round(review_seconds or max(0, elapsed - current_trace()["waiting_seconds"] - saving_seconds), 3),
+                        "saving_seconds": round(saving_seconds, 3),
+                        "total_seconds": round(max(0, elapsed - max(stats.waiting_seconds if stats else 0, current_trace()["waiting_seconds"])), 3),
+                        "waiting_seconds": round(max(stats.waiting_seconds if stats else 0, current_trace()["waiting_seconds"]), 3),
+                        "segment_count": segment_count,
+                        "suggestion_count": suggestion_count,
+                        "stages": [
+                            {"name": "LLM 검수", "seconds": round(review_seconds or max(0, elapsed - current_trace()["waiting_seconds"] - saving_seconds), 3), "detail": f"{segment_count}개 발화 · 제안 {suggestion_count}개"},
+                            {"name": "검수 결과 반영", "seconds": round(saving_seconds, 3), "detail": "Markdown과 수정 제안 저장"},
+                        ],
+                    })
+                    with self.store.transaction() as db:
                         db.execute(
                             "UPDATE review_runs SET status=?,completed_at=?,metrics=?,error=? WHERE id=?",
                             (
                                 current.review_status,
                                 self.store.now(),
-                                json.dumps(asdict(stats) if stats else {}),
+                                json.dumps(metrics, ensure_ascii=False),
                                 current.review_error,
                                 run_id,
                             ),
@@ -223,11 +301,15 @@ class ReviewQueue:
                     except OSError as error:
                         print(f"검수 임시 파일 정리 실패: {error}")
             with self.lock:
+                self.cancellations.pop(recording_id, None)
                 self.pending.discard(recording_id)
 
     def _run(self):
-        while True:
-            item = self.queue.get()
+        while not self._stopping.is_set():
+            try:
+                item = self.queue.get(timeout=.25)
+            except queue.Empty:
+                continue
             try:
                 self.process(item)
             except Exception as error:

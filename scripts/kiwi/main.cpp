@@ -4,6 +4,10 @@
 #include <stdexcept>
 using nlohmann::json;
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--help") {
+        std::cout << "Usage: kiwi-helper MODEL_DIRECTORY (JSON text array on stdin)\n";
+        return 0;
+    }
     if (argc != 2) return 2;
     kiwi_h kiwi = nullptr;
     kiwi_res_h result = nullptr;

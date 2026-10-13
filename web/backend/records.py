@@ -80,6 +80,8 @@ class Recording:
     note_snapshot_json: str = "{}"
     review_status: str = "none"
     review_error: str = ""
+    last_operation: str = "transcribe"
+    ai_settings_json: str = "{}"
 
     def public(self) -> dict[str, Any]:
         data = asdict(self)
@@ -88,6 +90,7 @@ class Recording:
             "corrections",
             "output_dir",
             "source_path",
+            "ai_settings_json",
             "transcript_text",
             "segments_json",
             "breaks_json",

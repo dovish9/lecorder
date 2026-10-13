@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 import threading
 from contextlib import contextmanager
 from collections.abc import Callable
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .config import DEFAULT_LLM_MODEL, DB_FILE, LANGUAGES, EnvironmentStore, flag, text
+from .ai_settings import AISettings
 from .records import ActiveSettings, Course, Recording, StoredSuggestion
 
 
@@ -27,7 +29,20 @@ class LectureStore:
         self.environment = environment or EnvironmentStore()
         self._lock = threading.RLock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.ai = AISettings(self.path.parent / 'ai-settings.json')
+        if self.path.exists():
+            with self._connect() as db:
+                cols = {r[1] for r in db.execute('PRAGMA table_info(recordings)')}
+                if cols and 'ai_settings_json' not in cols:
+                    backup = self.path.with_name(self.path.stem + '-before-ai-providers.db')
+                    if not backup.exists():
+                        with sqlite3.connect(backup) as target:
+                            db.backup(target)
         self._setup()
+
+    def transaction(self):
+        """One commit/rollback boundary; callers never own the DB connection."""
+        return self._connect()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -135,6 +150,8 @@ class LectureStore:
             for name, definition in {
                 "note_revision_id": "TEXT", "note_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
                 "review_status": "TEXT NOT NULL DEFAULT 'none'", "review_error": "TEXT NOT NULL DEFAULT ''",
+                "last_operation": "TEXT NOT NULL DEFAULT 'transcribe'",
+                "ai_settings_json": "TEXT NOT NULL DEFAULT '{}'",
             }.items():
                 if name not in columns:
                     db.execute(f"ALTER TABLE recordings ADD COLUMN {name} {definition}")
@@ -333,17 +350,18 @@ class LectureStore:
                          source_kind: str, extension: str, source_path: str = "",
                          status: str = "queued") -> Recording:
         now = self.now()
+        ai = self.ai.snapshot()
         with self._lock, self._connect() as db:
             db.execute(
                 """INSERT INTO recordings(
                     id, course_id, course_name, title, source_kind, extension, status,
                     language, prompt, corrections, format_transcript, llm_enabled,
-                    llm_model, output_dir, source_path, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    llm_model, output_dir, source_path, created_at, ai_settings_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (recording_id, settings.course_id, settings.course_name, title, source_kind,
                  extension, status, settings.language, settings.prompt, settings.corrections,
-                 1, 1, settings.llm_model,
-                 settings.output_dir, source_path, now),
+                 1, 1, ai["llm"]["model"],
+                 settings.output_dir, source_path, now, json.dumps(ai)),
             )
         return self.get_recording(recording_id)
 
@@ -356,6 +374,7 @@ class LectureStore:
 
     def queue_retranscription(self, recording_id: str, source: Path, *, course_id=None, output_changes=None) -> Recording:
         """Snapshot the linked course's current settings for this new attempt."""
+        ai = self.ai.snapshot()
         with self._lock, self._connect() as db:
             row = db.execute("SELECT * FROM recordings WHERE id = ?", (recording_id,)).fetchone()
             if row is None:
@@ -366,7 +385,7 @@ class LectureStore:
             if course_id not in (None, 0) and course is None:
                 raise ValueError("강의를 찾지 못했습니다.")
             changes = dict(status="queued", source_path=str(source), error="", started_at="", completed_at="",
-                           llm_model=DEFAULT_LLM_MODEL)
+                           llm_model=ai["llm"]["model"], ai_settings_json=json.dumps(ai), last_operation="retranscribe")
             # Deleted courses retain the job's snapshot; never borrow the selected course.
             if course is not None:
                 changes.update(course_id=course["id"], course_name=course["name"])
@@ -387,6 +406,7 @@ class LectureStore:
             "processing_seconds", "transcript_text", "segments_json", "breaks_json",
             "quality_json", "error", "started_at", "completed_at",
             "note_revision_id", "note_snapshot_json", "review_status", "review_error", "llm_model", "llm_enabled", "format_transcript",
+            "last_operation", "ai_settings_json",
         }
         values = {key: value for key, value in changes.items() if key in allowed}
         if not values:
@@ -408,6 +428,38 @@ class LectureStore:
                 (max(1, min(int(limit), 100)),),
             ).fetchall()
         return [self._recording(row) for row in rows]
+
+    def total_processing_seconds(self, recording: Recording) -> float:
+        """Return the latest transcript plus its independent LLM review time.
+
+        Queue time deliberately never contributes.  Old runs without metrics use
+        their persisted start/end timestamps so their audit view remains useful.
+        """
+        try:
+            quality = json.loads(recording.quality_json or "{}")
+        except json.JSONDecodeError:
+            quality = {}
+        total = float(quality.get("total_seconds") or recording.processing_seconds or 0)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT started_at, completed_at, metrics FROM review_runs "
+                "WHERE recording_id=? AND started_at>=? AND completed_at<>'' "
+                "ORDER BY started_at DESC LIMIT 1",
+                (recording.id, recording.started_at),
+            ).fetchone()
+        if not row:
+            return total
+        try:
+            metrics = json.loads(row["metrics"] or "{}")
+        except json.JSONDecodeError:
+            metrics = {}
+        review_total = metrics.get("total_seconds")
+        if review_total is None:
+            try:
+                review_total = max(0.0, (datetime.fromisoformat(row["completed_at"]) - datetime.fromisoformat(row["started_at"])).total_seconds())
+            except (TypeError, ValueError):
+                review_total = 0.0
+        return total + float(review_total or 0)
 
     def recording_titles(self, output_dir: Path) -> set[str]:
         """Include unfinished jobs whose output files do not exist yet."""

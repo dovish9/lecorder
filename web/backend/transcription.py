@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import subprocess
-import threading
 from dataclasses import dataclass, field
 from typing import Any
 
 from .config import DEFAULT_LLM_MODEL
+from .processes import CancellationToken, TranscriptionCancelled
 
 
 SUPPORTED_MEDIA = frozenset({
@@ -30,6 +29,7 @@ class Options:
     use_llm: bool = True
     llm_model: str = DEFAULT_LLM_MODEL
     retry_low_confidence: bool = True
+    ai_settings: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -56,73 +56,9 @@ class ReviewStats:
     split_retries: int = 0
     prompt_tokens: int = 0
     output_tokens: int = 0
-
-
-class TranscriptionCancelled(RuntimeError):
-    """Raised when a user stops an active transcription job."""
-
-
-class CancellationToken:
-    """Coordinate cancellation with the currently running child process."""
-
-    def __init__(self) -> None:
-        self._event = threading.Event()
-        self._lock = threading.RLock()
-        self._process: subprocess.Popen[bytes] | None = None
-
-    @property
-    def cancelled(self) -> bool:
-        return self._event.is_set()
-
-    def cancel(self) -> None:
-        self._event.set()
-        with self._lock:
-            process = self._process
-            if process is not None and process.poll() is None:
-                process.terminate()
-
-    def check(self) -> None:
-        if self.cancelled:
-            raise TranscriptionCancelled("사용자가 전사 작업을 중단했습니다.")
-
-    def run(
-        self,
-        args: list[str],
-        *,
-        input_data: bytes | None = None,
-        stdout: int | None = subprocess.PIPE,
-        stderr: int | None = subprocess.PIPE,
-        timeout: float | None = None,
-    ) -> subprocess.CompletedProcess[bytes]:
-        self.check()
-        process = subprocess.Popen(
-            args,
-            stdin=subprocess.PIPE if input_data is not None else None,
-            stdout=stdout,
-            stderr=stderr,
-        )
-        with self._lock:
-            self._process = process
-            if self.cancelled and process.poll() is None:
-                process.terminate()
-        try:
-            try:
-                output, errors = process.communicate(input=input_data, timeout=timeout)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.communicate()
-                raise
-        finally:
-            with self._lock:
-                if self._process is process:
-                    self._process = None
-        self.check()
-        completed = subprocess.CompletedProcess(args, process.returncode, output, errors)
-        if process.returncode:
-            raise subprocess.CalledProcessError(
-                process.returncode, args, output=output, stderr=errors
-            )
-        return completed
+    waiting_seconds: float = 0.0
+    processing_seconds: float = 0.0
+    usage_available: bool = True
 
 
 @dataclass(frozen=True)
@@ -204,8 +140,8 @@ class Result:
         completed = self.llm_chunks - self.fallback_chunks
         edits = len(self.suggestions)
         if not self.fallback_chunks:
-            return f" · Qwen3 제안 {edits}개 검토 대기"
+            return f" · LLM 제안 {edits}개 검토 대기"
         return (
-            f" · Qwen3 {completed}/{self.llm_chunks}구간"
+            f" · LLM {completed}/{self.llm_chunks}구간"
             f" · 제안 {edits}개 검토 대기"
         )

@@ -7,7 +7,7 @@
   <meta name="color-scheme" content="light dark" />
   <title>Lecorder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230078ff%22/><path d=%22M8 34h8l4-17 7 31 7-41 7 33 5-18 5 12h6%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%224%22/></svg>" />
-<link rel="stylesheet" href="/static/dashboard.css?v=20260922-dock-badge-right" />
+<link rel="stylesheet" href="/static/dashboard.css?v=20261012-ai-providers" />
 <link rel="stylesheet" href="/static/notes.css?v=20260922-terminology" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 </head>
@@ -16,7 +16,7 @@
   <aside class="source-sidebar">
     <a class="identity" href="#/dashboard" aria-label="Lecorder 대시보드">
       <svg class="identity-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M3 19h5l3-10 4 19 4-25 4 20 3-11 3 7h4" /></svg>
-      <span><strong>Lecorder</strong><small>이 Mac의 전사 작업실</small></span>
+      <span><strong>Lecorder</strong><small>이 컴퓨터의 전사 작업실</small></span>
     </a>
     <nav class="source-nav" aria-label="주요 화면">
       <a class="source-item active" href="#/dashboard" data-view="dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span>대시보드</span></a>
@@ -36,7 +36,7 @@
     <header class="app-toolbar">
       <div class="toolbar-title"><h1 id="workspaceTitle">대시보드</h1><p id="workspaceDescription">녹음과 전사 작업의 현재 상태를 확인합니다.</p></div>
       <div class="toolbar-actions">
-        <div class="server-status has-tooltip" id="serverPill" tabindex="0" role="status" aria-live="polite" data-tooltip="Whisper와 Qwen3의 실제 연결 상태입니다."><i></i><span id="serverText">서버 확인 중</span></div>
+        <div class="server-status has-tooltip" id="serverPill" tabindex="0" role="status" aria-live="polite" data-tooltip="Whisper와 LLM의 실제 연결 상태입니다."><i></i><span id="serverText">서버 확인 중</span></div>
         <a class="toolbar-icon has-tooltip" id="guideButton" href="/guide" aria-label="사용 안내 열기" data-tooltip="사용 안내"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 3.75h7.5l3 3v13.5H6.75zM14.25 3.75v3h3M9.5 11h5M9.5 14.5h5"/></svg></a>
         <button class="toolbar-icon has-tooltip" id="systemButton" type="button" aria-label="시스템 경로 설정 열기" data-tooltip="시스템 경로 설정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.7 3.65h4.6l.55 2.23c.48.2.93.46 1.34.77l2.18-.67 2.3 3.99-1.65 1.56a7 7 0 0 1 0 1.54l1.65 1.56-2.3 3.99-2.18-.67c-.41.31-.86.57-1.34.77l-.55 2.23H9.7l-.55-2.23a7.2 7.2 0 0 1-1.34-.77l-2.18.67-2.3-3.99 1.65-1.56a7 7 0 0 1 0-1.54L3.33 9.97l2.3-3.99 2.18.67c.41-.31.86-.57 1.34-.77z"/><circle cx="12" cy="12.3" r="2.65"/></svg></button>
       </div>
@@ -46,12 +46,11 @@
       <section class="workspace-panel dashboard-workspace" data-view-panel="dashboard">
         <header class="dashboard-heading">
           <div><p id="dashboardDate"></p><h2>작업 현황</h2><span>진행 중인 전사와 확인할 결과를 한눈에 봅니다.</span></div>
-          <aside class="dashboard-course"><span>현재 강의</span><strong id="dashboardCourseName">강의 없음</strong><a id="dashboardCourseLink" href="#/courses">강의 설정</a></aside>
         </header>
         <div class="dashboard-grid">
-          <section class="dashboard-section dashboard-queue"><header><div><h3>진행 중</h3><p>녹음과 전사 대기열</p></div><a href="#/recordings">보관함에서 보기</a></header><div class="dashboard-list" id="dashboardQueue"></div></section>
-          <section class="dashboard-section"><header><div><h3>확인 필요</h3><p>오류와 검토할 수정 제안</p></div></header><div class="dashboard-list" id="dashboardAttention"></div></section>
-          <section class="dashboard-section"><header><div><h3>최근 완료</h3><p>최근 저장된 전사 결과</p></div></header><div class="dashboard-list" id="dashboardRecent"></div></section>
+          <section class="dashboard-section dashboard-queue"><header><div><h3>진행 중 <span class="dashboard-count" id="dashboardQueueCount">0</span></h3><p>녹음과 전사 대기열</p></div><a href="#/recordings">보관함에서 보기</a></header><div class="dashboard-list" id="dashboardQueue"></div></section>
+          <section class="dashboard-section dashboard-attention"><header><div><h3>확인 필요 <span class="dashboard-count" id="dashboardAttentionCount">0</span></h3><p>오류와 검토할 수정 제안</p></div></header><div class="dashboard-list" id="dashboardAttention"></div></section>
+          <section class="dashboard-section dashboard-recent"><header><div><h3>최근 완료</h3><p>최근 저장된 전사 결과</p></div></header><div class="dashboard-list" id="dashboardRecent"></div></section>
         </div>
       </section>
 
@@ -118,10 +117,40 @@
 </dialog>
 
 <dialog class="guide-dialog" id="guideDialog" aria-label="Lecorder 사용 안내"><div class="guide-frame"><iframe id="guideFrame" title="Lecorder 사용 안내" loading="lazy"></iframe><button class="guide-dialog-close" id="closeGuideButton" type="button" aria-label="사용 안내 닫기">×</button></div></dialog>
-<dialog class="system-dialog" id="systemDialog" aria-label="시스템 경로 설정"><form method="dialog" class="dialog-frame" id="systemForm"><header><h2>시스템 경로 설정</h2><button class="dialog-close" id="closeSystemButton" type="button" aria-label="설정 창 닫기">×</button></header><p>경로를 저장하면 Lecorder와 whisper.cpp를 다시 시작합니다.</p><label for="projectDir"><span>Lecorder 프로젝트</span><small id="projectCheck">확인 중</small></label><input id="projectDir" name="project_dir" type="text" autocomplete="off" /><p>Whisper: dependencies/whisper.cpp <small id="whisperCheck">확인 중</small></p><label for="outputDir"><span>오디오·Markdown 저장 폴더</span><small id="outputCheck">확인 중</small></label><input id="outputDir" name="output_dir" type="text" autocomplete="off" /><div class="dialog-actions"><p id="systemMessage" role="status"></p><button id="saveSystemButton" type="submit">경로 저장</button></div></form></dialog>
+<dialog class="system-dialog" id="systemDialog" aria-labelledby="systemDialogTitle">
+  <form method="dialog" class="system-settings" id="systemForm" autocomplete="off">
+    <header class="system-settings-header">
+      <div><h2 id="systemDialogTitle">시스템 설정</h2><p>저장 위치와 AI 연결을 관리합니다.</p></div>
+      <button class="dialog-close" id="closeSystemButton" type="button" aria-label="설정 창 닫기">×</button>
+    </header>
+    <nav class="system-settings-tabs" role="tablist" aria-label="설정 영역">
+      <button type="button" role="tab" data-ai-tab="paths" aria-selected="true">저장 위치</button>
+      <button type="button" role="tab" data-ai-tab="speech" aria-selected="false" tabindex="-1">음성 전사</button>
+      <button type="button" role="tab" data-ai-tab="llm" aria-selected="false" tabindex="-1">LLM</button>
+    </nav>
+    <div class="system-settings-body" id="pathSettingsPanel">
+      <section class="system-path-group" aria-labelledby="projectDirLabel">
+        <div class="system-path-heading"><label id="projectDirLabel" for="projectDir">Lecorder 프로젝트</label><small id="projectCheck">확인 중</small></div>
+        <textarea id="projectDir" name="lecorder-project-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="systemWhisperInfo"></textarea>
+        <div class="system-dependency" id="systemWhisperInfo"><span>Whisper <code>dependencies/whisper.cpp</code></span><small id="whisperCheck">확인 중</small></div>
+      </section>
+      <section class="system-path-group" aria-labelledby="outputDirLabel">
+        <div class="system-path-heading"><label id="outputDirLabel" for="outputDir">전사 결과 저장 폴더</label><small id="outputCheck">확인 중</small></div>
+        <textarea id="outputDir" name="lecorder-output-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="outputDirHint"></textarea>
+        <p id="outputDirHint">원본 오디오와 Markdown 결과를 이 폴더에 저장합니다.</p>
+      </section>
+    </div>
+    <div class="system-settings-body ai-settings-panel" id="aiSettingsPanel" hidden></div>
+    <footer class="system-settings-footer">
+      <p id="systemSaveHint">경로 저장 시 앱과 로컬 서버가 다시 시작됩니다.</p>
+      <p id="systemMessage" role="status"></p>
+      <div><button id="cancelSystemButton" type="button">취소</button><button id="saveSystemButton" type="submit">경로 저장</button></div>
+    </footer>
+  </form>
+</dialog>
 <dialog class="pipeline-dialog" id="pipelineDialog" aria-labelledby="pipelineDialogTitle"><section class="pipeline-dialog-frame"><header><div><h2 id="pipelineDialogTitle">작업 로그</h2><p id="pipelineDialogSubtitle"></p></div><button class="dialog-close" id="closePipelineButton" type="button" aria-label="작업 로그 닫기">×</button></header><div class="pipeline-dialog-body" id="pipelineDialogBody"></div></section></dialog>
 <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><h2 id="confirmTitle">확인</h2><p id="confirmMessage"></p><div><button id="confirmCancel" value="cancel">취소</button><button id="confirmAccept" class="danger" value="confirm">확인</button></div></form></dialog>
 <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
-<script type="module" src="/static/dashboard.js?v=20260923-validation"></script>
+<script type="module" src="/static/dashboard.js?v=20261012-pdf-images"></script>
 </body>
 </html>

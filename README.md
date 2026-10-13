@@ -1,82 +1,135 @@
 # Lecorder
 
-Apple Silicon Mac에서 음성을 보존하고 Whisper로 전사하는 로컬 강의 기록 도구입니다. 강의노트의 키워드는 음성 인식에, 출처가 있는 원문은 Qwen 검수에 사용합니다.
+브라우저에서 강의를 녹음하거나 미디어 파일을 가져와 원본 음성과 타임스탬프가 있는 Markdown을 저장하는 로컬 우선 도구입니다. 강의노트의 용어와 문맥을 전사·검수에 활용하고, 노트의 개요와 페이지별 해설을 생성합니다.
 
-## 설치
+현재 지원 환경은 **Apple Silicon macOS**입니다. Windows의 경로·실행 파일 탐색·Credential Manager·파일 탐색기 연결을 구현했지만, Windows 네이티브 도구 배포와 OCR 품질 검증, 실제 전체 전사는 후속 작업입니다. CI의 Windows 테스트는 이 범위를 대신 보증하지 않습니다.
 
-Homebrew와 Xcode Command Line Tools를 준비한 뒤 실행합니다.
+## 주요 기능
+
+- 녹음·일시정지·파일 업로드, 브라우저에 보관한 녹음 조각 복구
+- 강의와 강의노트 선택, 힌트 없이 전사하는 **선택 안 함**
+- 변환·전사 → 품질 확인 → LLM 검수 → 저장의 진행 상태와 상세 로그
+- 전사와 별도로 재실행 가능한 검수, 수정 제안의 승인·거절, 실행 중 중단
+- PDF·이미지 노트의 원문 추출, 용어집, 개요, 페이지별 해설과 원문 비교
+- 다시 전사 실패·중단 시 이전 결과 보존, 노트 재분석 시 페이지 이미지 재사용
+- 음성 전사와 LLM 각각의 제공자·모델·서버 설정, 작업별 설정 스냅샷
+
+LLM 검수는 강의 선택 여부와 무관하게 실행합니다. 수정 제안을 승인하면 해당 전사문과 Markdown에 반영되며, 모델 학습이나 다음 녹음의 자동 교정 규칙으로 저장하지 않습니다.
+
+## macOS 설치·실행
+
+Xcode Command Line Tools와 Homebrew가 필요합니다. 저장소를 복제한 디렉터리에서 실행하세요.
 
 ```bash
-bash scripts/setup.sh --pptx
-bash scripts/build-whisper.sh
-cp .env.example .env
+bash scripts/setup.sh --dry-run  # 설치 예정 내역만 확인
+bash scripts/setup.sh
+cp .env.example .env  # 새 설치에서만 실행; 기존 설정을 덮어쓰지 마세요.
 ```
 
-`--pptx`는 LibreOffice를 설치합니다. PDF·이미지만 사용한다면 생략할 수 있습니다. `.env`의 `LECORDER_OUTPUT_DIR`에는 출력 폴더를 지정하세요. Whisper 소스·모델은 `dependencies/whisper.cpp`, Vision 실행 파일은 `dependencies/vision/bin/vision-ocr`에 설치되며 별도의 Whisper 경로 설정은 필요 없습니다. iCloud 밖에 보관하려면 실제 `whisper.cpp`를 `~/Local Storage/whisper.cpp`로 옮기고 `dependencies/whisper.cpp`에 해당 폴더의 심볼릭 링크를 두어도 됩니다. 설치·실행 경로는 그대로 유지됩니다.
+설치는 다음 순서로 실행하며 `[1/5]`부터 `[5/5]`까지 진행 상황을 표시합니다.
+
+1. **필수 도구 확인:** macOS, Xcode Command Line Tools와 Homebrew를 확인합니다. 없으면 설치 방법을 안내하고 종료합니다.
+2. **Python·Homebrew 도구 준비:** pyenv가 있으면 설치된 Python 3.13 중 최신 패치 버전을 사용하고, 없으면 pyenv로 3.13을 추가 설치합니다. pyenv가 없으면 기존 `python3` 또는 `python`을 사용하고, Python 자체가 없을 때만 Homebrew의 최신 안정 버전 `python`을 설치합니다. CMake는 Homebrew에 없을 때 설치합니다. 기존 Git(Apple Git 포함)을 사용하며 pyenv 전역·로컬 버전 설정은 변경하지 않습니다.
+3. **Python 패키지 설치:** 선택한 Python에 `requirements.txt`를 설치·검사합니다. 기존 Python은 3.11 이상이어야 하며 패키지 호환성 검사 실패 시 중단합니다. Homebrew처럼 직접 설치가 제한된 Python은 `dependencies/python/site-packages`에 패키지를 설치합니다. 설치 성공 시 Python 경로를 기록하고 `start.command`가 같은 환경을 사용합니다.
+4. **네이티브 빌드:** 고정된 소스로 Whisper → llama.cpp → Kiwi helper → Vision helper를 빌드합니다. 이 단계에서는 모델을 내려받지 않습니다.
+5. **모델·데이터 준비:** Whisper large-v3·Silero VAD·토크나이저, LLM GGUF·이미지 projector, Kiwi 모델·사전을 내려받고 체크섬을 검증합니다. 필수 실행 파일·패키지·모델 검사까지 통과해야 설치 완료로 표시합니다. AI 서버는 시작하지 않습니다.
+
+모델 다운로드에는 상당한 디스크 공간과 시간이 필요합니다. 실패하면 원인을 해결하고 같은 명령을 다시 실행하세요. 기존 빌드 산출물과 검증된 모델을 재사용하며, 다운로드에 실패한 임시 파일은 제거합니다. 기존 모델의 체크섬이 다르면 임의로 덮어쓰지 않으므로 해당 파일을 별도로 보관하고 재시도하세요.
+
+`.env`의 `LECORDER_OUTPUT_DIR`을 결과 저장 폴더로 설정하고 실행합니다.
 
 ```bash
-ollama pull qwen3.5:9b
-ollama serve
 ./start.command
+# 기본 화면: http://127.0.0.1:5055
+python scripts/doctor.py
 ```
 
-Ollama가 이미 실행 중이면 다시 시작하지 않습니다. 모델 다운로드는 처음 한 번 필요하며 문서와 음성의 처리는 로컬에서 수행합니다. 필요한 도구를 확인하려면 `.venv/bin/python scripts/doctor.py`를 실행하세요. Whisper 소스 기준 버전과 서버 패치는 `scripts/whisper/`에 있습니다. 설치 스크립트는 다른 Whisper 체크아웃의 수정 사항을 덮어쓰지 않습니다.
+프로젝트와 결과 폴더는 화면 오른쪽 위 **시스템 설정 → 저장 위치**에서도 바꿀 수 있습니다. 경로 저장은 앱을 재시작합니다. AI 설정 저장은 다음 작업부터 적용됩니다.
 
-## 강의노트
+llama.cpp 소스와 모델은 기본 `~/Local Storage/llama.cpp`에 두고 `dependencies/llama.cpp`에서 심볼릭 링크로 연결합니다. Whisper도 동기화 폴더 밖에 보관하고 `dependencies/whisper.cpp`로 연결할 수 있습니다. 고정 소스 커밋·패치·모델 다운로드 명세는 `scripts/llama`, `scripts/whisper`, `scripts/kiwi`에 있습니다. 기존 수정이 있는 네이티브 체크아웃을 설치 스크립트가 임의로 덮어쓰지 않습니다.
 
-강의 화면에서 PDF·PPTX 한 개 또는 PNG·JPEG·HEIC 이미지 묶음을 등록합니다. 이미지는 등록 전에 순서를 변경할 수 있습니다. 원본 합계 100MB, 최대 500페이지를 지원합니다. PPTX는 슬라이드 본문만 PDF로 변환합니다.
+## 의존성
 
-원본을 먼저 보존하고 페이지별 내장 텍스트와 OCR을 저장합니다. 재분석 시 페이지 이미지는 노트의 `pages-v1` 폴더에서 공유하고, OCR·해설 결과만 새 버전으로 저장합니다. 이미지 렌더링 규격을 바꿀 때는 공유 폴더의 버전도 변경해야 합니다. 한국어 키워드는 소스 빌드한 Kiwi로 명사를 추출해 조사를 분리하고, 붙어 있는 복합 명사는 보존합니다. 키워드가 준비되면 학습 정리를 기다리지 않고 전사에 사용할 수 있습니다.
+| 구분 | 도구 | 역할 / 설치 방식 |
+|---|---|---|
+| 실행 환경 | Python 3.13 권장, 기존 환경 3.11 이상 | pyenv → 기존 Python → Homebrew 순서로 선택 |
+| 빌드 | Git, CMake, C++·Swift 컴파일러 | CMake는 Homebrew, Git은 기존 설치 재사용, 컴파일러는 Xcode CLT. 모델은 고정 URL·체크섬으로 별도 다운로드 |
+| 직접 빌드 | whisper.cpp, llama.cpp, Kiwi helper | 음성 전사, LLM, 한국어 명사·복합어 추출. `dependencies/`에서 사용 |
+| macOS 제공 | Vision·AppKit, Keychain, Finder | OCR, API 키 보관, 파일 위치 열기 |
+| Python 패키지 | Flask, requests, jsonschema | 웹 서버, HTTP, 구조화 응답 검증 |
+| Python 패키지 | keyring, tiktoken | OS 보안 저장소, tokenizer |
+| Python 패키지 | av | PyAV의 미디어 변환·구간 추출·침묵 탐지. 별도 FFmpeg CLI 불필요 |
+| Python 패키지 | pypdfium2, pdfplumber, Pillow, pillow-heif | PDF 렌더링·내장 텍스트/좌표 추출, 이미지·HEIC 처리 |
+| Python 패키지·번들 자산 | mini-racer, KaTeX | 서버의 JavaScript 엔진으로 수식 검증. 브라우저를 닫아도 실행 |
+| 개발 전용 | Node.js | 내장 테스트 러너로 프런트엔드 모듈 검증. 앱 실행에는 불필요 |
+| 선택 | Tesseract + kor/eng 데이터 | 명시적으로 선택할 때만 사용하는 OCR. 기본 Vision과 품질이 동일하다는 보장은 없음 |
 
-강의노트는 **개요 / 학습 정리 / 키워드 / 원문**으로 나뉩니다. 학습 정리는 왼쪽 페이지 이미지와 오른쪽 Markdown 설명을 함께 표시하고, 키워드 출처는 해당 학습 정리 페이지로 이동합니다. 원문 탭은 추출 결과를 확인하는 디버깅 화면입니다. 수식 렌더링과 문법 검증은 프로젝트에 포함된 KaTeX로 로컬 처리합니다. 검증에 필요한 Node.js는 Brewfile로 설치합니다.
+런타임 Python 패키지는 `requirements.txt`가 기준입니다. Ollama·Poppler·LibreOffice·curl은 앱 실행에 필요하지 않습니다. 설치 과정의 모델 다운로드는 Python에서 수행합니다. llama.cpp 기본 빌드는 별도 OpenSSL 라이브러리에 연결하지 않습니다.
 
-검수·문단 구분·강의노트 분석은 기본적으로 `OLLAMA_MODEL=qwen3.5:9b` 하나를 사용합니다. 신규 전사와 명시적인 재전사·검수 재시도부터 적용하며 과거 실행 기록은 보존합니다. `NOTE_VISION_MODEL`은 별도 모델이 필요할 때만 지정합니다.
+## AI와 개인정보
 
-학습 정리는 기본 `qwen3.5:9b` 비전 모델에 이미지와 추출 텍스트를 함께 전달합니다. 개요는 페이지별 설명을 작은 묶음으로 종합하며, 출처 번호는 모델 대신 코드가 연결합니다. 생성 후 JSON·수식·미완성 본문을 코드로 검사하고, 통과한 결과는 모델이 원자료와 의미를 대조합니다. 문제가 있으면 최대 한 번 재생성하며, 해결되지 않거나 검증하지 못한 결과는 이유와 함께 **확인 필요**로 보존합니다. 개요의 의미 검증은 입력한 페이지별 설명을 기준으로 합니다. 판독 불확실한 부분은 별도로 표시하며, 생성 설명은 원본을 대조할 수 있습니다. 추론 결과의 사실 정확성을 코드로 보증하는 것은 아닙니다. 분석 실패 시 원본·키워드·완료된 페이지 설명은 보존합니다. 이전 결과는 자동 덮어쓰지 않으며 **다시 분석**으로 새 버전을 생성합니다.
+| 영역 | 로컬 기본값 | 외부 연결 |
+|---|---|---|
+| 음성 전사 | whisper.cpp · large-v3 · `127.0.0.1:8080` | OpenAI `whisper-1` |
+| 검수·해설·개요·의미 검증 | llama.cpp · Qwen3.5-9B Q4_K_M + F16 projector · `127.0.0.1:8081` | OpenAI·Claude·Gemini |
 
-Kiwi는 `scripts/build-kiwi.sh`에서 고정된 소스 커밋과 모델을 내려받아 Homebrew CMake로 빌드합니다. Python Kiwi 패키지는 설치하지 않습니다. 소스·모델·실행 파일은 `dependencies/kiwi`, `dependencies/kiwi/build`, `dependencies/kiwi/bin/kiwi-helper`에 저장됩니다. [Kiwi 공식 소스와 Apache 2.0 라이선스](https://github.com/bab2min/Kiwi)를 사용하며, 빌드 스크립트에 기준 커밋을 기록했습니다.
+시스템 설정의 **음성 전사 / LLM**에서 제공자와 모델, 서버 URL, 필요한 키를 설정합니다. 로컬 자동 관리 모델은 파일 경로도 지정합니다. 사용자 지정 서버는 직접 실행해야 하며 앱이 시작·종료하지 않습니다. 연결 확인은 사용자 자료 대신 합성 입력을 사용합니다. 기본값 초기화는 해당 AI 영역만 복원하고 등록된 키를 삭제하지 않습니다.
 
-기본 OCR은 macOS Vision입니다. `LECORDER_OCR_ENGINE=tesseract`로 변경할 수 있습니다. 둘 다 한국어·영어를 사용합니다. Vision 헬퍼는 설치 스크립트에서 빌드합니다.
+- 로컬 자동 관리 서버는 요청 시 로드하고 연속 요청에서 재사용하며 기본 60초 유휴 후 해제합니다. 모델 전환 시 비활성 서버를 해제하며, 추론 조정기는 요청 경계에서 전사를 우선합니다.
+- 외부 전사에는 음성이, 외부 LLM에는 전사문과 선택한 노트의 텍스트·이미지가 전송됩니다. API 요금이 발생할 수 있습니다.
+- API 키는 macOS Keychain 또는 Windows Credential Manager에 저장합니다. 안전한 저장소가 없는 환경에서는 키 저장에 실패하며 평문 파일로 대체하지 않습니다. 조회 응답과 작업 기록에는 키 원문을 포함하지 않습니다.
+- 새 작업은 제공자·모델·URL·옵션을 고정합니다. 다시 전사·다시 검수·다시 분석은 요청 시점의 최신 설정을 사용합니다.
+- 인증·서버·모델 오류를 명시적으로 표시하고 다른 제공자로 자동 전환하지 않습니다. 일시적 요청 제한은 최대 1회 재시도합니다. 중단은 후속 요청과 결과 반영을 막지만 이미 접수된 외부 요청의 과금을 취소하지는 못합니다.
 
-## 전사와 검수
+## 자료와 품질 정책
 
-녹음은 노트 선택 창 없이 바로 시작합니다. 녹음 중 플로팅 컨트롤 위에서 같은 강의의 노트 하나 또는 **사용 안 함**을 선택하며, 일시정지 중에도 변경할 수 있습니다. 선택한 분석 버전은 서버에 즉시 저장되어 녹음 복구 시에도 유지됩니다. 기본값은 사용 안 함입니다. 파일 업로드와 보관함의 **다시 전사하기**에서는 선택 창에서 노트를 지정합니다. 재전사 창에는 기존 노트가 기본 선택됩니다. 실행에 고정된 설정과 노트 버전은 이후 변경 사항과 섞이지 않습니다.
+노트는 PDF 또는 PNG·JPEG·HEIC 이미지 묶음을 지원합니다(원본 합계 100MB, 최대 500페이지). PowerPoint는 PDF로 내보내서 등록하세요. pdfplumber의 내장 텍스트와 OCR을 대조하고 PDFium 렌더링 이미지를 LLM에 함께 전달합니다. 한국어 용어는 Kiwi로 조사를 분리하고 원문의 복합어를 보존합니다.
 
-- 기존 파일·작업과 이름이 겹치면 접수 시점부터 `(2)`, `(3)`을 붙입니다.
-- 원본 음성을 먼저 출력 폴더에 보존한 뒤 Whisper를 실행합니다.
-- 긴 음성은 약 120초 단위로 침묵 경계 또는 오버랩을 사용해 전사합니다.
-- 자동 힌트는 실제 Whisper tokenizer로 96토큰 이내에서 선별합니다. tokenizer가 없는 외부 서버는 힌트 없이 전사합니다.
-- 반복·VAD·저신뢰 재시도에는 힌트를 넣지 않습니다.
-- Whisper 결과와 Markdown을 먼저 저장하고 **전사 완료**로 표시합니다.
-- Qwen 검수는 독립 실행하며, 실패해도 전사 결과는 보존됩니다. **검수 다시 하기**로 검수만 재시도합니다.
-- 제안은 사용자가 승인해야 현재 Markdown에 반영됩니다. 미래 작업에 적용되는 확정 교정 규칙은 없습니다.
-- **다시 전사하기**는 노트를 다시 선택하고 같은 작업과 파일 경로에 결과를 교체합니다. 실패·중단 시 기존 결과는 유지합니다.
+수식·응답 형식 등의 코드 검증 후 의미 검증을 수행합니다. 오류가 있으면 최대 1회 재생성하고, 해결하지 못한 항목은 **확인 필요**로 남깁니다. 원문 추출과 LLM 모두 오류 가능성이 있으므로 해설과 수정 제안의 근거를 확인하세요. 사진·손글씨·분수·기호를 항상 완벽하게 인식한다고 보장하지 않습니다.
 
-Whisper는 전사할 때 로드하고 기본 60초 유휴 후 해제합니다. Whisper와 Qwen 추론은 공유 실행 조정기로 직렬화하며 요청 경계에서 전사를 우선합니다. CPU 문서 추출은 독립적입니다.
+| 위치 | 내용 |
+|---|---|
+| 결과 폴더 | 원본 미디어, 같은 이름의 Markdown |
+| `web/data/lecorder.db` | 강의·작업·노트 버전·실행 로그·제안 |
+| `web/data/recordings/` | 진행 중 업로드·녹음 조각과 복구 자료 |
+| `web/data/notes/` | 원본 노트, 공유 페이지 이미지, 분석 자료 |
+| `web/data/ai-settings.json` | 제공자와 모델 설정, 키 원문 없음 |
+| 브라우저 IndexedDB | 서버 전송 전 녹음 조각과 복구 세션 |
 
-## 저장·복구
+DB·원본·설정·결과를 구조 정리 목적으로 재처리하지 않습니다. DB를 백업할 때는 SQLite 백업 API를 사용하거나 앱을 정상 종료하고 관련 파일을 함께 보관하세요. `dependencies/`, `web/data/`, `memories/`, `.env`는 Git에서 제외됩니다.
 
-`web/data/`의 DB와 원본·분석 자료는 Git에서 제외됩니다. DB 마이그레이션 전 같은 디렉터리에 백업을 생성합니다. 기존 수동 힌트·확정 교정 열은 호환성을 위해 남지만 실행하거나 자동 키워드로 이관하지 않습니다.
+## 구조와 교체 지점
 
-노트의 재분석과 키워드 선택은 새 버전으로 저장합니다. 노트를 목록에서 제거해도 과거 작업이 사용한 자료는 남습니다. 앱 재시작 시 미완료 추출은 저장한 페이지부터 복구하고, 중단된 검수는 실패 상태로 표시해 사용자가 재시도할 수 있습니다.
+- `routes.py`의 `create_app`이 `Services`를 연결합니다. 앱 생성은 큐·모델을 시작하지 않습니다. 실행 호스트가 `services.start()` / `services.close()`를 호출합니다.
+- `platforms.py`: `HostPlatform`·`SecretStore`, macOS/Windows 실행 경로·환경·파일 탐색·보안 저장소.
+- `processes.py`: 취소 토큰과 Python 작업 프로세스. 미디어·PDF·수식·HTTP는 JSON 표준 입출력으로 요청합니다. `Services.create(..., worker=..., ocr=..., platform=...)`로 테스트/플랫폼 구현을 주입합니다.
+- `managed_runtime.py` / `ai_runtime.py`: 공통 모델 수명주기와 제공자별 실행 인자, 앱별 레지스트리. 앱 소유 프로세스만 정리합니다.
+- `speech_processing.py` / `speech_quality.py` / `review_engine.py`: 제공자 호출·구간 처리, 품질 보호, 검수. `engine.py`가 전체 전사를 조합합니다.
+- `recording_intake.py` / `pipeline.py` / `recording_output.py`: 접수·복구, 대기·실행, 결과 저장·롤백.
+- `note_repository.py` / `note_intake.py` / `note_extract.py` / `notes.py`: 노트 조회·선택, 접수, 추출, 분석 큐.
+- `*_http.py`, `note_routes.py`, `ai_routes.py`: 기능별 HTTP 경계. 기존 URL과 응답 계약 유지.
+- `web/static/dashboard/`: 상태·라우팅·강의·녹음·보관함·플레이어·업로드·대기열·알림·설정 모듈. `selectors.js`는 DOM 없이 상태를 계산하며 `dashboard.js`가 조립합니다.
+
+Windows 기반에서는 `.exe`와 CMake `Release` 위치, 공백·한글·백슬래시 경로, 예약 파일명을 처리합니다. Vision은 호출하지 않으며 명시적인 미지원 오류를 반환합니다. Windows OCR 구현, 네이티브 빌드·모델 설치·런처·배포 패키지는 별도 준비해야 합니다. Linux는 모델 없는 테스트 대상이며 기본 보안 저장소와 파일 탐색 기능은 제공하지 않습니다.
 
 ## 검증
 
 ```bash
-python3 -m unittest discover -s tests
-python3 scripts/doctor.py
-python3 scripts/evaluate_transcript.py verified-reference.txt result.json --output accuracy.json
-WHISPER_PORT=18080 python3 scripts/verify_transcription.py sample.wav --language en --report memories/verification.json
+python scripts/test.py all          # 모델 없이 전체 회귀
+python scripts/test.py unit         # 순수 규칙·경로·로그·상태
+python scripts/test.py integration  # 임시 SQLite·API·큐·롤백·수명주기 계약
+python scripts/test.py tools        # 실제 PDF·미디어·수식·HTTP 및 취소
+python scripts/test.py frontend     # Node 내장 러너, ES module 직접 import
+python scripts/doctor.py            # 설치 상태 읽기, 모델을 로드하지 않음
+python -m unittest tests.native.test_setup  # macOS 설치 순서·실패 처리, 격리된 도구 사용
+python scripts/verify_transcription.py sample.wav --language ko --llm --report memories/verification.json
+python scripts/verify_runtime.py sample.wav --report memories/runtime-verification.json
 ```
 
-실제 통합 검증은 운영 DB·서버와 다른 폴더·포트를 사용합니다. 새 Mac의 깨끗한 설치와 장시간 실제 마이크 녹음은 아직 검증하지 않았습니다. 로컬 개발 기록은 Git에서 제외한 `memories/status.md`에 보관합니다. 로컬 서버 주소는 기본 `http://127.0.0.1:5055`입니다.
+마지막 두 명령은 실제 모델을 사용하며 기본 포트 18080/18081과 임시 작업 폴더를 사용합니다. 필요한 도구·모델·표본이 없으면 실패합니다. `--speech-port`, `--llm-port`로 포트를 바꿀 수 있습니다. 실제 모델·OCR와 브라우저 검증은 CI의 모델 없는 검증과 구분합니다. 외부 제공자는 API 키 없이 계약만 테스트할 수 있으며 실사용 검증으로 간주하지 않습니다.
 
-정확도 비교 도구는 제공된 정답에 대한 WER/CER와 치환·삭제·삽입 수를 계산합니다. 다른 모델의 전사 결과를 정답으로 사용하지 마세요. 한국어 WER는 띄어쓰기의 영향을 받으므로 공백을 제외한 CER도 함께 확인하세요.
+`.github/workflows/tests.yml`은 macOS·Windows·Linux의 모델 없는 테스트를 실행합니다. 같은 실제 표본의 전후 시간을 비교하고, 정답 전사문이 있을 때만 `scripts/evaluate_transcript.py`로 WER/CER를 평가하세요. 모델의 이전 출력을 정답으로 삼지 않습니다. 개발·실험 결과는 Git 제외 `memories/status.md`에 요약하고 원본 샘플은 `memories/samples/`에 보존합니다.
 
-## 폴더 구조
+사용 흐름은 앱의 **사용 안내**(`/guide`)에 설명되어 있습니다.
 
-- `web/`: 앱 코드와 화면
-- `scripts/`: 설치·빌드·진단·수동 평가 도구
-- `tests/`: 자동 회귀 테스트
-- `dependencies/`: 로컬 도구·모델·빌드 캐시 (Git 제외)
-- `memories/`: 개발 요약·실험 근거·원본 샘플 (Git 제외)
+설치 미리보기(`--dry-run`)는 패키지 설치·빌드·다운로드를 실행하지 않습니다. 기존 모델은 파일 존재 여부만 표시하고, 실제 설치에서 체크섬을 검증합니다. 최종 검사는 네이티브 도구를 `--help`로 실행해 라이브러리 로딩 실패와 비정상 종료도 확인합니다. 서버 시작·모델 추론 검사는 포함하지 않습니다.

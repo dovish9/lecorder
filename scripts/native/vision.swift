@@ -1,6 +1,14 @@
 import Foundation
 import Vision
 import AppKit
+if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--help" {
+    print("Usage: vision-ocr IMAGE_PATH")
+    exit(0)
+}
+guard CommandLine.arguments.count == 2 else {
+    fputs("Usage: vision-ocr IMAGE_PATH\n", stderr)
+    exit(2)
+}
 let url = URL(fileURLWithPath: CommandLine.arguments[1])
 let request = VNRecognizeTextRequest()
 request.recognitionLevel = .accurate

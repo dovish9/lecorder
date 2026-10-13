@@ -53,7 +53,7 @@ def convert(path: str, title: str = "", language: str | None = None,
                  if stage == "repetition_fallback" else
                  "↻ VAD 음성 누락 확인 · 전체 음성으로 재전사 중"
                  if stage == "vad_fallback" else
-                 f"{'↻ 저신뢰 구간 재확인' if stage == 'retry' else '✨ [2/3] Qwen3 수정 제안 검수'} 중 ({index}/{total})")
+                 f"{'↻ 저신뢰 구간 재확인' if stage == 'retry' else '✨ [2/3] LLM 수정 제안 검수'} 중 ({index}/{total})")
             ),
         )
 

@@ -1,9 +1,5 @@
-brew "python@3.13"
+# setup.sh installs Python only when neither pyenv nor an existing Python is available.
+brew "python"
 brew "cmake"
-brew "ffmpeg"
-brew "poppler"
-brew "tesseract"
-brew "tesseract-lang"
-brew "ollama"
-brew "git-lfs"
-brew "node"
+# Optional OCR: brew install tesseract tesseract-lang
+# Node.js is optional for JavaScript development tests only.

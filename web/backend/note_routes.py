@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from hashlib import sha256
+import json
 from flask import Blueprint, jsonify, request, send_file
 
 
@@ -45,7 +46,7 @@ def note_routes(library, reviews):
     def page_image(note_id, number):
         note = library.get(note_id)
         revision = request.args.get("revision") or note["revision_id"]
-        if library._revision(revision)["note_id"] != note_id:
+        if library.revision(revision)["note_id"] != note_id:
             raise ValueError("잘못된 노트 버전입니다.")
         page = next((p for p in library.pages(revision) if p["number"] == number), None)
         if not page or not page.get("image"):
@@ -82,7 +83,7 @@ def note_routes(library, reviews):
     @routes.get("/api/recordings/<recording_id>/runs")
     def runs(recording_id):
         library.store.get_recording(recording_id)
-        with library.store._connect() as db:
+        with library.store.transaction() as db:
             rows = db.execute(
                 "SELECT * FROM transcription_runs WHERE recording_id=? ORDER BY started_at DESC",
                 (recording_id,),
@@ -91,13 +92,24 @@ def note_routes(library, reviews):
                 "SELECT * FROM review_runs WHERE recording_id=? ORDER BY started_at DESC",
                 (recording_id,),
             ).fetchall()
-        return jsonify(
-            runs=[dict(row) for row in rows], review_runs=[dict(row) for row in reviews]
-        )
+        def public_run(row):
+            value = dict(row)
+            for field in ("settings", "metrics"):
+                try:
+                    value[field] = json.loads(value[field] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    value[field] = {}
+            return value
+        return jsonify(runs=[public_run(row) for row in rows], review_runs=[public_run(row) for row in reviews])
 
     @routes.post("/api/recordings/<recording_id>/review")
     def review(recording_id):
         reviews.retry(recording_id)
         return jsonify(ok=True), 202
+
+    @routes.post("/api/recordings/<recording_id>/review/cancel")
+    def cancel_review(recording_id):
+        reviews.cancel(recording_id)
+        return jsonify(ok=True)
 
     return routes

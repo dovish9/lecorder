@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run actual Whisper on a sample, keeping source and application data untouched.
 
-Example: WHISPER_PORT=18080 python3 scripts/verify_transcription.py sample.mp4 --language en
+Example: python3 scripts/verify_transcription.py sample.mp4 --language en
 """
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from web.backend.engine import Transcriber
 from web.backend.transcription import CancellationToken, Options
-from web.backend.whisper_runtime import whisper_runtime
+from web.backend.services import Services
+from web.backend.ai_settings import defaults
 
 
 def main() -> None:
@@ -26,17 +27,24 @@ def main() -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("--language", choices=("ko", "en", "auto"), default="auto")
     parser.add_argument("--report", type=Path, help="Write timings, transcript and segments as JSON")
-    parser.add_argument("--llm", action="store_true", help="Also run the configured Qwen review")
+    parser.add_argument("--llm", action="store_true", help="Also run the local LLM review")
+    parser.add_argument("--speech-port", type=int, default=18080)
+    parser.add_argument("--llm-port", type=int, default=18081)
     args = parser.parse_args()
     if not args.source.is_file():
         parser.error(f"Audio file not found: {args.source}")
     started = time.monotonic()
-    try:
-        with tempfile.TemporaryDirectory(prefix="lecorder-verification-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="lecorder-verification-") as temporary:
+      services = Services.create(temporary)
+      config = defaults()
+      config["speech"]["base_url"] = f"http://127.0.0.1:{args.speech_port}"
+      config["llm"]["base_url"] = f"http://127.0.0.1:{args.llm_port}"
+      try:
+        with services.scope():
             source = Path(temporary) / ("source" + args.source.suffix)
             shutil.copy2(args.source, source)
             result = Transcriber().transcribe(
-                source, Options(language=args.language, use_llm=args.llm),
+                source, Options(language=args.language, use_llm=args.llm, ai_settings=config),
                 progress=lambda stage, index, total: print(f"{stage} {index}/{total}", flush=True),
                 cancellation=CancellationToken(),
             )
@@ -50,8 +58,8 @@ def main() -> None:
                 args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"Audio: {result.duration_seconds:.1f}s; elapsed: {report['elapsed_seconds']:.1f}s")
             print(result.text)
-    finally:
-        whisper_runtime.close()
+      finally:
+        services.close()
 
 
 if __name__ == "__main__":

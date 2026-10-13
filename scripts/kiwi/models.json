@@ -1,0 +1,59 @@
+{
+  "revision": "280302af5ff9e739bec1ce56d6df5f9436ac41d4",
+  "files": [
+    {
+      "path": "models/cong/base/combiningRule.txt",
+      "sha256": "4f78771daa3dd8a52aa0b5c8824396578ece8e8bbaa11cf3add82721b046bc15",
+      "size": 3611,
+      "url": "https://raw.githubusercontent.com/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/combiningRule.txt"
+    },
+    {
+      "path": "models/cong/base/cong.mdl",
+      "sha256": "5f64105e45f04e5313f41c0ff1db5fe629780c8076c4a6fd3b1b2cf78c2cc934",
+      "size": 75854705,
+      "url": "https://media.githubusercontent.com/media/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/cong.mdl"
+    },
+    {
+      "path": "models/cong/base/default.dict",
+      "sha256": "d4293e44b2588d0c3aabbce607a0f41ad3534abd31b34139847b127254e01549",
+      "size": 3090954,
+      "url": "https://raw.githubusercontent.com/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/default.dict"
+    },
+    {
+      "path": "models/cong/base/dialect.dict",
+      "sha256": "bb6f0ab37dbfcc0fd33dc679121218d24725ae438f31bb362f9b24703e93cda2",
+      "size": 644,
+      "url": "https://raw.githubusercontent.com/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/dialect.dict"
+    },
+    {
+      "path": "models/cong/base/extract.mdl",
+      "sha256": "a0c92ffc051e43ae497845cdb8d4c8b9e2f359893cb55c67279c76d1d531ee17",
+      "size": 17370,
+      "url": "https://media.githubusercontent.com/media/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/extract.mdl"
+    },
+    {
+      "path": "models/cong/base/multi.dict",
+      "sha256": "e9eff7712d163b214c750333a5d388ab77b50ec386ae55b360babcd24c0c3195",
+      "size": 12064440,
+      "url": "https://raw.githubusercontent.com/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/multi.dict"
+    },
+    {
+      "path": "models/cong/base/nounchr.mdl",
+      "sha256": "4b687e36836dd60dcb7addcfcf369ac082b339bab76549574ac1ce2b7ccd6836",
+      "size": 9734234,
+      "url": "https://media.githubusercontent.com/media/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/nounchr.mdl"
+    },
+    {
+      "path": "models/cong/base/sj.morph",
+      "sha256": "d0af27b3863799cc2058f66c8058cb2bc0d16e8ae0daaf42c7739b4e375523d7",
+      "size": 8462892,
+      "url": "https://media.githubusercontent.com/media/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/sj.morph"
+    },
+    {
+      "path": "models/cong/base/typo.dict",
+      "sha256": "aa15e48fcd32886441fc1ff9719a3109d3192e91d4b67efbd64260610d68322d",
+      "size": 395,
+      "url": "https://raw.githubusercontent.com/bab2min/Kiwi/280302af5ff9e739bec1ce56d6df5f9436ac41d4/models/cong/base/typo.dict"
+    }
+  ]
+}

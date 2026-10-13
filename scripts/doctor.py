@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from web.backend.config import EnvironmentStore, WHISPER_URL, OLLAMA_URL, NOTE_VISION_MODEL, DEFAULT_LLM_MODEL
+from web.backend.config import EnvironmentStore, WHISPER_URL
+from web.backend.platforms import host
 import requests
 
 
@@ -17,51 +18,37 @@ def checks():
     output = {
         name: shutil.which(name)
         for name in (
-            "node",
-            "ffmpeg",
-            "pdftotext",
-            "pdftoppm",
-            "pdfinfo",
             "tesseract",
-            "ollama",
-            "soffice",
         )
     }
-    if not output["soffice"]:
-        office = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
-        output["soffice"] = str(office) if office.is_file() else None
+    output["capabilities"] = host.capabilities()
     output["vision"] = (
         str(root / "dependencies/vision/bin/vision-ocr")
         if (root / "dependencies/vision/bin/vision-ocr").is_file()
         else None
     )
     output["kiwi"] = {
-        "helper": (root / "dependencies/kiwi/bin/kiwi-helper").is_file(),
+        "helper": host.executable(root / "dependencies/kiwi/bin", "kiwi-helper").is_file(),
         "model": (root / "dependencies/kiwi/models/cong/base/cong.mdl").is_file(),
     }
     output["python"] = {
-        name: bool(importlib.util.find_spec(name)) for name in ("flask", "requests")
+        name: bool(importlib.util.find_spec(name)) for name in ("flask", "requests", "keyring", "jsonschema", "tiktoken", "av", "pypdfium2", "PIL", "pillow_heif", "py_mini_racer", "pdfplumber")
     }
     if output["tesseract"]:
         result = subprocess.run(
-            [output["tesseract"], "--list-langs"], capture_output=True, text=True
+            [output["tesseract"], "--list-langs"], capture_output=True, text=True, encoding="utf-8", timeout=10, **host.process_options()
         )
         output["ocr_languages"] = {
             language: language in result.stdout.splitlines()
             for language in ("kor", "eng")
         }
-    try:
-        response = requests.get(OLLAMA_URL.rsplit("/", 1)[0] + "/tags", timeout=2)
-        response.raise_for_status()
-        installed = {m["name"] for m in response.json().get("models", [])}
-        output["note_vision"] = {"model": NOTE_VISION_MODEL, "installed": NOTE_VISION_MODEL in installed}
-        output["review_model"] = {"model": DEFAULT_LLM_MODEL, "installed": DEFAULT_LLM_MODEL in installed}
-    except (requests.RequestException, ValueError, KeyError):
-        output["note_vision"] = {"model": NOTE_VISION_MODEL, "installed": None, "status": "Ollama unavailable"}
-        output["review_model"] = {"model": DEFAULT_LLM_MODEL, "installed": None}
+    from web.backend.ai_settings import settings
+    from web.backend.ai_providers import provider_status
+    output["ai"] = {area: provider_status(area) for area in ('speech', 'llm')}
+    output["llama_revision"] = (root / 'scripts/llama/revision').read_text().strip()
     home = Path(EnvironmentStore().get().whisper_cpp_dir)
     output["whisper"] = {
-        name: (home / path).is_file()
+        name: (host.executable(home / "build/bin", "whisper-server") if name == "server" else home / path).is_file()
         for name, path in {
             "server": "build/bin/whisper-server",
             "model": "models/ggml-large-v3.bin",

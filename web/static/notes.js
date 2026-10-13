@@ -120,7 +120,7 @@ export async function showCourseNotes(courseId) {
         list.append(
           node(
             "p",
-            "PDF, 사진 또는 PowerPoint 자료를 추가하세요.",
+            "PDF 또는 사진을 추가하세요.",
             "note-muted",
           ),
         );
@@ -151,7 +151,7 @@ function upload(courseId) {
   const input = node("input");
   input.type = "file";
   input.multiple = true;
-  input.accept = ".pdf,.pptx,.png,.jpg,.jpeg,.heic";
+  input.accept = ".pdf,.png,.jpg,.jpeg,.heic";
   input.setAttribute("aria-label", "강의노트 파일");
   const list = node("ol", null, "note-file-order");
   const status = node("p");
@@ -183,7 +183,7 @@ function upload(courseId) {
   };
   d.append(
     title,
-    node("p", "PDF/PPTX 한 개 또는 이미지 여러 장 · 합계 100MB, 최대 500쪽"),
+    node("p", "PDF 한 개 또는 이미지 여러 장 · 합계 100MB, 최대 500쪽"),
     input,
     list,
     status,
@@ -229,7 +229,8 @@ export async function openNote(id) {
     fingerprint = "",
     etag = "",
     excluded = new Set(),
-    dirty = false;
+    dirty = false,
+    zoom = 1;
   for (const name of ["개요", "페이지별 해설", "용어집", "원문"])
     tabs.append(
       button(name, () => {
@@ -253,11 +254,99 @@ export async function openNote(id) {
       await showCourseNotes(activeCourse);
     }),
   );
+  function setCurrent(name) {
+    current = name;
+    render();
+  }
+  function pageIssue(page) {
+    const detail = page.detail || page.analysis;
+    return page.needs_review || detail?.validation?.status === "needs_review" || detail?.uncertainties?.length;
+  }
+  function pageNavigation(pages) {
+    const index = pages.findIndex((page) => page.number === pageNumber);
+    const bar = node("div", null, "note-pagebar");
+    const previous = button("‹", () => navigatePage(pages[Math.max(0, index - 1)]?.number));
+    previous.setAttribute("aria-label", "이전 페이지");
+    previous.disabled = index <= 0;
+    const picker = node("details", null, "note-page-picker");
+    const summary = node("summary", `${pageNumber}쪽`);
+    summary.setAttribute("aria-label", "현재 페이지 선택");
+    const choices = node("div", null, "note-page-options");
+    choices.setAttribute("role", "listbox");
+    pages.forEach((page) => {
+      const choice = button(`${page.number}쪽${pageIssue(page) ? " · 확인 필요" : ""}`, () => {
+        picker.open = false;
+        navigatePage(page.number);
+      });
+      choice.setAttribute("role", "option");
+      choice.setAttribute("aria-selected", String(page.number === pageNumber));
+      choices.append(choice);
+    });
+    picker.append(summary, choices);
+    const next = button("›", () => navigatePage(pages[Math.min(pages.length - 1, index + 1)]?.number));
+    next.setAttribute("aria-label", "다음 페이지");
+    next.disabled = index < 0 || index === pages.length - 1;
+    const zoomOut = button("−", () => { zoom = Math.max(.5, zoom - .25); render(); });
+    zoomOut.setAttribute("aria-label", "축소");
+    const reset = button("100%", () => { zoom = 1; render(); });
+    const zoomIn = button("+", () => { zoom = Math.min(2.5, zoom + .25); render(); });
+    zoomIn.setAttribute("aria-label", "확대");
+    bar.append(previous, picker, next, node("span", `전체 ${pages.length}쪽`, "note-muted"), node("span", null, "note-pagebar-spacer"), zoomOut, reset, zoomIn);
+    return bar;
+  }
+  function pageWorkspace(note, pages) {
+    const page = pages.find((item) => item.number === pageNumber) || pages[0];
+    if (!page) return node("p", "페이지를 추출하고 있습니다.", "note-muted");
+    const workspace = node("div", null, "note-workspace");
+    const left = node("section", null, "note-page-panel");
+    left.append(pageNavigation(pages));
+    const viewport = node("div", null, "note-page-viewport");
+    const image = node("img");
+    image.alt = `${page.number}쪽 원문`;
+    image.style.width = `${zoom * 100}%`;
+    if (page.image) image.src = `/api/notes/${id}/pages/${page.number}/image?revision=${note.revision_id}`;
+    viewport.addEventListener("wheel", (event) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoom = Math.max(.5, Math.min(2.5, zoom + (event.deltaY < 0 ? .1 : -.1)));
+      image.style.width = `${zoom * 100}%`;
+    }, {passive: false});
+    viewport.append(image); left.append(viewport);
+    const right = node("section", null, "note-explanation-panel");
+    const rightHead = node("header", null, "note-explanation-head");
+    const title = node("div");
+    title.append(node("h3", current === "원문" ? "추출 원문" : `${page.number}쪽 해설`));
+    if (pageIssue(page)) title.append(node("span", "확인 필요", "note-needs-review"));
+    const pageActions = node("div", null, "note-toolbar");
+    if (current === "페이지별 해설") {
+      pageActions.append(button("강의노트 다시 분석", async () => { await api(`/api/notes/${id}/reanalyze`, {method:"POST"}); await refresh(); }));
+      pageActions.append(button("상세 해설 요청", async () => { await api(`/api/notes/${id}/pages/${page.number}/explain`, {method:"POST"}); fingerprint = ""; await refresh(); }));
+    }
+    rightHead.append(title, pageActions); right.append(rightHead);
+    const content = node("div", null, current === "원문" ? "note-extracted note-panel-content" : "note-study note-panel-content");
+    if (current === "원문") {
+      content.append(node("p", "OCR·내장 텍스트 추출 결과입니다. 원문 페이지와 비교해 확인하세요.", "note-muted"), node("pre", page.text || page.error || "추출한 텍스트가 없습니다."));
+    } else {
+      const explanation = page.detail || page.analysis;
+      if (explanation?.source_excerpt) content.append(node("p", "이전 방식의 원문 발췌입니다. 다시 분석하면 이미지 근거 해설을 생성합니다.", "note-muted"));
+      else if (explanation) content.append(markdown(explanation.markdown || [explanation.summary, ...(explanation.points || []).map((item) => `- ${item}`)].join("\n\n")));
+      else content.append(node("p", "이 페이지의 학습 정리를 준비하고 있습니다.", "note-muted"));
+      if (explanation?.uncertainties?.length || page.analysis_error) {
+        const warning = node("div", null, "note-error"); warning.append(node("strong", "확인 필요"));
+        [...(explanation?.uncertainties || []), page.analysis_error].filter(Boolean).forEach((item) => warning.append(node("p", item)));
+        content.append(warning);
+      }
+      if (page.detail_status && page.detail_status !== "completed") content.append(node("p", `상세 해설: ${statuses[page.detail_status] || page.detail_status}`, "note-muted"));
+    }
+    right.append(content); workspace.append(left, right); return workspace;
+  }
   function render() {
     if (!data) return;
     body.replaceChildren();
     footer.replaceChildren();
     footer.hidden = current !== "용어집";
+    body.classList.toggle("note-body-workspace", ["페이지별 해설", "원문"].includes(current));
+    actions.hidden = ["페이지별 해설", "원문"].includes(current);
     tabs
       .querySelectorAll("button")
       .forEach((b) =>
@@ -290,25 +379,17 @@ export async function openNote(id) {
           check.checked ? excluded.delete(k.id) : excluded.add(k.id);
         };
         label.append(check, node("span", k.term));
-        const row = node("div");
+        const row = node("div", null, "note-keyword-card");
         row.append(label);
         const sources = [...new Set(k.pages)];
-        const jump = node("select");
-        jump.setAttribute("aria-label", `${k.term} 출처 페이지`);
-        const placeholder = new Option(`출처 ${sources.length}곳`, "");
-        placeholder.disabled = true;
-        placeholder.selected = true;
-        jump.append(placeholder);
-        for (const page of sources) jump.append(new Option(`${page}쪽`, page));
-        jump.onchange = () => {
-          showPage(Number(jump.value));
-        };
-        row.append(jump);
+        const sourceList = node("div", null, "note-source-chips");
+        sources.forEach((page) => sourceList.append(button(`${page}쪽`, () => showPage(page))));
+        row.append(sourceList);
         list.append(row);
       }
       body.append(list);
       footer.append(
-        node("span", "선택한 키워드를 전사 인식에 활용합니다.", "note-muted"),
+        node("span", `${note.keywords.length - excluded.size}개 선택 · 전사 인식에 활용합니다.`, "note-muted"),
         button("키워드 선택 저장", async () => {
           await api(`/api/notes/${id}/keywords`, {
             method: "PATCH",
@@ -339,10 +420,6 @@ export async function openNote(id) {
               "note-error",
             ),
           );
-        const sources = node("div", null, "note-sources");
-        for (const number of group.pages || [])
-          sources.append(button(`${number}쪽`, () => showPage(number)));
-        overview.append(sources);
       }
       if (!note.overview?.length)
         overview.append(
@@ -355,130 +432,7 @@ export async function openNote(id) {
       body.append(overview);
       return;
     }
-    const navigation = node("select");
-    navigation.setAttribute("aria-label", "강의노트 페이지");
-    for (const p of pages)
-      navigation.append(
-        new Option(
-          `${p.number}쪽${(p.needs_review || (p.detail || p.analysis)?.validation?.status === "needs_review") ? " · 확인 필요" : ""}`,
-          p.number,
-        ),
-      );
-    navigation.value = String(pageNumber);
-    navigation.onchange = () => {
-      navigatePage(Number(navigation.value));
-    };
-    const pagebar = node("div", null, "note-pagebar");
-    const previous = button("‹", () => {
-      navigatePage(
-        pages[Math.max(0, pages.findIndex((p) => p.number === pageNumber) - 1)]
-          ?.number,
-      );
-    });
-    previous.setAttribute("aria-label", "이전 페이지");
-    previous.disabled = pages[0]?.number === pageNumber;
-    const next = button("›", () => {
-      navigatePage(
-        pages[
-          Math.min(
-            pages.length - 1,
-            pages.findIndex((p) => p.number === pageNumber) + 1,
-          )
-        ]?.number,
-      );
-    });
-    next.setAttribute("aria-label", "다음 페이지");
-    next.disabled = pages.at(-1)?.number === pageNumber;
-    pagebar.append(
-      previous,
-      navigation,
-      next,
-      node("span", `전체 ${pages.length}쪽`, "note-muted"),
-    );
-    body.append(pagebar);
-    const page = pages.find((p) => p.number === pageNumber) || pages[0];
-    if (!page) {
-      body.append(node("p", "페이지를 추출하고 있습니다."));
-      return;
-    }
-    const split = node("div", null, "note-split");
-    const image = node("img");
-    image.alt = `${page.number}쪽 원문`;
-    if (page.image)
-      image.src = `/api/notes/${id}/pages/${page.number}/image?revision=${note.revision_id}`;
-    const text = node(
-      "div",
-      null,
-      current === "원문" ? "note-extracted" : "note-study",
-    );
-    if (current === "원문") {
-      text.append(
-        node("h3", "추출한 원문 · 디버깅"),
-        node("pre", page.text || page.error || "추출한 텍스트가 없습니다."),
-      );
-      if (page.needs_review)
-        text.append(
-          node(
-            "p",
-            "OCR 또는 수식 판독 확인이 필요한 페이지입니다.",
-            "note-muted",
-          ),
-        );
-    } else {
-      const explanation = page.detail || page.analysis;
-      if (explanation?.source_excerpt)
-        text.append(
-          node(
-            "p",
-            "이전 원문 발췌 결과입니다. 다시 분석하면 이미지 기반 학습 정리를 생성합니다.",
-            "note-muted",
-          ),
-        );
-      else if (explanation) {
-        text.append(
-          markdown(
-            explanation.markdown ||
-              [
-                explanation.summary,
-                ...(explanation.points || []).map((x) => `- ${x}`),
-              ].join("\n\n"),
-          ),
-        );
-        if (explanation.uncertainties?.length) {
-          const warning = node("div", null, "note-error");
-          warning.append(node("strong", "확인 필요"));
-          for (const item of explanation.uncertainties)
-            warning.append(node("p", item));
-          text.append(warning);
-        }
-      } else
-        text.append(
-          node("p", "이 페이지의 학습 정리를 준비하고 있습니다.", "note-muted"),
-        );
-      if (page.analysis_error)
-        text.append(node("p", page.analysis_error, "note-error"));
-      text.append(
-        button("상세 해설 요청", async () => {
-          await api(`/api/notes/${id}/pages/${page.number}/explain`, {
-            method: "POST",
-          });
-          fingerprint = "";
-          await refresh();
-        }),
-      );
-      if (page.detail_status && page.detail_status !== "completed")
-        text.append(
-          node(
-            "p",
-            `상세 해설: ${statuses[page.detail_status] || page.detail_status}`,
-            "note-muted",
-          ),
-        );
-    }
-    const preview = node("div", null, "note-preview");
-    preview.append(image);
-    split.append(preview, text);
-    body.append(split);
+    body.append(pageWorkspace(note, pages));
   }
   function showPage(number) {
     current = "페이지별 해설";
@@ -488,8 +442,7 @@ export async function openNote(id) {
     if (!number) return;
     pageNumber = number;
     render();
-    body.scrollTop = 0;
-    body.querySelector("select")?.focus({ preventScroll: true });
+    body.querySelector(".note-page-picker summary")?.focus({ preventScroll: true });
   }
   async function refresh() {
     if (!d.open) return;

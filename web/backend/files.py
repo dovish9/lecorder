@@ -8,7 +8,10 @@ from .transcription import SUPPORTED_MEDIA
 
 def safe_name(value: str) -> str:
     value = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "-", value.strip())
-    return re.sub(r"\s+", " ", value).strip(" .")[:160]
+    value = re.sub(r"\s+", " ", value).strip(" .")[:160].rstrip(" .")
+    if re.fullmatch(r"(?i)(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])", value.split(".", 1)[0]):
+        value = "_" + value
+    return value
 
 
 class OutputFiles:

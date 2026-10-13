@@ -1,12 +1,12 @@
 """Deterministic validation; unavailable validators never count as a pass."""
 import json
 import re
-import shutil
+from .transcription import CancellationToken
 import subprocess
-from pathlib import Path
+from .processes import worker
 
 
-def code_issues(result):
+def code_issues(result, cancellation=None):
     text = result['markdown']
     issues = []
     if re.search(r'(?:다음|아래|다음과 같|다음과 같은)\s*[:：]?\s*$', text):
@@ -20,14 +20,9 @@ def code_issues(result):
                 break
     if re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', text):
         issues.append('본문에 잘못된 제어 문자가 있습니다.')
-    node = shutil.which('node') or next((str(p) for p in (Path('/opt/homebrew/bin/node'), Path('/usr/local/bin/node')) if p.is_file()), None)
-    if not node:
-        issues.append('수식 검증기를 실행할 Node.js가 없어 검증하지 못했습니다.')
-    else:
-        try:
-            checked = subprocess.run([node, str(Path(__file__).resolve().parents[2] / 'scripts/check-note-math.mjs')],
-                                     input=json.dumps(text), text=True, capture_output=True, timeout=10, check=True)
-            issues.extend(json.loads(checked.stdout))
-        except (OSError, subprocess.SubprocessError, ValueError):
-            issues.append('수식 검증기 실행에 실패했습니다.')
+    token = cancellation or CancellationToken()
+    try:
+        issues.extend(worker.call("math", text, cancellation=token, timeout=10))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        issues.append('수식 검증기 실행에 실패했습니다.')
     return issues
