@@ -65,8 +65,8 @@ export function createCourses(context) {
       const summary = document.createElement("summary");
       summary.textContent = "⋯";
       summary.setAttribute("aria-label", `${course.name} 메뉴`);
-      const actions = document.createElement("div");
-      actions.className = "course-actions";
+      const menuActions = document.createElement("div");
+      menuActions.className = "course-actions";
       const edit = document.createElement("button");
       edit.type = "button";
       edit.className = "course-action";
@@ -81,8 +81,8 @@ export function createCourses(context) {
       remove.title = `${course.name} 삭제`;
       remove.setAttribute("aria-label", `${course.name} 강의 삭제`);
       remove.addEventListener("click", () => deleteCourseById(course.id));
-      actions.append(edit, remove);
-      menu.append(summary, actions);
+      menuActions.append(edit, remove);
+      menu.append(summary, menuActions);
       entry.append(button, menu);
       ui.courseList.append(entry);
     }

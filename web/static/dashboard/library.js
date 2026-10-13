@@ -1,6 +1,6 @@
-import {showRecordingNote} from "../notes.js";
+import {showRecordingNote, openNote} from "../notes.js";
 import {requestJson} from "./api.js";
-import {libraryAlertCounts, visibleStorageItems, storageFileUrl, fileName, storageCoverage, recordingCategory, sortLibraryEntries, libraryRoute, libraryState, shortDate, workTimeText, hasPipelineLog} from "./selectors.js";
+import {libraryAlertCounts, visibleStorageItems, storageFileUrl, fileName, storageCoverage, recordingCategory, sortLibraryEntries, libraryRoute, libraryState, shortDate, workTimeText, durationText, hasPipelineLog} from "./selectors.js";
 import {markdownDisclosureSummary} from "./dom_helpers.js";
 
 export function createLibrary(context) {
@@ -489,6 +489,35 @@ export function createLibrary(context) {
     return link;
   }
 
+  function dashboardNoteRow(note) {
+    const link = document.createElement("a");
+    link.className = "dashboard-row";
+    link.href = "#/courses";
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      void openNote(note.note_id).catch((error) => actions.showToast(error.message, "error"));
+    });
+    const copy = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = note.title;
+    const meta = document.createElement("small");
+    const pages = Number(note.page_count) || 0;
+    const completed = note.stage === "extracting" ? note.extracted_pages : note.analyzed_pages;
+    const stage = {extracting: "원문 추출", study: "해설 생성", detail: `${note.number}쪽 상세 해설`}[note.stage] || "분석 준비";
+    meta.textContent = `${note.course_name || "강의노트"} · ${stage}${pages ? ` · ${completed || 0}/${pages}쪽` : ""}`;
+    copy.append(title, meta);
+    const state = document.createElement("span");
+    state.textContent = note.status === "queued" ? "대기" : "분석 중";
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6");
+    icon.append(path);
+    link.append(icon, copy, state);
+    return link;
+  }
+
   function renderDashboard() {
     ui.dashboardDate.textContent = new Intl.DateTimeFormat("ko-KR", {year: "numeric", month: "long", day: "numeric", weekday: "long"}).format(new Date());
     const entries = deriveLibraryEntries();
@@ -500,10 +529,19 @@ export function createLibrary(context) {
         const priority = (entry) => entry.recording?.status === "failed" ? 0 : entry.recording?.status === "recoverable" ? 1 : entry.category === "review" ? 2 : 3;
         return priority(left) - priority(right);
       });
-    const recent = sortLibraryEntries(
-      entries.filter((entry) => entry.category === "completed"), "date-desc"
-    ).slice(0, 5);
-    $("#dashboardQueueCount").textContent = active.length;
+    const noteJobs = (app.noteJobs || []).filter((note) => ["processing", "queued"].includes(note.status));
+    const today = new Date();
+    const completedToday = entries.filter((entry) => {
+      if (entry.category !== "completed") return false;
+      const value = new Date(entry.recording?.completed_at || entry.timestamp);
+      return !Number.isNaN(value.getTime()) && value.toDateString() === today.toDateString();
+    });
+    const processingSeconds = completedToday.reduce((sum, entry) => sum + Number(entry.recording?.total_processing_seconds || entry.recording?.processing_seconds || 0), 0);
+    ui.dashboardCompletedCount.textContent = String(completedToday.length);
+    ui.dashboardWorkTime.textContent = processingSeconds ? durationText(processingSeconds) : "—";
+    ui.dashboardAttentionMetric.textContent = String(attention.length);
+    ui.dashboardAttentionMore.textContent = attention.length > 4 ? `검토함 ${attention.length}개 모두 보기` : "검토함 열기";
+    $("#dashboardQueueCount").textContent = active.length + noteJobs.length;
     $("#dashboardAttentionCount").textContent = attention.length;
     const fill = (container, items, emptyText) => {
       container.replaceChildren();
@@ -512,9 +550,18 @@ export function createLibrary(context) {
       }
       items.forEach((entry) => container.append(dashboardRow(entry, libraryState(entry))));
     };
-    fill(ui.dashboardQueue, active, app.courses.length ? "진행 중인 작업이 없습니다. 하단 도구에서 녹음하거나 파일을 가져올 수 있습니다." : "강의를 추가하면 하단 도구에서 녹음을 시작할 수 있습니다.");
-    fill(ui.dashboardAttention, attention, "확인이 필요한 항목이 없습니다.");
-    fill(ui.dashboardRecent, recent, "완성된 녹음이 아직 없습니다.");
+    ui.dashboardQueue.replaceChildren();
+    const activeItems = [...active, ...noteJobs];
+    if (!activeItems.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = app.courses.length ? "진행 중인 작업이 없습니다. 하단 도구에서 녹음하거나 파일을 가져올 수 있습니다." : "강의를 추가하면 하단 도구에서 녹음을 시작할 수 있습니다.";
+      ui.dashboardQueue.append(empty);
+    } else {
+      active.forEach((entry) => ui.dashboardQueue.append(dashboardRow(entry, libraryState(entry))));
+      noteJobs.forEach((note) => ui.dashboardQueue.append(dashboardNoteRow(note)));
+    }
+    fill(ui.dashboardAttention, attention.slice(0, 4), "확인이 필요한 항목이 없습니다.");
   }
 
   listen(ui.librarySearch, "input", renderLibrary);

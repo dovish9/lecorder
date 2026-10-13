@@ -35,7 +35,7 @@ export function createShell(context) {
     if (invoker?.isConnected) invoker.focus({preventScroll: true});
   });
   listen(document, "click", (event) => {
-    $$(".detail-menu[open]").forEach((menu) => {
+    $$(".detail-menu[open], .course-menu[open]").forEach((menu) => {
       if (!menu.contains(event.target)) menu.removeAttribute("open");
     });
     if (!$("#dockNotePicker").contains(event.target)) $("#dockNotePicker").removeAttribute("open");
