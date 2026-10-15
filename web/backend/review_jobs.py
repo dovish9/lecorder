@@ -274,6 +274,7 @@ class ReviewQueue:
                     metrics.update({
                         "pipeline_version": 2,
                         "provider_calls": current_trace()["provider_calls"],
+                        "ai_control_events": current_trace().get("ai_control_events", []),
                         "llm_seconds": round(review_seconds or max(0, elapsed - current_trace()["waiting_seconds"] - saving_seconds), 3),
                         "saving_seconds": round(saving_seconds, 3),
                         "total_seconds": round(max(0, elapsed - max(stats.waiting_seconds if stats else 0, current_trace()["waiting_seconds"])), 3),

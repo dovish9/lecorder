@@ -58,7 +58,11 @@ def generate(messages, schema, **kwargs):
     started = time.monotonic()
     event = {'provider': config['provider'], 'model': config['model'], 'status': 'failed'}
     try:
-        result = _generate(messages, schema, **kwargs)
+        from .ai_control import run
+        parent = kwargs.get('cancellation')
+        result = run(lambda token: _generate(messages, schema, **{**kwargs, 'cancellation': token}), parent, kind='llm')
+        result['waiting_seconds'] = max(0, trace['waiting_seconds'] - waiting)
+        result['seconds'] = max(0, time.monotonic() - started - result['waiting_seconds'])
         event.update(status='completed', input_tokens=result['input_tokens'], output_tokens=result['output_tokens'])
         return result
     except TranscriptionCancelled:
@@ -187,11 +191,14 @@ def check_connection(area, config, key=None):
         return {k: response[k] for k in ('model', 'provider', 'seconds')}
     if config['provider'] == 'whisper_cpp':
         key = configured_settings().credentials.get(config) if key is None else key
-        with inference.lease(speech=True, local=config.get('managed', False)), runtime_for(config).session():
-            result = request_json(config['base_url'] + '/health', method='GET',
-                                  headers={'Authorization': 'Bearer ' + key} if key else None)
-            if result.get('status') != 'ok':
-                raise ProviderError('전사 서버 상태 확인 실패')
+        from .ai_control import run
+        def probe(token):
+            with inference.lease(speech=True, local=config.get('managed', False), cancellation=token), runtime_for(config).session(token):
+                result = request_json(config['base_url'] + '/health', method='GET', cancellation=token,
+                                      headers={'Authorization': 'Bearer ' + key} if key else None)
+                if result.get('status') != 'ok':
+                    raise ProviderError('전사 서버 상태 확인 실패')
+        run(probe, kind='speech_check')
         return {'model': config['model'], 'provider': config['provider']}
     key = configured_settings().credentials.get(config) if key is None else key
     if not key:

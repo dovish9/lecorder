@@ -68,7 +68,7 @@ def create_app(
     services.workflow = workflow
     from .live_transcription import LiveTranscription
     from .live_http import register as register_live_http
-    services.live = LiveTranscription(workflow, services.platform)
+    services.live = LiveTranscription(workflow, services.platform, ai_control=services.ai_control)
     workflow.live = services.live
     app = Flask(__name__, static_folder=str(ROOT / "web" / "static"))
     register_live_http(app, services.live)
@@ -108,6 +108,7 @@ def create_app(
 
     def recording_payload(recording: Recording, counts: dict[str, int] | None = None) -> dict[str, Any]:
         data = recording.public()
+        data['waiting_for_ai'] = not services.ai_control.public()['enabled'] and (recording.status in {'queued', 'processing'} or recording.review_status in {'queued', 'processing'})
         data['has_live_draft'] = services.live.has_draft(recording)
         data["total_processing_seconds"] = lectures.total_processing_seconds(recording)
         active_live = services.live.active
@@ -167,7 +168,10 @@ def create_app(
             for item in note_jobs:
                 managed = item.pop('managed_llm', None)
                 item['waiting_for_live'] = managed is None or bool(managed)
+        for item in note_jobs:
+            item['waiting_for_ai'] = not services.ai_control.public()['enabled'] and item.get('stage') != 'extracting'
         return {
+            'ai_control': services.ai_control.public(),
             "live_recording_id": services.live.active.recording_id if services.live.active and not services.live.active.stopped.is_set() else None,
             "speech": speech_status,
             "llm": llm_status,
@@ -190,6 +194,22 @@ def create_app(
     @app.get("/api/status")
     def status():
         return jsonify(runtime_payload())
+
+    @app.post('/api/ai/control')
+    def ai_control():
+        value = request.get_json(silent=True)
+        if not isinstance(value, dict) or type(value.get('enabled')) is not bool:
+            return jsonify(error='enabled는 boolean이어야 합니다.'), 400
+        try:
+            services.ai_control.set_enabled(value['enabled'])
+            if not value['enabled']:
+                def unload():
+                    for runtime in services.runtimes.runtimes():
+                        runtime.release_idle()
+                services.ai_control.clean_up(unload)
+            return jsonify(ai_control=services.ai_control.public())
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
 
     @app.get("/api/bootstrap")
     def bootstrap():

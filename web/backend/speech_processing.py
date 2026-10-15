@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .media import request as media_request
 from .inference import inference
+from .execution_metrics import current_trace
 from .ai_runtime import runtime_for
 import tempfile
 import time
@@ -147,9 +148,11 @@ class SpeechProcessing:
         if options.language != 'auto':
             fields['language'] = options.language
         started = time.monotonic()
-        body = request_json(api_url(config['base_url'], '/audio/transcriptions'),
+        wait_before = current_trace()['waiting_seconds']
+        from .ai_control import run
+        body = run(lambda token: request_json(api_url(config['base_url'], '/audio/transcriptions'),
                             headers={'Authorization': 'Bearer ' + key}, multipart=fields,
-                            cancellation=cancellation, timeout=1200)
+                            cancellation=token, timeout=1200), cancellation, kind='speech')
         if not isinstance(body.get('segments'), list) or (body.get('text', '').strip() and not body['segments']):
             raise ValueError('전사 API가 구간 타임스탬프를 반환하지 않았습니다.')
         for segment in body['segments']:
@@ -161,7 +164,7 @@ class SpeechProcessing:
             item.get('avg_logprob'), item.get('no_speech_prob'), False,
         ) for i, item in enumerate(item for item in body['segments'] if str(item.get('text') or '').strip()))
         result = replace(result, segments=segments)
-        return replace(result, whisper_primary_seconds=time.monotonic()-started,
+        return replace(result, whisper_primary_seconds=max(0, time.monotonic()-started-(current_trace()['waiting_seconds']-wait_before)),
                        settings={'provider': 'openai', 'model': config['model'], 'quality_retry': 'unsupported'})
 
 
@@ -202,20 +205,23 @@ class SpeechProcessing:
 
         def request_with(request_data: dict[str, str]) -> tuple[WhisperResult, float]:
             request_started = time.monotonic()
+            wait_before = current_trace()['waiting_seconds']
             config = current('speech')
             from .ai_settings import configured_settings
             key = configured_settings().credentials.get(config) if not config.get('managed') else ''
-            with inference.lease(speech=True, cancellation=cancellation,
-                                 local=config.get('managed', False)), runtime_for(config).session(cancellation):
-                request_started = time.monotonic()
-                payload = request_json(
-                    config['base_url'] + '/inference',
-                    headers={'Authorization': 'Bearer ' + key} if key else {},
-                    multipart={'file': wav, **request_data}, cancellation=cancellation, timeout=14400,
-                )
+            from .ai_control import run
+            def request_once(token):
+                with inference.lease(speech=True, cancellation=token,
+                                     local=config.get('managed', False)), runtime_for(config).session(token):
+                    return request_json(
+                        config['base_url'] + '/inference',
+                        headers={'Authorization': 'Bearer ' + key} if key else {},
+                        multipart={'file': wav, **request_data}, cancellation=token, timeout=14400,
+                    )
+            payload = run(request_once, cancellation, kind='speech')
             if cancellation:
                 cancellation.check()
-            return cls._whisper_result(payload), time.monotonic() - request_started
+            return cls._whisper_result(payload), max(0, time.monotonic() - request_started - (current_trace()['waiting_seconds']-wait_before))
 
         result, primary_seconds = request_with(data)
         repetition_detected, repetition_ratio = cls._repetition_profile(result.segments)

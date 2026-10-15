@@ -8,7 +8,7 @@ from pathlib import Path
 import requests
 from .ai_settings import current
 from .ai_providers import generate
-from .execution_metrics import collect
+from .execution_metrics import collect, current_trace
 from .note_validation import code_issues
 from .transcription import TranscriptionCancelled
 
@@ -135,6 +135,7 @@ def _generate(*args, **kwargs):
         calls = trace['provider_calls']
         result['metrics'].update({
             'provider_calls': calls,
+            'ai_control_events': trace.get('ai_control_events', []),
             'waiting_seconds': trace['waiting_seconds'],
             'processing_seconds': max(0, time.monotonic() - started - trace['waiting_seconds']),
             'usage_available': all(c.get('input_tokens') is not None and c.get('output_tokens') is not None for c in calls),
@@ -147,6 +148,7 @@ def _generate(*args, **kwargs):
 def _generate_impl(system, source, cancellation, image=None, detailed=False, *, parser=parse_response):
     # The total generation budget is two, including malformed/truncated responses.
     started = time.monotonic()
+    wait_before = current_trace()['waiting_seconds']
     result = None
     issues = []
     history = []
@@ -196,7 +198,7 @@ def _generate_impl(system, source, cancellation, image=None, detailed=False, *, 
                             "generation_attempts": len(history), "history": history}
     result['model'] = current('llm')['model']
     result['provider'] = current('llm')['provider']
-    metrics["validation_inclusive_seconds"] = round(time.monotonic() - started, 3)
+    metrics["validation_inclusive_seconds"] = round(max(0, time.monotonic() - started - (current_trace()["waiting_seconds"] - wait_before)), 3)
     result['metrics'] = metrics
     return result
 

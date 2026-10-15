@@ -134,6 +134,13 @@ export function createActivity(context) {
         list.append(line);
       }
       if (run.error) list.append(Object.assign(document.createElement("p"), {className: "pipeline-error", textContent: run.error}));
+      for (const event of metrics.ai_control_events || []) {
+        if (event.status === 'completed') continue;
+        const line = document.createElement('div'); line.className = 'pipeline-stage';
+        const label = {paused:'AI 요청 일시정지 · 재요청 예정', resumed:'AI 처리 재개', paused_wait:'AI 재개 대기 종료', failed:'AI 요청 종료'}[event.status] || event.status;
+        line.append(Object.assign(document.createElement('span'), {textContent:label}), Object.assign(document.createElement('strong'), {textContent:stageTime(event.waiting_seconds ?? event.seconds)}), Object.assign(document.createElement('small'), {textContent:event.waiting_seconds != null ? '대기 시간 · 총 처리 시간 제외' : '취소 전 실제 처리 시간'}));
+        list.append(line);
+      }
       block.append(list);
       const settings = run.settings || {};
       const ai = settings.ai_settings?.[isReview ? 'llm' : 'speech'];
@@ -168,9 +175,12 @@ export function createActivity(context) {
     const queued = jobs
       .filter((item) => item.status === "queued")
       .sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
-    ui.queueSummary.textContent = active.length
-      ? `${active.length}개 처리 중${queued.length ? ` · ${queued.length}개 대기` : ""}`
-      : queued.length ? `${queued.length}개 대기` : "비어 있음";
+    const pausedCount = active.filter(item => item.waiting_for_ai).length;
+    const runningCount = active.length - pausedCount;
+    const waitingCount = queued.length + pausedCount;
+    ui.queueSummary.textContent = runningCount
+      ? `${runningCount}개 처리 중${waitingCount ? ` · ${waitingCount}개 대기` : ""}`
+      : waitingCount ? `${waitingCount}개 대기` : "비어 있음";
     ui.queueList.replaceChildren();
     const items = [...active, ...queued];
     if (!items.length) {
@@ -205,11 +215,15 @@ export function createActivity(context) {
         ? `${recording.course_name || "강의노트"} · ${noteStage}${progress}`
         : `${recording.course_name} · ${position}`;
       if (recording.waiting_for_live) meta.textContent = `${recording.course_name} · 실시간 전사 종료 대기`;
+      if (recording.waiting_for_ai) meta.textContent = `${recording.course_name || '강의노트'} · AI 처리 재개 대기`;
       copy.append(title, meta);
       const state = document.createElement("b");
       state.textContent = isQueued ? "대기" : isNote ? "분석 중" : recording.status === "cancelling" ? "중단 중" : "처리 중";
+      if (recording.waiting_for_ai) state.textContent = '일시정지';
       link.append(marker, copy, state);
-      if (isNote && recording.status === "processing") {
+      if (recording.waiting_for_ai) {
+        // The paused label replaces a pipeline that would otherwise imply active inference.
+      } else if (isNote && recording.status === "processing") {
         link.classList.add("has-pipeline");
         link.append(createNoteQueuePipeline(recording));
       } else if (!isNote && recording.reviewPending) {

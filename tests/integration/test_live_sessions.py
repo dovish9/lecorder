@@ -61,3 +61,23 @@ class LiveSessionContractTests(RecorderCase):
         self.assertEqual(Path(self.row.source_path).read_bytes(), b'original')
         priority, _, item = self.workflow._queue.get_nowait()
         self.assertEqual((priority,item), (0,self.row.id))
+
+    def test_global_control_preserves_original_and_rejects_old_pcm_generation(self):
+        control = self.services.ai_control
+        self.assertEqual(self.client.post('/api/ai/control', json={'enabled': 'no'}).status_code, 400)
+        self.assertIn(self.client.post('/api/ai/control', json={'enabled': False}).json['ai_control']['state'], ('paused', 'pausing'))
+        self.assertFalse(self.client.get('/api/status').json['ai_control']['enabled'])
+        self.workflow.save_chunk(self.row.id, 0, io.BytesIO(b'original while AI off'))
+        session = LiveSession(self.services.live, self.row.id, {})
+        session.push(0, 0, b'\0'*32000, 0)
+        session.set_ai_enabled(False)
+        session.push(1, 16000, b'\0'*32000, 0)
+        self.assertEqual(session.pending_samples, 0)
+        session.set_ai_enabled(True)
+        session.push(2, 32000, b'\0'*32000, 0)
+        self.assertEqual(session.pending_samples, 0)
+        session.push(3, 48000, b'\0'*32000, session.input_generation)
+        self.assertEqual(session.pending_samples, 16000)
+        self.assertTrue(any(g['reason']=='AI 처리 일시정지' for g in session.gaps))
+        self.assertEqual(self.client.post('/api/ai/control', json={'enabled': True}).status_code, 200)
+        self.assertEqual((self.workflow.folder(self.row.id)/'chunks/00000000.part').read_bytes(), b'original while AI off')

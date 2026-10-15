@@ -21,7 +21,8 @@ def register(app, service):
             session = service.get(recording_id, session_id)
             sequence = int(request.args.get('sequence', '-1'))
             start = int(request.args.get('start', '-1'))
-            session.push(sequence, start, request.get_data())
+            generation = request.args.get('generation')
+            session.push(sequence, start, request.get_data(), int(generation) if generation is not None else None)
             return jsonify(ok=True)
         except ValueError as error:
             return jsonify(error=str(error)), 409

@@ -3,14 +3,34 @@ import {statusCardActivity} from "./selectors.js";
 
 export function createStatus(context) {
   const {app, ui, $, $$, actions, listen, every} = context;
+  listen($('#aiControlSwitch'), 'change', async event => {
+    const toggle = event.target;
+    toggle.disabled = true;
+    $('#aiControlError').textContent = '';
+    try {
+      await requestJson('/api/ai/control', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({enabled: toggle.checked})});
+      await refreshStatus();
+    } catch (error) {
+      toggle.checked = app.aiControl?.enabled ?? true;
+      $('#aiControlError').textContent = error.message;
+    } finally { toggle.disabled = false; }
+  });
   const VIEW_STORAGE_KEY = "lecorder-view";
   function renderStatus(data) {
     actions.detectCompletionNotifications(data);
+    const control = data.ai_control || {enabled: true, state: 'enabled', generation: 0};
+    if (!app.aiControl || control.generation >= app.aiControl.generation) app.aiControl = control;
+    const toggle = $('#aiControlSwitch');
+    if (toggle) {
+      toggle.checked = app.aiControl.enabled;
+      $('#aiControlLabel').textContent = {enabled: 'AI 처리 켜짐', pausing: 'AI 처리 멈추는 중', paused: 'AI 처리 일시정지'}[app.aiControl.state];
+    }
     const speech = data.speech || {}, llm = data.llm || {};
     const missing = !speech.ready || !llm.ready;
     const loading = speech.state === 'loading' || llm.state === 'loading';
     ui.serverPill.className = 'server-status has-tooltip ' + (missing || loading ? 'warning' : 'ready');
     ui.serverText.textContent = missing ? 'AI 연결 확인 필요' : loading ? '로컬 모델 로드 중' : '음성 전사 · LLM 준비됨';
+    if (!app.aiControl.enabled) { ui.serverText.textContent = app.aiControl.state === 'pausing' ? 'AI 처리 멈추는 중' : 'AI 처리 일시정지'; ui.serverPill.className = 'server-status has-tooltip warning'; }
     app.job = data.job || {};
     app.noteJobs = data.note_jobs || [];
     app.liveRecordingId = data.live_recording_id;
@@ -19,6 +39,10 @@ export function createStatus(context) {
     ui.progressKicker.textContent = activity.label;
     ui.progressTitle.textContent = activity.title;
     ui.progressMessage.textContent = activity.message;
+    if (!app.aiControl.enabled && [...(data.recordings || []), ...app.noteJobs].some(item => item.waiting_for_ai)) {
+      ui.progressKicker.textContent = 'AI 처리 일시정지';
+      ui.progressMessage.textContent = 'AI 처리 재개 대기';
+    }
     renderSuggestions(app.job.suggestions || []);
     actions.renderRecordings(data.recordings || []);
   }

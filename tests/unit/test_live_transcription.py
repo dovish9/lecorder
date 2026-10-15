@@ -95,7 +95,9 @@ class LiveTests(unittest.TestCase):
         s = self.session(); c.reserve(s.id)
         runtime.release_idle.side_effect = RuntimeError('cleanup')
         with patch('web.backend.live_transcription.inference', c), patch('web.backend.live_transcription.runtime_for', return_value=runtime):
-            with self.assertRaises(RuntimeError): s.run()
+            s.run()
+        self.assertEqual(s.state, 'failed')
+        self.assertEqual(s.error, 'cleanup')
         self.assertFalse(c.reserved); self.assertTrue(s.stopped.is_set())
 
     def test_silence_is_not_sent_to_whisper(self):

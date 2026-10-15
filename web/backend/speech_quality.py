@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from .media import request as media_request
+from .execution_metrics import current_trace
 import subprocess
 import time
 from pathlib import Path
@@ -198,12 +199,13 @@ class SpeechQuality:
         output = list(result.segments)
         shift = 0
         started = time.monotonic()
+        wait_before = current_trace()['waiting_seconds']
         attempted = 0
         accepted = 0
         for group_number, (first, last) in enumerate(groups, 1):
             if cancellation:
                 cancellation.check()
-            if group_number > 1 and time.monotonic() - started >= max_seconds:
+            if group_number > 1 and time.monotonic() - started - (current_trace()['waiting_seconds']-wait_before) >= max_seconds:
                 break
             if progress:
                 progress("retry", group_number, len(groups))
@@ -289,7 +291,7 @@ class SpeechQuality:
             low_confidence_segments=low_confidence_segments,
             retry_attempted_groups=attempted,
             retry_accepted_groups=accepted,
-            retry_processing_seconds=time.monotonic() - started,
+            retry_processing_seconds=max(0, time.monotonic() - started - (current_trace()['waiting_seconds']-wait_before)),
             vad_fallback=result.vad_fallback,
             repetition_detected=result.repetition_detected,
             repetition_ratio=result.repetition_ratio,

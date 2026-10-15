@@ -86,3 +86,38 @@ class HttpTransportTests(unittest.TestCase):
         self.assertLess(time.monotonic()-started,3)
         self.assertIsInstance(errors[0],TranscriptionCancelled)
         self.assertEqual(token._processes,set())
+
+    def test_ai_pause_retries_same_external_request_with_fresh_token(self):
+        from web.backend.ai_control import AIControl
+        from web.backend.execution_metrics import collect
+        control=AIControl(); self.addCleanup(control.close)
+        result=[]; errors=[]; tokens=[]; traces=[]
+        def operation(token):
+            tokens.append(token)
+            return request_json(self.url+'/slow', {'text':'synthetic'}, cancellation=token)
+        def invoke():
+            try:
+                with collect() as metrics:
+                    result.append(control.run(operation, CancellationToken(), kind='external'))
+                traces.append(metrics)
+            except Exception as error: errors.append(error)
+        thread=threading.Thread(target=invoke); thread.start()
+        try:
+            self.assertTrue(self.server.received.wait(5))
+            control.set_enabled(False)
+            deadline=time.monotonic()+3
+            while control.public()['state']!='paused' and time.monotonic()<deadline: time.sleep(.02)
+            self.assertEqual(control.public()['state'],'paused')
+            self.assertEqual(tokens[0]._processes,set())
+            self.server.release.set()
+            time.sleep(.1)
+            self.assertEqual(result,[])
+            control.set_enabled(True); thread.join(5)
+            self.assertFalse(thread.is_alive()); self.assertEqual(errors,[])
+            self.assertEqual(result,[{'ok':True}])
+            self.assertEqual(len(tokens),2); self.assertIsNot(tokens[0],tokens[1])
+            self.assertEqual(self.server.requests[0][2],self.server.requests[1][2])
+            self.assertGreater(traces[0]['waiting_seconds'],.09)
+            self.assertTrue(any(e['status']=='paused' for e in traces[0]['ai_control_events']))
+        finally:
+            control.close(); self.server.release.set(); thread.join(5)

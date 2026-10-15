@@ -1,7 +1,7 @@
 """Application-scoped infrastructure, also inherited by background workers."""
 from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 
@@ -10,6 +10,7 @@ from .processes import PythonWorker, Worker
 from .ai_runtime import RuntimeRegistry
 from .ai_settings import AISettings, Credentials
 from .ocr import OCR, NativeOCR
+from .ai_control import AIControl
 
 _current = ContextVar("lecorder_services", default=None)
 
@@ -21,6 +22,7 @@ class Services:
     runtimes: RuntimeRegistry
     ai: AISettings
     ocr: OCR
+    ai_control: AIControl = field(default_factory=AIControl)
     workflow: object = None
     live: object = None
 
@@ -46,6 +48,7 @@ class Services:
                 self.workflow.start()
 
     def close(self):
+        self.ai_control.close()
         if self.live:
             self.live.close()
         if self.workflow:

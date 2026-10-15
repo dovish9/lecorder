@@ -141,6 +141,7 @@ export function libraryRoute(entry) {
 }
 
 export function libraryState(entry) {
+  if (entry.recording?.waiting_for_ai) return "AI 처리 재개 대기";
   if (entry.recording && pendingReview(entry.recording)) return entry.recording.review_status === "queued" ? "검수 대기" : "검수 중";
   if (entry.recording?.review_status === "failed") return "검수 실패";
   const {hasAudio, hasMarkdown} = storageCoverage(entry.storage);

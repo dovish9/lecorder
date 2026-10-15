@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import wave
+from contextlib import nullcontext
 from collections import deque
 from pathlib import Path
 
@@ -97,7 +98,11 @@ class LiveSession:
         self.folder = service.folder(recording_id)
         self.folder.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Condition(threading.RLock())
-        self.token = CancellationToken()
+        self.lifetime = CancellationToken()
+        self.token = self.lifetime
+        self.input_generation = 0
+        self.ai_paused = False
+        self.resume_gap = False
         self.state, self.error = 'preparing', ''
         self.segments, self.gaps = [], []
         self.events = []
@@ -129,7 +134,7 @@ class LiveSession:
         with self.lock:
             return {'session_id': self.id, 'recording_id': self.recording_id,
                     'state': self.state, 'error': self.error, 'model': 'large-v3-turbo',
-                    'paused': self.paused,
+                    'paused': self.paused, 'ai_paused': self.ai_paused, 'input_generation': self.input_generation,
                     'segments': list(self.segments), 'gaps': list(self.gaps), 'version': self.version,
                     'hint_warning': self.options.recognition_hint_warning if self.options else ''}
 
@@ -142,7 +147,7 @@ class LiveSession:
             self.version += 1
         self.event('gap', start=start/RATE, end=end/RATE, reason=reason)
 
-    def push(self, sequence, start, pcm):
+    def push(self, sequence, start, pcm, generation=None):
         if type(sequence) is not int or type(start) is not int or sequence < 0 or start < 0:
             raise ValueError('잘못된 실시간 음성 순번입니다.')
         if not pcm or len(pcm) % 2 or len(pcm) > RATE * 2 * 2:
@@ -151,12 +156,15 @@ class LiveSession:
             if not self.accepting:
                 raise ValueError('실시간 음성을 받을 수 없는 세션입니다.')
             self.last_seen = time.monotonic()
+            if self.ai_paused or (generation is not None and generation != self.input_generation):
+                return
             if sequence <= self.sequence:
                 return
             if start < self.next_sample:
                 raise ValueError('실시간 음성 샘플 위치가 겹칩니다.')
             if start > self.next_sample:
-                self.gap(self.next_sample, start, '실시간 시작 준비 구간' if self.sequence < 0 else '음성 전송 누락')
+                self.gap(self.next_sample, start, 'AI 처리 일시정지' if self.resume_gap else '실시간 시작 준비 구간' if self.sequence < 0 else '음성 전송 누락')
+            self.resume_gap = False
             self.sequence, self.next_sample = sequence, start + len(pcm)//2
             self.pending.append((start, pcm, time.monotonic()))
             self.pending_samples += len(pcm)//2
@@ -187,6 +195,7 @@ class LiveSession:
             self.accepting = False
             self.pending.clear()
             self.pending_samples = 0
+            self.lifetime.cancel()
             self.token.cancel()
             self.lock.notify_all()
 
@@ -230,7 +239,9 @@ class LiveSession:
             if Transcriber._repetition_profile(result.segments)[0]:
                 self.gap(start, start + len(pcm)//2, '반복 출력으로 초안 생략')
                 return
-            with self.lock:
+            gate = getattr(self.service, 'ai_control', None)
+            with (gate.condition if gate else nullcontext()), self.lock:
+                self.token.check()
                 if not self.accepting:
                     return
                 for segment in result.segments:
@@ -262,19 +273,57 @@ class LiveSession:
         finally:
             path.unlink(missing_ok=True)
 
-    def run(self):
+    def set_ai_enabled(self, enabled):
+        with self.lock:
+            self.ai_paused = not enabled
+            self.input_generation += 1
+            discarded = self.pending_samples + self.buffered_samples
+            if discarded:
+                self.gap(max(0, self.next_sample-discarded), self.next_sample, 'AI 처리 전환으로 초안 생략')
+            self.pending.clear()
+            self.pending_samples = self.buffered_samples = 0
+            self.flush = False
+            self.resume_gap = True
+            self.state = 'preparing' if enabled else 'ai_paused'
+            self.event('ai_resumed' if enabled else 'ai_paused')
+            self.lock.notify_all()
+
+    def _cycle(self, token):
+        self.token = token
         try:
+            token.check()
+            inference.reserve(self.id)
             queued = time.monotonic()
-            with inference.lease(speech=True, owner=self.id, cancellation=self.token):
+            with inference.lease(speech=True, owner=self.id, cancellation=token):
                 self.event('resource_ready', waiting_seconds=time.monotonic()-queued)
                 self.runtime = runtime_for(self.config)
                 started = time.monotonic()
-                with self.runtime.session(self.token), using({'speech': self.config, 'llm': defaults()['llm']}):
+                with self.runtime.session(token), using({'speech': self.config, 'llm': defaults()['llm']}):
                     self.event('model_ready', processing_seconds=time.monotonic()-started)
                     self.helper = self.service.vad_factory(self.config, self.service.platform, self.folder)
                     with self.lock:
+                        token.check()
                         self.state = 'streaming'
                     self._consume()
+        finally:
+            try:
+                if self.helper:
+                    self.helper.close()
+                    self.helper = None
+            finally:
+                try:
+                    if self.runtime:
+                        self.runtime.release_idle()
+                finally:
+                    inference.release(self.id)
+
+    def run(self):
+        try:
+            control = getattr(self.service, 'ai_control', None)
+            if control:
+                control.run(self._cycle, self.lifetime, kind='live')
+            else:
+                self._cycle(self.lifetime)
         except TranscriptionCancelled:
             pass
         except Exception as error:
@@ -284,12 +333,6 @@ class LiveSession:
             self.event('failed', reason=str(error))
         finally:
             try:
-                try:
-                    if self.helper:
-                        self.helper.close()
-                finally:
-                    if self.runtime:
-                        self.runtime.release_idle()
                 with self.lock:
                     self.accepting = False
                     self.pending.clear()
@@ -364,15 +407,23 @@ class LiveSession:
 
 
 class LiveTranscription:
-    def __init__(self, workflow, platform, *, config=None, vad_factory=VadWorker):
+    def __init__(self, workflow, platform, *, config=None, vad_factory=VadWorker, ai_control=None):
         self.workflow, self.platform = workflow, platform
         self.config = config or {**defaults()['speech'], 'model': 'large-v3-turbo',
             'model_path': str(Path(defaults()['speech']['model_path']).with_name('ggml-large-v3-turbo.bin'))}
         self.vad_factory = vad_factory
+        self.ai_control = ai_control
+        if ai_control:
+            ai_control.listeners.append(self.set_ai_enabled)
         self.lock = threading.RLock()
         self.active = None
         self.closed = threading.Event()
         self.watcher = None
+
+    def set_ai_enabled(self, enabled):
+        with self.lock:
+            if self.active and not self.active.stopped.is_set():
+                self.active.set_ai_enabled(enabled)
 
     def start(self):
         if self.watcher is None:
@@ -409,7 +460,8 @@ class LiveTranscription:
                     return self.active.public()
                 raise ValueError('다른 녹음에서 실시간 전사를 사용 중입니다.')
             session = LiveSession(self, recording_id, dict(self.config))
-            inference.reserve(session.id)
+            if self.ai_control and not self.ai_control.public()['enabled']:
+                session.set_ai_enabled(False)
             self.active = session
             self.start()
             session.thread = start_thread(session.run, 'live-transcription')

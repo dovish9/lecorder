@@ -9,6 +9,7 @@ from typing import Callable
 from .ai_settings import current, using
 from .ai_runtime import runtime_for
 from .inference import inference
+from .execution_metrics import current_trace
 from .review import compose_text
 from .transcription import CancellationToken, Options, Result, ReviewStats
 
@@ -45,9 +46,12 @@ class Transcriber(SpeechProcessing, SpeechQuality, ReviewEngine):
         self._convert(source, wav, cancellation)
         conversion_seconds = time.monotonic() - conversion_started
         config = current("speech")
-        with inference.lease(speech=True, cancellation=cancellation,
-                             local=config.get("managed", False)), runtime_for(config).session(cancellation):
-            options = self._with_note_hint(options, cancellation)
+        from .ai_control import run
+        def prepare(token):
+            with inference.lease(speech=True, cancellation=token,
+                                 local=config.get("managed", False)), runtime_for(config).session(token):
+                return self._with_note_hint(options, token)
+        options = run(prepare, cancellation, kind='speech_hint')
         whispered = self._whisper_chunked(wav, options, incoming, progress, cancellation)
         if options.retry_low_confidence and config["provider"] == "whisper_cpp":
             whispered = self._retry_low_confidence(
@@ -56,6 +60,7 @@ class Transcriber(SpeechProcessing, SpeechQuality, ReviewEngine):
         corrected_segments = whispered.segments
         items = [segment.text for segment in corrected_segments]
         qwen_started = time.monotonic()
+        review_wait = current_trace()["waiting_seconds"]
         if options.use_llm:
             total, fallback, suggestions, breaks, review_stats = self._review_items(
                 items, options, progress,
@@ -70,7 +75,7 @@ class Transcriber(SpeechProcessing, SpeechQuality, ReviewEngine):
             suggestions = []
             breaks = set()
             review_stats = ReviewStats()
-        qwen_seconds = time.monotonic() - qwen_started if options.use_llm else 0.0
+        qwen_seconds = max(0, time.monotonic() - qwen_started - (current_trace()["waiting_seconds"] - review_wait)) if options.use_llm else 0.0
         value = compose_text(items, breaks, options.format_text)
         return Result(
             text=value,

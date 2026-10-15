@@ -46,6 +46,12 @@
       <section class="workspace-panel dashboard-workspace" data-view-panel="dashboard">
         <header class="dashboard-heading">
           <div><p id="dashboardDate"></p><h2>오늘의 작업</h2><span>지금 처리할 일과 검토할 결과를 정리합니다.</span></div>
+          <section class="ai-processing-control" aria-label="AI 처리 제어">
+            <label><span id="aiControlLabel">AI 처리 켜짐</span><input id="aiControlSwitch" type="checkbox" role="switch" aria-label="AI 처리" aria-describedby="aiControlHint" checked></label>
+            <p id="aiControlHint">음성 전사·실시간 받아쓰기·LLM 작업에 적용됩니다. 원음 녹음은 계속됩니다.</p>
+            <small>외부 API는 취소 후에도 과금될 수 있습니다.</small>
+            <span id="aiControlError" role="alert"></span>
+          </section>
         </header>
         <nav class="dashboard-summary" aria-label="작업 요약">
           <a href="#/recordings" class="dashboard-metric"><span>오늘 완료</span><strong id="dashboardCompletedCount">0</strong><small>저장된 전사</small></a>

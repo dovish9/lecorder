@@ -1369,7 +1369,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   }
 }
 @media(min-width:701px){
+  /* Keep dock clearance inside each panel so its background reaches the window edge. */
+  .workspace-body:has(>.recordings-workspace:not([hidden])){padding-bottom:0}
   .recordings-workspace{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .recordings-workspace>.library-browser{min-height:0;overflow:auto;padding-bottom:96px}
+  .recordings-workspace>.library-detail{min-height:0;padding-bottom:122px}
 }
 /* Compact audio transport with optically aligned controls. */
 .audio-player{
@@ -1515,11 +1519,34 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .live-preview h3{margin:0;font-size:15px}
 .live-preview-status{font-size:12px;color:var(--muted)}
 .live-preview-text{max-height:360px;overflow:auto;overflow-wrap:anywhere;line-height:1.8;font-size:14px}
-.live-preview-text:empty:before{content:'발화가 끝나면 초안이 여기에 표시됩니다.';color:var(--muted)}
+.live-preview-segments:empty:before{content:'발화가 끝나면 초안이 여기에 표시됩니다.';color:var(--muted)}
 .live-preview-text p{margin:0 0 10px}
 .live-preview-text time{display:inline-block;margin-right:10px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
-.live-preview>button{margin-top:10px;color:var(--blue);background:var(--blue-soft);border:0;border-radius:7px;padding:7px 11px;cursor:pointer}
+.live-preview-viewport{position:relative;min-width:0}
+.live-preview-text{overscroll-behavior:contain;padding-bottom:12px}
+.live-preview-follow{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);width:34px;height:34px;display:grid;place-items:center;padding:0;border:.5px solid var(--line);border-radius:50%;color:var(--ink);background:var(--raised);box-shadow:0 3px 12px #0002,0 1px 3px #0001;cursor:pointer;z-index:1;transition:background .12s,box-shadow .12s}
+.live-preview-follow[hidden],.live-preview-listening[hidden]{display:none}
+.live-preview-follow:hover{background:var(--blue-soft);box-shadow:0 4px 15px #0003}
+.live-preview-follow:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.live-preview-follow svg{width:18px;height:18px}
+.live-preview-listening{display:flex;align-items:center;min-height:25.2px}
+.live-preview-meter{display:inline-flex;align-items:center;gap:2px;width:98px;height:1em;color:#ff3b30}
+.live-preview-meter i{display:block;flex:1;height:100%;border-radius:2px;background:currentColor;transform:scaleY(.12);transition:transform 65ms linear}
+@media(prefers-reduced-motion:reduce){.live-preview-meter i,.live-preview-follow{transition:none}}
 details.pipeline-run>summary{padding:14px;font-size:13px;font-weight:600;cursor:pointer;list-style:none}
 details.pipeline-run>summary::-webkit-details-marker{display:none}
 details.pipeline-run>summary::before{content:'›';display:inline-block;margin-right:8px;color:var(--muted)}
 details.pipeline-run[open]>summary::before{transform:rotate(90deg)}
+
+.ai-processing-control{width:310px;max-width:100%;flex-shrink:0;padding:14px 16px;border:.5px solid var(--line);border-radius:12px;background:var(--surface)}
+.ai-processing-control label{display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:13px;font-weight:600;cursor:pointer}
+.ai-processing-control input{appearance:none;width:34px;height:20px;border:0;border-radius:12px;padding:2px;background:#8e8e93;cursor:pointer;transition:background .15s}
+.ai-processing-control input:before{content:'';display:block;width:16px;height:16px;border-radius:50%;background:white;box-shadow:0 1px 3px #0003;transition:transform .15s}
+.ai-processing-control input:checked{background:var(--green)}
+.ai-processing-control input:checked:before{transform:translateX(14px)}
+.ai-processing-control input:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+.ai-processing-control p{margin:10px 0 5px;font-size:11px;color:var(--muted);line-height:1.6}
+.ai-processing-control small{display:block;font-size:10px;color:var(--muted)}
+#aiControlError{display:block;font-size:11px;color:var(--red)}
+@media(max-width:700px){.ai-processing-control{width:100%;margin-top:16px}}
+@media(prefers-reduced-motion:reduce){.ai-processing-control input,.ai-processing-control input:before{transition:none}}
