@@ -257,8 +257,10 @@ export function createActivity(context) {
     }
     const stages = [
       {phase: "extracting", label: "원문 추출"},
-      {phase: "keywords", label: "용어집 생성"},
+      {phase: "keywords", label: "용어 추출"},
       {phase: "study", label: "해설 생성"},
+      {phase: "overview", label: "개요"},
+      {phase: "glossary", label: "용어집"},
     ];
     const {phase, message} = noteQueueProgress(note);
     return createStagePipeline(stages, phase, message);

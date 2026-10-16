@@ -514,7 +514,7 @@ export function createLibrary(context) {
     const meta = document.createElement("small");
     const pages = Number(note.page_count) || 0;
     const completed = note.stage === "extracting" ? note.extracted_pages : note.analyzed_pages;
-    const stage = {extracting: "원문 추출", study: "해설 생성", detail: `${note.number}쪽 상세 해설`}[note.stage] || "분석 준비";
+    const stage = {extracting: "원문 추출", study: "해설 생성", overview:"개요 생성", glossary:"용어집 생성", detail: `${note.number}쪽 상세 해설`}[note.stage] || "분석 준비";
     meta.textContent = `${note.course_name || "강의노트"} · ${stage}${pages ? ` · ${completed || 0}/${pages}쪽` : ""}`;
     copy.append(title, meta);
     const state = document.createElement("span");

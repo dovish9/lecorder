@@ -365,22 +365,43 @@ export async function openNote(id, initial = {}) {
       body.append(
         node(
           "p",
-          "포함된 키워드 중 적정량을 자동 선택합니다. 직접 인식 힌트는 입력하지 않습니다.",
+          "읽는 말은 음성 인식에, 정식 표기와 의미는 LLM 검수에 사용합니다.",
         ),
       );
+      const busy = ["pending", "analyzing"].includes(note.study_status);
+      const tools = node("div", null, "note-glossary-tools");
+      const regenerate = button("용어집 다시 생성", async () => {
+        await api(`/api/notes/${id}/glossary`, {method:"POST"});
+        dirty = false; fingerprint = ""; await refresh();
+      });
+      regenerate.disabled = busy || dirty;
+      tools.append(node("span", busy ? (note.keywords.length ? "용어집 준비 중 · 기존 확정 용어집을 표시합니다." : "용어집 준비 중") : "원문과 해설에 근거한 용어집", "note-muted"), regenerate);
+
+      body.append(tools);
+      if (note.error) body.append(node("p", note.error, "note-error"));
       const list = node("div", null, "note-keywords");
       for (const k of note.keywords) {
         const label = node("label");
         const check = node("input");
         check.type = "checkbox";
+        check.disabled = busy;
         check.checked = !excluded.has(k.id);
         check.onchange = () => {
           dirty = true;
+          regenerate.disabled = true;
           check.checked ? excluded.delete(k.id) : excluded.add(k.id);
+          const count = footer.querySelector("span");
+          if (count) count.textContent = `${note.keywords.length - excluded.size}개 선택 · 전사 인식에 활용합니다.`;
         };
         label.append(check, node("span", k.term));
         const row = node("div", null, "note-keyword-card");
         row.append(label);
+        if (k.meaning) row.append(node("p", k.meaning, "note-term-meaning"));
+        if (k.spoken_forms?.length) row.append(node("p", `읽는 말 · ${k.spoken_forms.join(" / ")}`, "note-term-spoken"));
+        if (k.validation?.status === "needs_review") {
+          row.append(node("span", "확인 필요", "note-needs-review"));
+          for (const reason of k.validation.issues || []) row.append(node("p", reason, "note-term-spoken"));
+        }
         const sources = [...new Set(k.pages)];
         const sourceList = node("div", null, "note-source-chips");
         sources.forEach((page) => sourceList.append(button(`${page}쪽`, () => showPage(page))));
@@ -390,7 +411,7 @@ export async function openNote(id, initial = {}) {
       body.append(list);
       footer.append(
         node("span", `${note.keywords.length - excluded.size}개 선택 · 전사 인식에 활용합니다.`, "note-muted"),
-        button("키워드 선택 저장", async () => {
+        button("용어집 선택 저장", async () => {
           await api(`/api/notes/${id}/keywords`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -401,6 +422,7 @@ export async function openNote(id, initial = {}) {
           await refresh();
         }),
       );
+      footer.querySelector("button").disabled = busy;
       return;
     }
     if (current === "개요") {

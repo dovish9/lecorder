@@ -88,7 +88,7 @@ class Insights:
                 args = ('note', row['id'], row['course_id'], row['title'], row['course'])
                 add(*args, 'overview', None, None, strings(json.loads(row['overview'] or '[]')))
                 for term in json.loads(row['keywords'] or '[]'):
-                    add(*args, 'keywords', (term.get('pages') or [None])[0], None, term.get('term', ''))
+                    add(*args, 'keywords', (term.get('pages') or [None])[0], None, ' '.join([term.get('term',''),term.get('meaning') or '',*term.get('spoken_forms',[])]))
                 for page in db.execute('SELECT number,payload FROM note_pages WHERE revision_id=?', (row['revision_id'],)):
                     value = json.loads(page['payload'])
                     add(*args, 'original', page['number'], None, value.get('text', ''))

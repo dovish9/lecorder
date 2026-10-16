@@ -58,6 +58,15 @@ class AIProviderTests(unittest.TestCase):
                 self.assertIn('aGVsbG8=',json.dumps(payload))
                 self.assertIn('test-secret',json.dumps(call.call_args.kwargs['headers']))
 
+    def test_local_image_requests_do_not_reuse_multimodal_prompt_cache(self):
+        config=dict(defaults()['llm'],managed=False,base_url='http://example.test')
+        body={'choices':[{'message':{'content':'{"answer":"yes"}'}}]}
+        with patch('web.backend.ai_providers.runtime_for'),patch('web.backend.ai_providers.request_json',return_value=body) as request:
+            generate([{'role':'user','content':'page','images':['aGVsbG8=']}],self.schema,config=config,api_key='')
+            self.assertIs(request.call_args.args[1]['cache_prompt'],False)
+            generate([{'role':'user','content':'text only'}],self.schema,config=config,api_key='')
+            self.assertNotIn('cache_prompt',request.call_args.args[1])
+
     def test_schema_validation_rejects_malformed_response(self):
         with patch('web.backend.ai_providers.request_json', return_value={'choices':[{'message':{'content':'{"answer":3}'}}]}):
             with self.assertRaisesRegex(ValueError,'스키마'):

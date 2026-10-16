@@ -1,6 +1,7 @@
 """Source-backed terminology candidates and compact transcription hint filtering."""
 
 import re
+from .glossary import stable_id
 from collections import Counter
 from .korean_terms import noun_terms
 
@@ -65,4 +66,11 @@ def candidates(pages, cancellation=None):
         terms.values(),
         key=lambda item: (-item["score"], -len(item["pages"]), item["term"]),
     )[:200]
-    return [dict(item, id=f"k{index}") for index, item in enumerate(ranked, 1)]
+    for item in ranked:
+        item['base_score'] = item['score']
+        item['sources'] = []
+        for page in pages:
+            if page['number'] not in item['pages']: continue
+            text = page['text']; at = text.casefold().find(item['term'].casefold())
+            item['sources'].append({'page':page['number'], 'excerpt':text[max(0,at-100):max(0,at-100)+300]})
+    return [dict(item, id=stable_id('k',item['term'].casefold())) for item in ranked]

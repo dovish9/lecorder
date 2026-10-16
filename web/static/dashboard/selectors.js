@@ -31,11 +31,13 @@ export function libraryAlertCounts(entries) {
 
 export function noteQueueProgress(note) {
   if (note.stage === "detail") return {phase:"detail", message:`${note.number}쪽 상세 해설 생성 중`};
+  if (note.stage === "glossary") return {phase:"glossary", message:"용어집 생성 · 의미와 읽는 말 검증 중"};
+  if (note.stage === "overview") return {phase:"overview", message:"개요 생성 중"};
   const total = Number(note.page_count) || 0;
   const extracting = note.stage === "extracting";
   const done = Number(extracting ? note.extracted_pages : note.analyzed_pages) || 0;
   const phase = extracting && total > 0 && done >= total ? "keywords" : note.stage;
-  const message = phase === "keywords" ? "전사에 사용할 용어집 생성 중"
+  const message = phase === "keywords" ? "원문 용어 후보 추출 중"
     : extracting ? (total ? `원문 추출 · ${done}/${total}쪽 처리` : "문서 변환·페이지 준비 중")
     : total && done >= total ? "페이지 분석 처리 종료 · 개요 정리 중"
     : `해설 생성 · ${done}/${total}쪽 처리`;

@@ -69,7 +69,10 @@ class InsightsBackupTests(RecorderCase):
             note=notes.register(self.store.active_course_id(), [('slides.pdf',io.BytesIO(b'%PDF-1.7 fixture'))])
         revision=note['revision_id']
         notes._page(revision,{'number':1,'text':'Electric field','image':'page-1.png','error':'','analysis':{'summary':'설명'}})
-        notes._update(revision,status='ready',study_status='completed',page_count=1)
+        notes._update(revision,status='ready',study_status='completed',page_count=1,
+            keywords=json.dumps([{'id':'g1','term':'μ₀','meaning':'귀무가설 모평균','spoken_forms':['뮤 제로'],'pages':[1],'included':True}]),
+            glossary_data=json.dumps({'version':'glossary-v1','symbols':[{'id':'s1','term':'μ₀','pages':[1]}]}))
+        self.assertEqual(self.client.get('/api/search?q=뮤%20제로').json['total'],1)
         self.store.update_recording('source',note_revision_id=revision)
         backup=self.services.backups
         inspected={'cancelled':False};backup.inspect(inspected,self.archive());inspected['state']='ready'
@@ -78,8 +81,29 @@ class InsightsBackupTests(RecorderCase):
             copied=db.execute("SELECT * FROM recordings WHERE id!='source'").fetchone()
             linked=db.execute('SELECT * FROM note_revisions WHERE id=?',(copied['note_revision_id'],)).fetchone()
             self.assertNotEqual(linked['id'],revision)
+            self.assertEqual(json.loads(linked['glossary_data'])['symbols'][0]['term'],'μ₀')
+            self.assertEqual(json.loads(linked['keywords'])[0]['spoken_forms'],['뮤 제로'])
             self.assertEqual(db.execute('SELECT COUNT(*) FROM note_pages WHERE revision_id=?',(linked['id'],)).fetchone()[0],1)
             self.assertTrue((notes.folder/linked['note_id']).is_dir())
+
+    def test_legacy_backup_without_glossary_column_still_restores(self):
+        notes=self.services.workflow.notes
+        with patch('web.backend.note_intake.require_llm',return_value=None):
+            notes.register(self.store.active_course_id(), [('old.pdf',io.BytesIO(b'%PDF-1.7 fixture'))])
+        original=self.archive()
+        with zipfile.ZipFile(original) as archive:
+            entries={name:archive.read(name) for name in archive.namelist()}
+        manifest=json.loads(entries['manifest.json'])
+        for row in manifest['tables']['note_revisions']: row.pop('glossary_data')
+        entries['manifest.json']=json.dumps(manifest).encode()
+        path=self.root/'legacy.zip'
+        with zipfile.ZipFile(path,'w') as archive:
+            for name,content in entries.items(): archive.writestr(name,content)
+        inspected={'cancelled':False}
+        self.services.backups.inspect(inspected,path);inspected['state']='ready'
+        with self.services.scope(): self.services.backups.restore({'cancelled':False},inspected)
+        with self.store.transaction() as db:
+            self.assertTrue(all(row[0]=='{}' for row in db.execute('SELECT glossary_data FROM note_revisions')))
 
     def test_cancelled_inspection_cannot_restore_and_cross_origin_is_rejected(self):
         backup=self.services.backups

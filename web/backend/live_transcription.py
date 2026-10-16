@@ -204,7 +204,7 @@ class LiveSession:
         key = (row.language, row.note_snapshot_json, row.course_name)
         if key != self.hint_key:
             snapshot = json.loads(row.note_snapshot_json or '{}')
-            terms = [k['term'] for k in snapshot.get('keywords', []) if k.get('included', True)]
+            terms = snapshot.get('keywords', [])
             self.options = Transcriber._with_note_hint(Options(language=row.language,
                 course_name=row.course_name, note_keywords=tuple(terms), use_llm=False,
                 retry_low_confidence=False), self.token)

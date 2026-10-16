@@ -4,7 +4,7 @@ import json
 import uuid
 from contextlib import contextmanager
 
-ANALYZER_VERSION = "notes-v4-validated"
+ANALYZER_VERSION = "notes-v5-glossary"
 
 
 class NoteRepository:
@@ -51,7 +51,11 @@ class NoteRepository:
                     )
                 }
             )
-            note["keywords"] = json.loads(revision["keywords"])
+            note["keywords"] = [dict(k, meaning=k.get('meaning'),spoken_forms=k.get('spoken_forms',[])) for k in json.loads(revision["keywords"])]
+            note['glossary'] = json.loads(revision['glossary_data'])
+            note['glossary'].pop('candidates',None)
+            if note['glossary'].get('version') and not note['glossary'].get('published'):
+                note['keywords'] = []
             note["overview"] = json.loads(revision["overview"])
             with self.store.transaction() as db:
                 flagged = db.execute(
@@ -61,8 +65,8 @@ class NoteRepository:
                     "AND json_extract(payload, '$.detail.validation.status')='needs_review' LIMIT 1",
                     (revision['id'], revision['id']),
                 ).fetchone()
-            note['needs_review'] = bool(flagged or any(g.get('uncertainties') for g in note['overview']))
-            note["needs_reanalysis"] = revision["analyzer"] != ANALYZER_VERSION
+            note['needs_review'] = bool(any(k.get('validation',{}).get('status')=='needs_review' for k in note['keywords']) or flagged or any(g.get('uncertainties') for g in note['overview']))
+            note["needs_reanalysis"] = revision["analyzer"] not in {"notes-v4-validated", ANALYZER_VERSION}
         return note
 
 
@@ -81,7 +85,7 @@ class NoteRepository:
             rows = db.execute("""
                 SELECT n.id AS note_id, n.title, c.name AS course_name,
                        r.id AS revision_id, r.status, r.study_status, r.page_count,
-                       r.created_at, json_extract(r.ai_settings, '$.llm.managed') AS managed_llm,
+                       r.created_at, json_extract(r.glossary_data, '$.stage') AS glossary_stage, json_extract(r.ai_settings, '$.llm.managed') AS managed_llm,
                        (SELECT COUNT(*) FROM note_pages p WHERE p.revision_id=r.id)
                            AS extracted_pages,
                        (SELECT COUNT(*) FROM note_pages p WHERE p.revision_id=r.id
@@ -108,7 +112,7 @@ class NoteRepository:
         for row in rows:
             item = dict(row)
             extracting = item['status'] in {'queued', 'extracting'}
-            item['stage'] = 'extracting' if extracting else 'study'
+            item['stage'] = 'extracting' if extracting else (item.get('glossary_stage') if item.get('glossary_stage') in {'glossary','overview'} else 'study')
             item['status'] = ('queued' if item['status'] == 'queued' else 'processing') if extracting else (
                 'queued' if item['study_status'] == 'pending' else 'processing')
             items.append(item)
@@ -179,6 +183,7 @@ class NoteRepository:
             "error",
             "seconds",
             "overview",
+            "glossary_data",
         }
         if not set(changes) <= allowed:
             raise ValueError("Invalid revision change")
@@ -235,6 +240,7 @@ class NoteRepository:
                         revision["ai_settings"],
                     ),
                 )
+                db.execute("UPDATE note_revisions SET glossary_data=? WHERE id=?", (revision['glossary_data'],revision_id))
                 db.execute(
                     "INSERT INTO note_pages SELECT ?,number,payload FROM note_pages WHERE revision_id=?",
                     (revision_id, previous),
@@ -258,6 +264,9 @@ class NoteRepository:
             raise ValueError("선택한 강의에 속한 강의노트가 아닙니다.")
         if note["status"] not in ({"ready", "partial", "queued", "extracting"} if allow_pending else {"ready", "partial"}):
             raise ValueError("노트의 키워드 준비가 끝나지 않았습니다.")
+        data = json.loads(self._revision(note['revision_id'])['glossary_data'])
+        if data.get('version') and not data.get('published') and note['study_status'] not in {'pending','analyzing'}:
+            raise ValueError('용어집 생성이 완료되지 않았습니다. 다시 생성하거나 다른 노트를 선택하세요.')
         # Snapshot contains only published extraction, never mutable study output.
         return note["revision_id"]
 
@@ -302,6 +311,7 @@ class NoteRepository:
                     revision["ai_settings"],
                 ),
             )
+            db.execute("UPDATE note_revisions SET glossary_data=? WHERE id=?", (revision['glossary_data'],next_id))
             db.execute(
                 "INSERT INTO note_pages SELECT ?,number,payload FROM note_pages WHERE revision_id=?",
                 (next_id, previous),

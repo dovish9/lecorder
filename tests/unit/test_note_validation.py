@@ -50,6 +50,9 @@ class ValidationTests(unittest.TestCase):
     def test_heading_requires_content(self):
         self.assertEqual(code_issues({'markdown': '## 제목\n본문입니다.'}), [])
         self.assertTrue(code_issues({'markdown': '## 빈 제목\n\n## 다음 제목\n내용'}))
+        self.assertEqual(code_issues({'markdown': '## 내용 설명\n\n### 도체\n본문입니다.\n### 절연체\n본문입니다.'}), [])
+        self.assertTrue(code_issues({'markdown': '## 내용 설명\n### 빈 하위 제목\n## 다음 제목\n내용'}))
+        self.assertTrue(code_issues({'markdown': '## 내용 설명\n### 빈 하위 제목'}))
 
     @patch('web.backend.note_study.require_llm')
     def test_semantic_check_only_sees_visible_draft(self, ready):
@@ -58,7 +61,7 @@ class ValidationTests(unittest.TestCase):
         with patch('web.backend.note_study._request', return_value=reply.json()) as post:
             _semantic_issues(draft, '원문', None, CancellationToken())
         sent = json.loads(post.call_args.args[0]['messages'][1]['content'])
-        self.assertEqual(sent['draft'], {'markdown': '빈약한 본문'})
+        self.assertEqual(sent['draft'], {'markdown': '빈약한 본문', 'symbols': []})
 
     @patch('web.backend.note_study.require_llm')
     def test_missing_or_invented_evidence_cannot_pass(self, ready):

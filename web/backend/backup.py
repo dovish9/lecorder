@@ -205,6 +205,9 @@ class Backups:
             with self.store.transaction() as db:
                 for table, rows in manifest['tables'].items():
                     columns = {r[1] for r in db.execute(f'PRAGMA table_info({table})')}
+                    if table == 'note_revisions' and isinstance(rows,list):
+                        for row in rows:
+                            if isinstance(row,dict): row.setdefault('glossary_data','{}')
                     if not isinstance(rows,list) or any(not isinstance(r,dict) or set(r)!=columns for r in rows):
                         raise ValueError('백업 데이터 구조가 맞지 않습니다.')
             for row in manifest['tables']['recordings']:

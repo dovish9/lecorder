@@ -195,7 +195,7 @@ class NoteDependenciesTests(NoteCase):
         self.notes._update(revision, study_status='completed', keywords='[{"term":"updated","included":true}]')
         pipeline.process_next()
         self.assertEqual(len(engine.calls), 1)
-        self.assertEqual(engine.calls[0].note_keywords, ('updated',))
+        self.assertEqual(engine.calls[0].note_keywords, ({'term':'updated','included':True},))
         self.assertEqual(self.store.get_recording(row.id).audio_path, str(audio))
         self.assertFalse(self.store.get_recording(row.id).public()['waiting_for_note'])
 

@@ -62,6 +62,10 @@ def note_routes(library, reviews, live=None):
         data = request.get_json() or {}
         return jsonify(note=library.select_keywords(note_id, data.get("excluded", [])))
 
+    @routes.post("/api/notes/<note_id>/glossary")
+    def regenerate_glossary(note_id):
+        return jsonify(note=library.regenerate_glossary(note_id)), 202
+
     @routes.post("/api/notes/<note_id>/reanalyze")
     def reanalyze(note_id):
         return jsonify(note=library.reanalyze(note_id)), 202

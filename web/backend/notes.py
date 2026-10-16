@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from .note_extract import prepare_pages, extract_page
 from .note_analysis import candidates
+from .glossary import merge_symbols, rank_candidates, build_glossary, extract_symbols, VERSION
 from .note_study import analyze_visual_page as analyze_page, build_overview
 from .transcription import CancellationToken, TranscriptionCancelled
 
@@ -50,6 +51,8 @@ class NoteLibrary(NoteRepository, NoteIntake):
             columns = {
                 row[1] for row in db.execute("PRAGMA table_info(note_revisions)")
             }
+            if 'glossary_data' not in columns:
+                db.execute("ALTER TABLE note_revisions ADD COLUMN glossary_data TEXT NOT NULL DEFAULT '{}'")
             if 'ai_settings' not in columns:
                 db.execute("ALTER TABLE note_revisions ADD COLUMN ai_settings TEXT NOT NULL DEFAULT '{}'")
             if "overview" not in columns:
@@ -169,10 +172,12 @@ class NoteLibrary(NoteRepository, NoteIntake):
                     "읽을 수 있는 텍스트가 없습니다. 추출 오류를 확인하세요."
                 )
             failed = sum(bool(p["error"]) for p in pages)
+            raw_candidates = candidates(pages, token)
             self._update(
                 revision_id,
+                glossary_data=json.dumps({"version":VERSION,"candidates":raw_candidates}),
                 status="partial" if failed else "ready",
-                keywords=json.dumps(candidates(pages, token), ensure_ascii=False),
+                keywords=json.dumps(raw_candidates, ensure_ascii=False),
                 error=f"{failed}페이지 추출 실패" if failed else "",
                 seconds=time.monotonic() - started,
             )
@@ -227,9 +232,17 @@ class NoteLibrary(NoteRepository, NoteIntake):
             else:
                 self._detail(revision_id, number, {"detail_status": "analyzing"})
             failures = 0
+            data = json.loads(revision["glossary_data"])
+            glossary_only = number is None and data.get("mode") == "glossary"
+            raw_candidates = data.get("candidates")
+            if raw_candidates is None:
+                raw_candidates = json.loads(revision["keywords"]) if number is not None else candidates(self.pages(revision_id), token)
+                data["candidates"] = raw_candidates
+                self._update(revision_id, glossary_data=json.dumps(data, ensure_ascii=False))
             for page in self.pages(revision_id):
                 if (
-                    not page.get("image")
+                    glossary_only
+                    or not page.get("image")
                     or (number is not None and page["number"] != number)
                     or (number is None and page.get("analysis"))
                 ):
@@ -239,7 +252,7 @@ class NoteLibrary(NoteRepository, NoteIntake):
                 try:
                     result = analyze_page(
                         page,
-                        json.loads(revision["keywords"]),
+                        raw_candidates,
                         token,
                         detailed=number is not None,
                         image_path=self.folder / revision["note_id"] / page["image"],
@@ -273,31 +286,32 @@ class NoteLibrary(NoteRepository, NoteIntake):
                     )
             if number is None:
                 pages = self.pages(revision_id)
-                try:
+                if not glossary_only:
+                    data['stage'] = 'overview'
+                    self._update(revision_id, glossary_data=json.dumps(data,ensure_ascii=False))
                     overview = build_overview(pages, token)
-                except TranscriptionCancelled:
-                    raise
-                except Exception as error:
-                    failures += 1
-                    overview = [{"pages": [], "error": str(error)}]
+                    self._update(revision_id, overview=json.dumps(overview,ensure_ascii=False))
+                if failures:
+                    raise ValueError('페이지 해설 실패: 용어집을 게시하지 않았습니다.')
+                data['stage'] = 'glossary'
+                self._update(revision_id, glossary_data=json.dumps(data,ensure_ascii=False))
+                for page in pages:
+                    analysis = page.get('analysis') or {}
+                    if 'symbols' not in analysis:
+                        symbols = extract_symbols(page, token, self.folder / revision['note_id'] / page['image'] if page.get('image') else None)
+                        page['analysis'] = dict(analysis, symbols=symbols)
+                        # Never copy on-demand details into the base page record.
+                        self._page(revision_id, {k:v for k,v in page.items() if k not in {'detail','detail_status','ai_settings'}})
+                data['symbols'] = merge_symbols(pages)
+                self._update(revision_id, glossary_data=json.dumps(data,ensure_ascii=False))
+                ranked = rank_candidates(raw_candidates,pages)
+                keywords, validation = build_glossary(ranked,data['symbols'],token,json.loads(revision['keywords']))
+                data.update(version=VERSION, validation=validation, stage='completed', published=True)
                 with self.lock:
                     token.check()
-                    self._update(
-                        revision_id,
-                        study_status="failed" if failures else "completed",
-                        overview=json.dumps(overview, ensure_ascii=False),
-                    )
-                    # Publish ranking as a new revision, leaving previously bound keyword versions intact.
-                    keywords = json.loads(revision["keywords"])
-                    selected = [
-                        key
-                        for p in pages
-                        if p.get("analysis")
-                        for key in p["analysis"]["keywords"]
-                    ]
-                    for keyword in keywords:
-                        keyword["score"] += selected.count(keyword["id"]) * 5
-                    keywords.sort(key=lambda k: (-k["score"], k["term"]))
+                    if self._stopping.is_set(): raise TranscriptionCancelled()
+                    self._update(revision_id, glossary_data=json.dumps(data,ensure_ascii=False),
+                                 keywords=json.dumps(keywords,ensure_ascii=False),study_status='completed',error='')
                     self._publish_ranking(revision_id, keywords)
 
         except TranscriptionCancelled:

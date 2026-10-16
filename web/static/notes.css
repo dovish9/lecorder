@@ -523,3 +523,12 @@
     overflow: auto;
   }
 }
+
+/* Glossary keeps the native palette and gives the definition a separate reading level. */
+.note-glossary-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:18px}
+.note-glossary-tools>span{flex:1;min-width:180px}
+.note-keyword-card label{font-weight:600;font-size:15px}
+.note-keyword-card .note-term-meaning{margin:0;line-height:1.55;overflow-wrap:anywhere}
+.note-keyword-card .note-term-spoken{margin:0;color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.note-keyword-card .note-source-chips{margin-top:auto;padding-top:4px}
+@media(max-width:600px){.note-keywords{grid-template-columns:minmax(0,1fr)}}

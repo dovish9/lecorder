@@ -130,6 +130,28 @@ class NoteIntake:
             return self.get(note_id)
 
 
+    def regenerate_glossary(self, note_id):
+        with self.lock:
+            note = self.get(note_id)
+            if note['deleted'] or note['status'] not in {'ready','partial'} or note['study_status'] in {'pending','analyzing'}:
+                raise ValueError('원문 분석이 끝난 후 용어집을 다시 생성하세요.')
+            if any(p.get('detail_status') in {'pending','analyzing'} for p in self.pages(note['revision_id'])):
+                raise ValueError('상세 해설이 끝난 후 용어집을 다시 생성하세요.')
+            snapshot = self.store.ai.snapshot()
+            require_llm(snapshot['llm'])
+            # Clone without changing a previously bound revision or its keywords.
+            self._publish_ranking(note['revision_id'], note['keywords'])
+            revision = self.get(note_id)['revision_id']
+            data = json.loads(self._revision(revision)['glossary_data'])
+            data.update(mode='glossary',stage='glossary', published=data.get('published', not bool(data.get('version'))))
+            with self.store.transaction() as db:
+                db.execute('UPDATE note_revisions SET glossary_data=?, study_status=?, error=?, ai_settings=? WHERE id=?',
+                           (json.dumps(data,ensure_ascii=False),'pending','',json.dumps(snapshot),revision))
+            self.tokens[revision] = CancellationToken()
+            self.study_queue.put((revision,None))
+            return self.get(note_id)
+
+
     def cancel(self, note_id):
         with self.lock:
             note = self.get(note_id)

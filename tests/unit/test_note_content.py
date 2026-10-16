@@ -1,7 +1,7 @@
 import json
 from unittest.mock import patch, Mock
 from web.backend.note_extract import merge_text
-from web.backend.note_study import build_overview
+from web.backend.note_study import build_overview, overview_groups
 from web.backend.transcription import CancellationToken, Options
 from web.backend.engine import Transcriber
 from web.backend.review_jobs import relevant_context
@@ -31,10 +31,10 @@ class NoteContentTests(NoteCase):
             ],
         }
         text = relevant_context(snapshot, "Coulomb law")
-        self.assertTrue(text.startswith("[노트 2쪽]"))
+        self.assertIn("[노트 2쪽]", text)
         self.assertLessEqual(len(text), 6000)
         self.assertNotIn("statistics", text)
-        self.assertEqual(relevant_context(snapshot, "unrelated discussion"), "")
+        self.assertIn("Coulomb", relevant_context(snapshot, "unrelated discussion"))
 
 
     def test_real_token_budget_and_missing_tokenizer(self):
@@ -97,6 +97,13 @@ class NoteContentTests(NoteCase):
         self.assertEqual(result["study_status"], "cancelled")
         self.assertEqual(result["revision_id"], revision_id)
 
+
+    def test_overview_sources_preserve_full_explanations(self):
+        text = '앞부분 설명.\n\n' + ('중간 근거입니다.\n\n' * 700) + '마지막 공식과 적용 조건.'
+        groups = list(overview_groups([{'pages':[1], 'summary':'요약', 'markdown':text}]))
+        self.assertEqual(''.join(item['markdown'] for group in groups for item in group), text)
+        self.assertTrue(all(len(json.dumps(group,ensure_ascii=False)) < 6100 for group in groups))
+        self.assertTrue(all(item['pages'] == [1] for group in groups for item in group))
 
     def test_overview_reduction_keeps_all_source_pages(self):
         pages = [{"number": i, "analysis": {"summary": str(i), "markdown": "body", "keywords": []}} for i in range(1, 15)]

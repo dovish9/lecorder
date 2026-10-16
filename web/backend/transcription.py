@@ -24,7 +24,7 @@ class Options:
     recognition_hint_tokens: int = 0
     recognition_hint_warning: str = ""
     review_context: str = ""
-    note_keywords: tuple[str, ...] = ()
+    note_keywords: tuple[str | dict, ...] = ()
     format_text: bool = True
     use_llm: bool = True
     llm_model: str = DEFAULT_LLM_MODEL

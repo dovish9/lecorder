@@ -270,7 +270,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
                            job_id=recording.id, title=recording.title, course_id=recording.course_id)
             options = Options(
                 language=recording.language, course_name=recording.course_name,
-                note_keywords=tuple(k['term'] for k in json.loads(recording.note_snapshot_json).get('keywords', []) if k.get('included', True)),
+                note_keywords=tuple(json.loads(recording.note_snapshot_json).get('keywords', [])),
                 format_text=False, use_llm=False,
                 llm_model=recording.llm_model,
                 ai_settings=json.loads(recording.ai_settings_json) or defaults(),

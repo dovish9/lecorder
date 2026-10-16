@@ -206,7 +206,8 @@ class NoteLifecycleTests(NoteCase):
         result = self.notes.get(note["id"])
         self.assertEqual(result["status"], "partial")
         self.assertEqual(len(self.notes.pages(note["revision_id"])), 2)
-        self.assertTrue(result["keywords"])
+        self.assertEqual(result["keywords"], [])
+        self.assertTrue(json.loads(self.notes._revision(note["revision_id"])["glossary_data"])["candidates"])
 
 
     def test_hint_terms_filter_filler_and_duplicate_particle_forms(self):

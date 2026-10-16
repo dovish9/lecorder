@@ -100,6 +100,9 @@ def _generate(messages, schema, *, max_tokens=2048, temperature=0, cancellation=
         if provider == 'llama_cpp':
             payload.update(max_tokens=max_tokens, temperature=temperature,
                            chat_template_kwargs={'enable_thinking': False}, stream=False)
+            if any(item.get('images') for item in messages):
+                # Recurrent multimodal KV positions cannot safely reuse a text prefix.
+                payload['cache_prompt'] = False
         else:
             payload['max_completion_tokens'] = max_tokens
     elif provider == 'claude':

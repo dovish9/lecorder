@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .glossary import recognition_terms
 
 from .media import request as media_request
 from .inference import inference
@@ -14,7 +15,6 @@ from typing import Any, Callable
 
 from .ai_settings import current, configured_settings
 from .ai_transport import request_json, ProviderError
-from .note_analysis import hint_terms
 from .transcription import CancellationToken, Options, TranscriptSegment, WhisperResult
 
 
@@ -64,7 +64,7 @@ class SpeechProcessing:
             ranks = {base64.b64decode(token): int(rank) for token, rank in (line.split() for line in vocab.read_bytes().splitlines())}
             tokenizer = tiktoken.Encoding(name='whisper-multilingual', pat_str=r"'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+", mergeable_ranks=ranks, special_tokens={})
             terms = []
-            for term in hint_terms(options.note_keywords)[:40]:
+            for term in recognition_terms(options.note_keywords):
                 if len(tokenizer.encode(", ".join([*terms, term]))) <= 96:
                     terms.append(term)
             hint = ", ".join(terms)
@@ -73,7 +73,7 @@ class SpeechProcessing:
         selected = []
         selected_tokens = 0
         try:
-            for term in hint_terms(options.note_keywords)[:40]:
+            for term in recognition_terms(options.note_keywords):
                 candidate = ", ".join([*selected, term])
                 config = current('speech')
                 key = configured_settings().credentials.get(config) if not config.get('managed') else ''

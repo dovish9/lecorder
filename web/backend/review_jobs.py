@@ -22,12 +22,14 @@ def relevant_context(snapshot, text):
     keywords = [k for k in snapshot.get("keywords", []) if k.get("included", True)]
     scored = []
     for page in snapshot.get("pages", []):
-        terms = [k["term"] for k in keywords if page["number"] in k["pages"]]
+        terms = [form for k in keywords if page["number"] in k["pages"] for form in [k["term"], *k.get("spoken_forms",[])]]
         score = sum(term.casefold() in words for term in terms)
         if score:
             scored.append((score, page, terms))
     scored.sort(key=lambda item: (-item[0], item[1]["number"]))
-    return "\n\n".join(
+    glossary = [{key:k.get(key) for key in ('term','meaning','spoken_forms')} for k in keywords]
+    mapping = ('용어집: '+json.dumps(glossary,ensure_ascii=False)+'\n') if glossary else ''
+    return mapping + "\n\n".join(
         f"[노트 {page['number']}쪽] 용어: {', '.join(terms[:20])}\n{page['text'][:1600]}"
         for _, page, terms in scored[:3]
     )[:6000]
