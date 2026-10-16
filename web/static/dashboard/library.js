@@ -433,6 +433,7 @@ export function createLibrary(context) {
         previewText.className = "rendered-markdown";
         previewText.textContent = "Markdown을 불러오는 중입니다.";
         note.append(summary, previewText);
+        const searchPosition=new URLSearchParams(window.location.hash.split('?')[1]||'').get('time');
         note.addEventListener("toggle", async () => {
           if (!note.open || note.dataset.loaded) return;
           note.dataset.loaded = "true";
@@ -440,9 +441,15 @@ export function createLibrary(context) {
             const response = await fetch(storageFileUrl(entry.storage.markdown_files[0]), {cache: "no-store"});
             if (!response.ok) throw new Error("Markdown을 불러오지 못했습니다.");
             actions.renderMarkdownInto(previewText, await response.text(), detailAudioPlayer);
+            if(searchPosition!==null) {
+              const stamps=[...previewText.querySelectorAll('.markdown-timestamp[data-seconds]')];
+              const match=stamps.filter(button=>Number(button.dataset.seconds)<=Number(searchPosition)).at(-1)||stamps[0];
+              match?.scrollIntoView({block:'center',behavior:'smooth'});
+            }
           } catch (error) { previewText.textContent = error.message; }
         });
         files.append(note);
+        if(searchPosition!==null)note.open=true;
       }
     } else {
       const missing = document.createElement("p");

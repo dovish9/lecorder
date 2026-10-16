@@ -66,6 +66,12 @@ def create_app(
         workflow = pipeline or RecordingPipeline(lectures, state, engine,
             work_root=lectures.path.parent / "recordings", start_worker=False)
     services.workflow = workflow
+    from .request_history import RequestHistory
+    services.history = RequestHistory(lectures)
+    from .insights import Insights
+    services.insights = Insights(lectures)
+    from .backup import Backups
+    services.backups = Backups(services, lectures)
     from .live_transcription import LiveTranscription
     from .live_http import register as register_live_http
     services.live = LiveTranscription(workflow, services.platform, ai_control=services.ai_control)
@@ -79,9 +85,19 @@ def create_app(
     def enter_services():
         g.service_scope = services.scope()
         g.service_scope.__enter__()
+        if request.method not in {'GET','HEAD','OPTIONS'}:
+            origin=request.headers.get('Origin')
+            if origin and origin.rstrip('/')!=request.host_url.rstrip('/'):
+                return jsonify(error='다른 사이트에서 보낸 변경 요청은 허용하지 않습니다.'),403
+        if request.method not in {'GET','HEAD','OPTIONS'} and not request.path.startswith('/api/backups'):
+            if not services.backups.begin_request():
+                return jsonify(error='백업·복원 중입니다. 완료 후 다시 시도하세요.'), 409
+            g.backup_mutation = True
 
     @app.teardown_request
     def leave_services(error):
+        if g.pop('backup_mutation', False):
+            services.backups.end_request()
         scope = g.pop("service_scope", None)
         if scope:
             scope.__exit__(None, None, None)
@@ -89,6 +105,92 @@ def create_app(
     @app.get("/api/capabilities")
     def capabilities():
         return jsonify(services.platform.capabilities())
+
+    @app.get('/api/search')
+    def search():
+        try:
+            course = int(request.args['course']) if request.args.get('course') else None
+            offset = max(0, int(request.args.get('offset', 0)))
+            limit = min(50, max(1, int(request.args.get('limit', 30))))
+        except ValueError:
+            return jsonify(error='검색 조건이 올바르지 않습니다.'), 400
+        kind = request.args.get('kind') or None
+        if kind not in {None, 'recording', 'note'}:
+            return jsonify(error='검색 종류가 올바르지 않습니다.'), 400
+        return jsonify(services.insights.search(request.args.get('q', ''), course, kind, offset, limit))
+
+    @app.get('/api/usage')
+    def usage():
+        try:
+            days = int(request.args.get('days', 1))
+            offset = int(request.args.get('timezone_offset', 0))
+            if days not in {0, 1, 7, 30} or not -840 <= offset <= 840:
+                raise ValueError()
+        except ValueError:
+            return jsonify(error='집계 기간이 올바르지 않습니다.'), 400
+        return jsonify(services.insights.usage(days, offset, request.args.get('timezone','')))
+
+    @app.get('/api/recovery')
+    def recovery():
+        with lectures.transaction() as db:
+            rows = db.execute("""SELECT s.id,s.owner,s.kind,s.status,s.message,COALESCE(r.title,n.title,'작업') AS title
+                FROM recovery_sessions s LEFT JOIN recordings r ON r.id=s.owner
+                LEFT JOIN note_revisions v ON v.id=s.owner LEFT JOIN lecture_notes n ON n.id=v.note_id
+                WHERE s.message!='' AND s.acknowledged=0 ORDER BY s.created_at DESC LIMIT 20""").fetchall()
+        return jsonify(items=[dict(r) for r in rows])
+
+    def transfer_payload(job):
+        return {k:v for k,v in job.items() if k not in {'source','cancelled'}}
+
+    @app.post('/api/backups')
+    def create_backup():
+        return jsonify(transfer_payload(services.backups.start('export'))), 202
+
+    @app.post('/api/backups/inspect')
+    def inspect_backup():
+        import uuid
+        upload = request.files.get('file')
+        if upload is None:
+            return jsonify(error='백업 파일을 선택하세요.'), 400
+        path = services.backups.folder / (uuid.uuid4().hex+'.zip')
+        upload.save(path)
+        return jsonify(transfer_payload(services.backups.start('inspect', path=path))), 202
+
+    @app.get('/api/backups/<job_id>')
+    def backup_status(job_id):
+        job = services.backups.jobs.get(job_id)
+        return (jsonify(transfer_payload(job)), 200) if job else (jsonify(error='백업 작업을 찾지 못했습니다.'), 404)
+
+    @app.post('/api/backups/<job_id>/restore')
+    def restore_backup(job_id):
+        job = services.backups.jobs.get(job_id)
+        if not job or job['state'] != 'ready' or job['cancelled']:
+            return jsonify(error='검사가 완료된 백업을 선택하세요.'), 409
+        return jsonify(transfer_payload(services.backups.start('restore', inspected=job))), 202
+
+    @app.post('/api/backups/<job_id>/cancel')
+    def cancel_backup(job_id):
+        job = services.backups.jobs.get(job_id)
+        if not job:
+            return jsonify(error='백업 작업을 찾지 못했습니다.'), 404
+        job['cancelled'] = True
+        if job['state'] == 'ready':
+            job.update(state='cancelled', message='가져오기를 취소했습니다.')
+        return jsonify(ok=True)
+
+    @app.get('/api/backups/<job_id>/download')
+    def download_backup(job_id):
+        job = services.backups.jobs.get(job_id)
+        if not job or job['operation'] != 'export' or job['state'] != 'completed':
+            return jsonify(error='완료된 백업이 없습니다.'), 404
+        return send_file(services.backups.folder / job['file'], as_attachment=True,
+                         download_name='Lecorder-backup.zip')
+
+    @app.post('/api/recovery/<session_id>/acknowledge')
+    def acknowledge_recovery(session_id):
+        with lectures.transaction() as db:
+            db.execute('UPDATE recovery_sessions SET acknowledged=1 WHERE id=?', (session_id,))
+        return jsonify(ok=True)
 
     app.register_blueprint(note_routes(workflow.notes, workflow.reviews, services.live))
     app.register_blueprint(ai_routes(lectures.ai))

@@ -162,7 +162,7 @@ class RecordingLifecycleTests(RecorderCase):
             recording = pipeline.create_upload(
                 store.get(), "원자적 저장", ".wav", io.BytesIO(b"audio")
             )
-            def fail_final_update(recording, suggestions, publish):
+            def fail_final_update(recording, suggestions, publish, **kwargs):
                 publish()
                 raise RuntimeError("database commit failed")
 

@@ -13,6 +13,7 @@ import {createActivity} from "./dashboard/activity.js";
 import {createReview} from "./dashboard/review.js";
 import {createNotifications} from "./dashboard/notifications.js";
 import {createStatus} from "./dashboard/status.js";
+import {createInsights} from "./dashboard/insights.js";
 
 const controller = new AbortController();
 const timers = new Set();
@@ -45,6 +46,7 @@ Object.assign(context.actions, createActivity(context));
 Object.assign(context.actions, createReview(context));
 Object.assign(context.actions, createNotifications(context));
 Object.assign(context.actions, createStatus(context));
+Object.assign(context.actions, createInsights(context));
 
 window.addEventListener("pagehide", event => {
   if (event.persisted) return;

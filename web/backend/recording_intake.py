@@ -28,6 +28,11 @@ class RecordingIntake:
         """Remove only work directories that have no corresponding database job."""
         persisted = self.store.recording_ids()
         for item in self.work_root.iterdir():
+            if item.name == '.live':
+                for draft in item.iterdir():
+                    if draft.is_dir() and draft.name not in persisted:
+                        shutil.rmtree(draft, ignore_errors=True)
+                continue
             if item.is_dir() and item.name not in persisted:
                 shutil.rmtree(item, ignore_errors=True)
 
@@ -140,6 +145,11 @@ class RecordingIntake:
 
 
     def save_chunk(self, recording_id: str, index: int, stream: BinaryIO) -> int:
+        with self._lock:
+            return self._save_chunk(recording_id,index,stream)
+
+    def _save_chunk(self, recording_id: str, index: int, stream: BinaryIO) -> int:
+        import hashlib
         recording = self.store.get_recording(recording_id)
         if recording.status not in {"recording", "recoverable"}:
             raise ValueError("더 이상 녹음 조각을 받을 수 없는 작업입니다.")
@@ -162,7 +172,16 @@ class RecordingIntake:
                     output.write(block)
             if size == 0:
                 raise ValueError("빈 녹음 조각입니다.")
-            temporary.replace(destination)
+            with temporary.open('rb') as data:
+                checksum=hashlib.file_digest(data,'sha256').hexdigest()
+            if destination.exists():
+                with destination.open('rb') as data:
+                    if hashlib.file_digest(data,'sha256').hexdigest()!=checksum:
+                        raise ValueError('이미 저장된 녹음 조각과 내용이 다릅니다. 원본은 유지했습니다.')
+            else:
+                temporary.replace(destination)
+            with self.store.transaction() as db:
+                db.execute('INSERT OR REPLACE INTO recording_chunks VALUES (?,?,?,?)',(recording_id,index,size,checksum))
             return size
         finally:
             temporary.unlink(missing_ok=True)

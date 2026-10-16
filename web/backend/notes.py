@@ -97,6 +97,9 @@ class NoteLibrary(NoteRepository, NoteIntake):
         ]:
             self._threads.append(start_thread(target, name))
 
+    def prepare_shutdown(self):
+        self._stopping.set()
+
     def close(self):
         self._stopping.set()
         with self.lock:
@@ -180,7 +183,8 @@ class NoteLibrary(NoteRepository, NoteIntake):
                 return
             self.study_queue.put((revision_id, None))
         except TranscriptionCancelled:
-            self._update(revision_id, status="cancelled", study_status="cancelled")
+            self._update(revision_id, status='queued' if self._stopping.is_set() else 'cancelled',
+                         study_status='pending' if self._stopping.is_set() else 'cancelled')
         except Exception as error:
             self._update(
                 revision_id,
@@ -197,8 +201,17 @@ class NoteLibrary(NoteRepository, NoteIntake):
                 row = db.execute('SELECT payload FROM note_details WHERE revision_id=? AND number=?', (revision_id, number)).fetchone()
             if row:
                 snapshot = json.loads(row['payload']).get('ai_settings') or snapshot
-        with using(snapshot):
-            return self._study(revision_id, number)
+        from .request_history import execution
+        with using(snapshot), execution(revision_id, f'note:{number or "overview"}') as finish:
+            result = self._study(revision_id, number)
+            if not self._stopping.is_set():
+                if number is None:
+                    finish(self._revision(revision_id)['study_status'])
+                else:
+                    with self.store.transaction() as db:
+                        detail = db.execute('SELECT payload FROM note_details WHERE revision_id=? AND number=?', (revision_id, number)).fetchone()
+                    finish(json.loads(detail['payload']).get('detail_status', 'failed') if detail else 'failed')
+            return result
 
     def _study(self, revision_id, number=None):
         revision = self._revision(revision_id)
@@ -289,9 +302,9 @@ class NoteLibrary(NoteRepository, NoteIntake):
 
         except TranscriptionCancelled:
             if number is None:
-                self._update(revision_id, study_status="cancelled")
+                self._update(revision_id, study_status='pending' if self._stopping.is_set() else 'cancelled')
             else:
-                self._detail(revision_id, number, {"detail_status": "cancelled"})
+                self._detail(revision_id, number, {"detail_status": 'pending' if self._stopping.is_set() else 'cancelled'})
         except Exception as error:
             if number is None:
                 self._update(revision_id, study_status="failed", error=str(error))

@@ -204,7 +204,7 @@ function upload(courseId) {
   d.showModal();
 }
 
-export async function openNote(id) {
+export async function openNote(id, initial = {}) {
   const d = modal("강의노트");
   d.classList.add("note-viewer");
   const state = node("p", null, "note-muted");
@@ -222,9 +222,9 @@ export async function openNote(id) {
   const footer = node("footer", null, "note-footer");
   footer.hidden = true;
   d.append(controls, body, footer);
-  let current = "개요",
+  let current = ({overview:'개요',pages:'페이지별 해설',keywords:'용어집',original:'원문'})[initial.tab] || "개요",
     data = null,
-    pageNumber = 1,
+    pageNumber = Math.max(1, Number(initial.page) || 1),
     poll = null,
     fingerprint = "",
     etag = "",

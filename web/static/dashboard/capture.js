@@ -231,8 +231,18 @@ export function createCapture(context) {
     for (const item of app.failedChunks) {
       if (item.recordingId === recordingId) combined.set(item.index, item);
     }
+    let receipts=[];
+    if(combined.size) {
+      try {receipts=(await requestJson(`/api/recordings/${recordingId}/chunks`)).chunks || [];} catch (_) { /* Retry the durable PUT instead. */ }
+    }
     for (const item of [...combined.values()].sort((left, right) => left.index - right.index)) {
-      await uploadChunk(recordingId, item.index, item.blob);
+      const receipt=receipts.find(r=>r.number===item.index && r.size===item.blob.size);
+      let confirmed=false;
+      if(receipt && globalThis.crypto?.subtle) {
+        const bytes=await crypto.subtle.digest('SHA-256',await item.blob.arrayBuffer());
+        confirmed=Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('')===receipt.sha256;
+      }
+      if(!confirmed) await uploadChunk(recordingId, item.index, item.blob);
       await deletePendingChunk(recordingId, item.index).catch(() => {});
       app.failedChunks = app.failedChunks.filter(
         (chunk) => chunk.recordingId !== recordingId || chunk.index !== item.index
@@ -278,7 +288,7 @@ export function createCapture(context) {
       const result = await requestJson(`/api/recordings/${session.recordingId}/finalize`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({duration_seconds: Number(session.durationSeconds) || 0}),
+        body: JSON.stringify({duration_seconds: Number(session.durationSeconds) || 0, recovered:true}),
       });
       await deleteRecordingRecovery(session.recordingId).catch(() => {});
       return result;
@@ -299,9 +309,16 @@ export function createCapture(context) {
         return;
       }
       for (const session of sessions) {
-        const recording = recordings.find((item) => item.id === session.recordingId);
-        if (!recording || ["queued", "processing", "cancelling", "cancelled", "completed", "failed"].includes(recording.status)) {
-          await deleteRecordingRecovery(session.recordingId).catch(() => {});
+        let recording = recordings.find((item) => item.id === session.recordingId);
+        if (!recording) {
+          try { recording = (await requestJson(`/api/recordings/${encodeURIComponent(session.recordingId)}`)).recording; }
+          catch (_) { continue; }
+        }
+        if (!recording) continue; // A partial status listing is not a server receipt.
+        if (["queued", "processing", "cancelling", "cancelled", "completed", "failed"].includes(recording.status)) {
+          if(recording.status==='cancelled' || !(await pendingChunks(session.recordingId)).length) {
+            await deleteRecordingRecovery(session.recordingId).catch(() => {});
+          }
           continue;
         }
         const activelyRecording = session.recordingId === app.recordingId

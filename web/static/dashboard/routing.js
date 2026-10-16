@@ -39,7 +39,7 @@ export function createRouting(context) {
   }
 
   async function applyRoute() {
-    const {parts} = parseRoute();
+    const {parts, params} = parseRoute();
     if (parts[0] === "today" && parts.length === 1) {
       window.location.replace("#/dashboard");
       return;
@@ -75,10 +75,14 @@ export function createRouting(context) {
       const targetCourseId = targetEntry?.recording?.course_id || 0;
       if (app.recordingState === "idle" && targetCourseId !== app.activeCourseId) {
         await actions.selectCourse(targetCourseId, {updateRoute:false});
-        window.history.replaceState(null, "", libraryRoute(targetEntry));
+        window.history.replaceState(null, "", libraryRoute(targetEntry)+(params.has('time')?'?'+params.toString():''));
       }
       app.selectedLibraryKey = key;
       actions.renderLibrary();
+      if(params.has('time')) {
+        const seconds=Number(params.get('time'));
+        if(Number.isFinite(seconds)&&seconds>=0) app.previewAudioPlayer?.seekTo(seconds,{autoplay:false,reveal:true});
+      }
       return;
     }
     if (parts[0] === "capture") {

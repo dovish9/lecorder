@@ -92,6 +92,9 @@ def note_routes(library, reviews, live=None):
                 "SELECT * FROM review_runs WHERE recording_id=? ORDER BY started_at DESC",
                 (recording_id,),
             ).fetchall()
+            recovery = []
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='recovery_sessions'").fetchone():
+                recovery = [dict(r) for r in db.execute('SELECT kind,status,created_at,message FROM recovery_sessions WHERE owner=? AND message!=\'\' ORDER BY created_at',(recording_id,))]
         def public_run(row):
             value = dict(row)
             for field in ("settings", "metrics"):
@@ -101,6 +104,7 @@ def note_routes(library, reviews, live=None):
                     value[field] = {}
             return value
         return jsonify(runs=[public_run(row) for row in rows], review_runs=[public_run(row) for row in reviews],
+                       recovery=recovery,
                        live_events=live.log(recording_id) if live else [])
 
     @routes.post("/api/recordings/<recording_id>/review")

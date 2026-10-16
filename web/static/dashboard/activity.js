@@ -110,6 +110,9 @@ export function createActivity(context) {
     section.className = "pipeline-detail";
     section.hidden = true;
     section.setAttribute("aria-label", `${recording.title} 파이프라인 기록`);
+    for(const item of history.recovery || []) {
+      section.append(Object.assign(document.createElement('p'),{className:'pipeline-settings',textContent:`복구 · ${new Date(item.created_at).toLocaleString()} · ${item.message}`}));
+    }
     const runs = [...(history.runs || []), ...(history.review_runs || [])]
       .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
     if (!runs.length) runs.push({kind: "transcription", started_at: recording.started_at, completed_at: recording.completed_at, status: recording.status, metrics: {...(recording.quality || {}), stages: legacyStages(recording)}, settings: {llm_model: recording.llm_model}});

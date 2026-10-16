@@ -225,7 +225,8 @@ class LiveSession:
             started = time.monotonic()
             self.event('segment_started', start=start/RATE, duration=len(pcm)/2/RATE,
                        language=options.language, hint_tokens=options.recognition_hint_tokens)
-            body = request_json(self.config['base_url'] + '/inference', multipart={
+            from .request_history import request as tracked
+            body = tracked(lambda token: request_json(self.config['base_url'] + '/inference', multipart={
                 'file': path, 'language': options.language, 'prompt': options.recognition_hint,
                 'response_format': 'verbose_json', 'no_context': 'true', 'max_context': '224',
                 'vad': 'true', 'vad_threshold': '0.5', 'vad_min_silence_duration_ms': '700',
@@ -233,7 +234,8 @@ class LiveSession:
                 'max_len': '240', 'split_on_word': 'true', 'suppress_nst': 'true',
                 'entropy_thold': '2.8', 'logprob_thold': '-1.0', 'no_speech_thold': '0.6',
                 'beam_size': '-1', 'best_of': '1', 'no_language_probabilities': 'true'},
-                cancellation=self.token, timeout=45)
+                cancellation=token, timeout=45), self.config, 'live_speech', None,
+                self.token, len(pcm)/2/RATE, self.recording_id)
             self.token.check()
             result = Transcriber._whisper_result(body)
             if Transcriber._repetition_profile(result.segments)[0]:

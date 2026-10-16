@@ -47,7 +47,6 @@ done
 hash -r
 "$PYTHON" --version
 "$(brew --prefix cmake)/bin/cmake" --version
-git --version
 step 3 'Python 선택 · 패키지 설치'
 check_python_version
 echo "패키지 설치에 사용할 Python: $PYTHON ($PYTHON_SOURCE)"

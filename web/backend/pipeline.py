@@ -60,6 +60,8 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
     def start(self):
         if self._threads or self._stopping.is_set():
             return
+        from .publication import recover
+        recover(self.store)
         self.cleanup_orphans()
         self.notes.start()
         self.reviews.start()
@@ -68,6 +70,11 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
         self._threads.append(self._worker)
         for recording in self.store.queued_recordings():
             self.enqueue(recording.id)
+
+    def prepare_shutdown(self):
+        self._stopping.set()
+        self.notes.prepare_shutdown()
+        self.reviews.prepare_shutdown()
 
     def close(self):
         self._stopping.set()
@@ -178,8 +185,14 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
             row = self.store.get_recording(recording_id)
         except KeyError:
             return
-        with using(json.loads(row.ai_settings_json) or defaults()), collect():
-            return self._process(recording_id)
+        from .request_history import execution
+        with using(json.loads(row.ai_settings_json) or defaults()), collect(), execution(recording_id, 'transcription') as finish:
+            result = self._process(recording_id)
+            if not self._stopping.is_set():
+                latest = self.store.get_recording(recording_id)
+                if latest.status != 'queued':
+                    finish(latest.status)
+            return result
 
     def _process(self, recording_id: str) -> None:
         with self._lock:
@@ -351,7 +364,7 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
                 published_note = True
 
             pipeline_details["saving_seconds"] = round(time.monotonic() - saving_started, 3)
-            elapsed = max(0, time.monotonic() - started - current_trace()["waiting_seconds"])
+            elapsed = max(0, time.monotonic() - started - current_trace()["waiting_seconds"])+current_trace().get('reused_seconds',0)
             pipeline_details["total_seconds"] = round(elapsed, 3)
             pipeline_details.update(current_trace())
             pipeline_details["stages"] = [
@@ -362,6 +375,9 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
                 {"name": "저신뢰 확인", "seconds": pipeline_details["retry_processing_seconds"], "detail": f"{result.low_confidence_segments}개 구간 · {result.retry_accepted_groups}개 교체"},
                 {"name": "파일 저장", "seconds": pipeline_details["saving_seconds"], "detail": "오디오와 Markdown 저장"},
             ]
+            if current_trace().get('reused_seconds'):
+                pipeline_details['stages'].insert(-1,{'name':'복구된 완료 요청','seconds':current_trace()['reused_seconds'],
+                    'detail':f"이전 실행에서 처리한 {current_trace()['reused_requests']}개 요청 · 재호출 없음"})
             review_warning = (
                 f"LLM 검수 {result.fallback_chunks}/{result.llm_chunks}구간 실패 · "
                 "Whisper 원문과 완료된 검수 결과만 저장됨"
@@ -375,7 +391,8 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
                     quality_json=json.dumps(pipeline_details),
                     review_status="queued" if recording.llm_enabled else "none", review_error="",
                 )
-                self.store.commit_result(recording, [item.public() for item in result.suggestions], publish)
+                self.store.commit_result(recording, [item.public() for item in result.suggestions], publish,
+                                         output_paths=(destination_note, destination_audio if hidden_audio else None))
             shutil.rmtree(self.folder(recording.id), ignore_errors=True)
             if recording.llm_enabled:
                 self.reviews.enqueue(recording.id)
@@ -387,8 +404,11 @@ class RecordingPipeline(RecordingIntake, RecordingOutput):
             )
         except TranscriptionCancelled:
             rollback_outputs()
-            phase = self._cancel_stages.get(recording_id, "processing")
-            self._complete_cancellation(recording_id, started, phase)
+            if self._stopping.is_set() and recording_id not in self._cancel_stages:
+                self.store.update_recording(recording_id, status='queued', error='앱 재시작 후 완료된 구간부터 복구합니다.')
+            else:
+                phase = self._cancel_stages.get(recording_id, "processing")
+                self._complete_cancellation(recording_id, started, phase)
         except subprocess.CalledProcessError as error:
             rollback_outputs()
             detail = error.stderr.decode("utf-8", errors="replace")[-500:] if error.stderr else ""

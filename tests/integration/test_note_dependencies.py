@@ -351,7 +351,7 @@ class NoteDependenciesTests(NoteCase):
         with patch("web.backend.review_jobs.threading.Thread"):
             ReviewQueue(self.store, pipeline.engine, pipeline._lock, True)
         self.assertEqual(note.read_bytes(), original)
-        self.assertEqual(self.store.get_recording(row.id).review_status, "failed")
+        self.assertEqual(self.store.get_recording(row.id).review_status, "queued")
         self.assertFalse(backup.exists())
 
 

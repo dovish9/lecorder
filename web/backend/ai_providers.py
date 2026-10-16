@@ -60,10 +60,14 @@ def generate(messages, schema, **kwargs):
     try:
         from .ai_control import run
         parent = kwargs.get('cancellation')
-        result = run(lambda token: _generate(messages, schema, **{**kwargs, 'cancellation': token}), parent, kind='llm')
+        from .request_history import request as tracked
+        identity = [messages, schema, {k: v for k, v in kwargs.items() if k not in {'cancellation', 'api_key', 'config'}}]
+        result = run(lambda token: tracked(
+            lambda child: _generate(messages, schema, **{**kwargs, 'cancellation': child}),
+            config, 'llm', identity, token), parent, kind='llm')
         result['waiting_seconds'] = max(0, trace['waiting_seconds'] - waiting)
         result['seconds'] = max(0, time.monotonic() - started - result['waiting_seconds'])
-        event.update(status='completed', input_tokens=result['input_tokens'], output_tokens=result['output_tokens'])
+        event.update(status='completed', input_tokens=result['input_tokens'], output_tokens=result['output_tokens'],reused=bool(result.get('reused')))
         return result
     except TranscriptionCancelled:
         event['status'] = 'cancelled'

@@ -13,6 +13,8 @@
 - PDF·이미지 노트의 원문 추출, 용어집, 개요, 페이지별 해설과 원문 비교
 - 다시 전사 실패·중단 시 이전 결과 보존, 노트 재분석 시 페이지 이미지 재사용
 - 음성 전사와 LLM 각각의 제공자·모델·서버 설정, 작업별 설정 스냅샷
+- 대시보드의 전체 자료 검색, 로컬·외부·사용자 서버 요청 사용량, 백업 ZIP과 사본 병합
+- 앱 재시작 시 완료된 AI 응답 재사용, 파일·DB 저장 사이 중단에 대비한 복구 기록
 
 LLM 검수는 강의 선택 여부와 무관하게 실행합니다. 수정 제안을 승인하면 해당 전사문과 Markdown에 반영되며, 모델 학습이나 다음 녹음의 자동 교정 규칙으로 저장하지 않습니다.
 
@@ -28,8 +30,8 @@ cp .env.example .env  # 새 설치에서만 실행; 기존 설정을 덮어쓰�
 
 설치는 다음 순서로 실행하며 `[1/5]`부터 `[5/5]`까지 진행 상황을 표시합니다.
 
-1. **필수 도구 확인:** macOS, Xcode Command Line Tools와 Homebrew를 확인합니다. 없으면 설치 방법을 안내하고 종료합니다.
-2. **Python·Homebrew 도구 준비:** pyenv가 있으면 설치된 Python 3.13 중 최신 패치 버전을 사용하고, 없으면 pyenv로 3.13을 추가 설치합니다. pyenv가 없으면 기존 `python3` 또는 `python`을 사용하고, Python 자체가 없을 때만 Homebrew의 최신 안정 버전 `python`을 설치합니다. CMake는 Homebrew에 없을 때 설치합니다. 기존 Git(Apple Git 포함)을 사용하며 pyenv 전역·로컬 버전 설정은 변경하지 않습니다.
+1. **필수 도구 확인:** macOS, Xcode Command Line Tools(Apple Git 포함)와 Homebrew를 확인합니다. 없으면 설치 방법을 안내하고 종료합니다.
+2. **Python·Homebrew 도구 준비:** pyenv가 있으면 설치된 Python 3.13 중 최신 패치 버전을 사용하고, 없으면 pyenv로 3.13을 추가 설치합니다. pyenv가 없으면 기존 `python3` 또는 `python`을 사용하고, Python 자체가 없을 때만 Homebrew의 최신 안정 버전 `python`을 설치합니다. CMake는 Homebrew에 없을 때 설치합니다. pyenv 전역·로컬 버전 설정은 변경하지 않습니다.
 3. **Python 패키지 설치:** 선택한 Python에 `requirements.txt`를 설치·검사합니다. 기존 Python은 3.11 이상이어야 하며 패키지 호환성 검사 실패 시 중단합니다. Homebrew처럼 직접 설치가 제한된 Python은 `dependencies/python/site-packages`에 패키지를 설치합니다. 설치 성공 시 Python 경로를 기록하고 `start.command`가 같은 환경을 사용합니다.
 4. **네이티브 빌드:** 고정된 소스로 Whisper → llama.cpp → Kiwi helper → Vision helper를 빌드합니다. 이 단계에서는 모델을 내려받지 않습니다.
 5. **모델·데이터 준비:** Whisper large-v3·large-v3-turbo·Silero VAD·토크나이저, LLM GGUF·이미지 projector, Kiwi 모델·사전을 내려받고 체크섬을 검증합니다. 필수 실행 파일·패키지·모델 검사까지 통과해야 설치 완료로 표시합니다. AI 서버는 시작하지 않습니다.
@@ -90,13 +92,21 @@ llama.cpp 소스와 모델은 기본 `~/Local Storage/llama.cpp`에 두고 `depe
 | 위치 | 내용 |
 |---|---|
 | 결과 폴더 | 원본 미디어, 같은 이름의 Markdown |
-| `web/data/lecorder.db` | 강의·작업·노트 버전·실행 로그·제안 |
+| `web/data/lecorder.db` | 강의·작업·노트 버전·실행 로그·제안·완료 요청·사용량·검색 색인 |
 | `web/data/recordings/` | 진행 중 업로드·녹음 조각과 복구 자료 |
 | `web/data/notes/` | 원본 노트, 공유 페이지 이미지, 분석 자료 |
 | `web/data/ai-settings.json` | 제공자와 모델 설정, 키 원문 없음 |
 | 브라우저 IndexedDB | 서버 전송 전 녹음 조각과 복구 세션 |
+| `web/data/transfers/` | 백업 ZIP·가져오기 검사 파일·복원 기록 |
+| `web/data/publications/` | 파일 저장과 DB 반영 사이 중단을 복구하는 임시 기록 |
 
-DB·원본·설정·결과를 구조 정리 목적으로 재처리하지 않습니다. DB를 백업할 때는 SQLite 백업 API를 사용하거나 앱을 정상 종료하고 관련 파일을 함께 보관하세요. `dependencies/`, `web/data/`, `memories/`, `.env`는 Git에서 제외됩니다.
+대시보드의 **백업 만들기**로 원본·결과·강의 설정·작업 기록을 ZIP으로 저장합니다. 녹음과 업로드가 끝난 뒤 실행하세요. 백업 중에는 AI와 변경 요청을 잠시 멈추며, 완료 후 이전 AI ON/OFF 상태로 돌아갑니다. 모델·빌드·Python 환경·API 키는 제외됩니다. 가져오기는 검사 후 별도 사본으로 추가하며 이름 충돌에는 번호를 붙입니다. 현재 AI 설정과 저장 위치는 유지합니다. 다른 컴퓨터의 모델 경로는 그대로 실행하지 않으며 연결이 맞지 않는 미완료 작업은 확인 대상으로 남깁니다. 브라우저에만 남은 녹음 조각은 백업에 포함되지 않습니다.
+
+전체 검색은 모든 강의의 녹음 제목·최종 전사문과 노트 원문·개요·해설·용어집을 대상으로 합니다. 검색용 SQLite 색인은 저장·수정·삭제 후 백그라운드에서 갱신합니다. 실시간 초안과 로그는 제외하며 검색에 AI를 호출하지 않습니다. 검색 결과의 시간은 재생 위치로 이동하지만 자동 재생하지 않습니다.
+
+사용량은 현지 날짜 기준 오늘·7일·30일·전체를 지원합니다. 요청 횟수·실제 처리 시간·처리한 음성 시간·제공된 토큰을 표시하며 재시도도 포함합니다. 완료 응답 재사용은 새 요청이 아닙니다. 토큰과 중단 시 처리 시간이 없으면 미제공으로 구분합니다. 과거 기록은 명시적인 제공자 호출이 있는 일부만 포함하며 비용을 추정하지 않습니다.
+
+앱 종료로 중단된 작업은 입력·모델·요청 설정이 같은 완료 응답을 재사용하여 이어갑니다. 사용자 취소·기존 실패 작업은 자동 실행하지 않습니다. 브라우저 녹음은 다시 열었을 때 수신 확인 내역과 대조하여 남은 조각을 전송합니다. 마이크가 꺼진 동안의 소리는 복구할 수 없습니다. `dependencies/`, `web/data/`, `memories/`, `.env`는 Git에서 제외됩니다.
 
 ## 구조와 교체 지점
 
@@ -106,6 +116,8 @@ DB·원본·설정·결과를 구조 정리 목적으로 재처리하지 않습�
 - `managed_runtime.py` / `ai_runtime.py`: 공통 모델 수명주기와 제공자별 실행 인자, 앱별 레지스트리. 앱 소유 프로세스만 정리합니다.
 - `speech_processing.py` / `speech_quality.py` / `review_engine.py`: 제공자 호출·구간 처리, 품질 보호, 검수. `engine.py`가 전체 전사를 조합합니다.
 - `recording_intake.py` / `pipeline.py` / `recording_output.py`: 접수·복구, 대기·실행, 결과 저장·롤백.
+- `request_history.py` / `publication.py`: 완료 요청 재사용·요청별 사용량·파일 저장 복구.
+- `insights.py` / `backup.py`: 검색 색인·집계·검증된 백업과 사본 병합.
 - `note_repository.py` / `note_intake.py` / `note_extract.py` / `notes.py`: 노트 조회·선택, 접수, 추출, 분석 큐.
 - `*_http.py`, `note_routes.py`, `ai_routes.py`: 기능별 HTTP 경계. 기존 URL과 응답 계약 유지.
 - `web/static/dashboard/`: 상태·라우팅·강의·녹음·보관함·플레이어·업로드·대기열·알림·설정 모듈. `selectors.js`는 DOM 없이 상태를 계산하며 `dashboard.js`가 조립합니다.

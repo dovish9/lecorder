@@ -135,9 +135,10 @@ def _generate(*args, **kwargs):
         calls = trace['provider_calls']
         result['metrics'].update({
             'provider_calls': calls,
+            'reused_requests': trace.get('reused_requests',0),
             'ai_control_events': trace.get('ai_control_events', []),
             'waiting_seconds': trace['waiting_seconds'],
-            'processing_seconds': max(0, time.monotonic() - started - trace['waiting_seconds']),
+            'processing_seconds': max(0, time.monotonic() - started - trace['waiting_seconds'])+trace.get('reused_seconds',0),
             'usage_available': all(c.get('input_tokens') is not None and c.get('output_tokens') is not None for c in calls),
             'input_tokens': sum(c.get('input_tokens') or 0 for c in calls),
             'output_tokens': sum(c.get('output_tokens') or 0 for c in calls),

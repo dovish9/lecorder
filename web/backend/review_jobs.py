@@ -62,11 +62,11 @@ class ReviewQueue:
                 )
         with self.store.transaction() as db:
             db.execute(
-                "UPDATE review_runs SET status='failed',completed_at=?,error='앱 종료로 검수가 중단됐습니다.' WHERE completed_at=''",
+                "UPDATE review_runs SET status='interrupted',completed_at=?,error='앱 종료로 검수가 중단됐습니다. 완료 요청을 재사용하여 재개합니다.' WHERE completed_at=''",
                 (self.store.now(),),
             )
             db.execute(
-                "UPDATE recordings SET review_status='failed',review_error='앱 종료로 검수가 중단됐습니다.' WHERE review_status='processing'"
+                "UPDATE recordings SET review_status='queued',review_error='앱 종료로 중단된 검수를 복구합니다.' WHERE review_status='processing'"
             )
             rows = db.execute(
                 "SELECT id FROM recordings WHERE status='completed' AND review_status='queued'"
@@ -74,6 +74,9 @@ class ReviewQueue:
         for row in rows:
             self.enqueue(row["id"])
         self._threads.append(start_thread(self._run, "transcript-review"))
+
+    def prepare_shutdown(self):
+        self._stopping.set()
 
     def close(self):
         self._stopping.set()
@@ -139,8 +142,12 @@ class ReviewQueue:
             row = self.store.get_recording(recording_id)
         except KeyError:
             return
-        with using(json.loads(row.ai_settings_json) or defaults()), collect():
-            return self._process(recording_id)
+        from .request_history import execution
+        with using(json.loads(row.ai_settings_json) or defaults()), collect(), execution(recording_id, 'review') as finish:
+            result = self._process(recording_id)
+            if not self._stopping.is_set():
+                finish(self.store.get_recording(recording_id).review_status)
+            return result
 
     def _process(self, recording_id):
         backup = temporary = None
@@ -206,7 +213,7 @@ class ReviewQueue:
                 cancellation=cancellation,
             )
             cancellation.check()
-            review_seconds = max(0, time.monotonic() - started - max(stats.waiting_seconds, current_trace()["waiting_seconds"]))
+            review_seconds = max(0, time.monotonic() - started - max(stats.waiting_seconds, current_trace()["waiting_seconds"]))+current_trace().get('reused_seconds',0)
             if failed:
                 raise ValueError(
                     f"LLM 검수 {failed}/{total}구간 실패. 전사 원문은 보존했습니다."
@@ -240,7 +247,7 @@ class ReviewQueue:
                 try:
                     saving_started = time.monotonic()
                     self.store.commit_result(
-                        updated, [s.public() for s in suggestions], publish
+                        updated, [s.public() for s in suggestions], publish, output_paths=(note,)
                     )
                     saving_seconds = time.monotonic() - saving_started
                     suggestion_count = len(suggestions)
@@ -255,7 +262,9 @@ class ReviewQueue:
                         restore_required = False
                     raise
         except TranscriptionCancelled:
-            self.store.update_recording(recording_id, review_status="cancelled", review_error="")
+            current = self.store.get_recording(recording_id)
+            self.store.update_recording(recording_id,
+                review_status='queued' if self._stopping.is_set() and current.review_status != 'cancelled' else 'cancelled', review_error="")
         except Exception as error:
             try:
                 with self.lock:
@@ -277,7 +286,7 @@ class ReviewQueue:
                         "ai_control_events": current_trace().get("ai_control_events", []),
                         "llm_seconds": round(review_seconds or max(0, elapsed - current_trace()["waiting_seconds"] - saving_seconds), 3),
                         "saving_seconds": round(saving_seconds, 3),
-                        "total_seconds": round(max(0, elapsed - max(stats.waiting_seconds if stats else 0, current_trace()["waiting_seconds"])), 3),
+                        "total_seconds": round(max(0, elapsed - max(stats.waiting_seconds if stats else 0, current_trace()["waiting_seconds"]))+current_trace().get('reused_seconds',0), 3),
                         "waiting_seconds": round(max(stats.waiting_seconds if stats else 0, current_trace()["waiting_seconds"]), 3),
                         "segment_count": segment_count,
                         "suggestion_count": suggestion_count,

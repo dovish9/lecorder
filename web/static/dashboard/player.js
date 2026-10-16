@@ -231,6 +231,7 @@ export function createPlayer(context) {
           const button = document.createElement("button");
           button.type = "button";
           button.className = seconds !== null ? "markdown-timestamp" : "markdown-audio-link";
+          if(seconds !== null)button.dataset.seconds=String(seconds);
           button.textContent = match[2];
           button.setAttribute("aria-label", seconds !== null ? `${match[2]}부터 오디오 재생` : "연결된 오디오 처음부터 재생");
           button.disabled = !audio;

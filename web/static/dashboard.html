@@ -45,7 +45,7 @@
     <main class="workspace-body">
       <section class="workspace-panel dashboard-workspace" data-view-panel="dashboard">
         <header class="dashboard-heading">
-          <div><p id="dashboardDate"></p><h2>오늘의 작업</h2><span>지금 처리할 일과 검토할 결과를 정리합니다.</span></div>
+          <div><p id="dashboardDate"></p><h2>내 강의 자료</h2></div>
           <section class="ai-processing-control" aria-label="AI 처리 제어">
             <label><span id="aiControlLabel">AI 처리 켜짐</span><input id="aiControlSwitch" type="checkbox" role="switch" aria-label="AI 처리" aria-describedby="aiControlHint" checked></label>
             <p id="aiControlHint">음성 전사·실시간 받아쓰기·LLM 작업에 적용됩니다. 원음 녹음은 계속됩니다.</p>
@@ -53,14 +53,22 @@
             <span id="aiControlError" role="alert"></span>
           </section>
         </header>
-        <nav class="dashboard-summary" aria-label="작업 요약">
+        <div class="dashboard-search" id="globalSearchBox">
+          <label class="global-search-input"><span aria-hidden="true">⌕</span><input id="globalSearch" type="search" placeholder="녹음, 전사문, 강의노트에서 검색" aria-label="전체 자료 검색" autocomplete="off" aria-controls="globalSearchResults" /></label>
+          <div class="search-results-panel" id="globalSearchResults" hidden>
+            <div class="search-filters" id="searchFilters"></div><p id="searchSummary" role="status"></p><div id="searchMatches"></div><button id="searchMore" type="button" hidden>더 보기</button>
+          </div>
+        </div>
+        <nav class="dashboard-summary" aria-label="작업 요약" hidden>
           <a href="#/recordings" class="dashboard-metric"><span>오늘 완료</span><strong id="dashboardCompletedCount">0</strong><small>저장된 전사</small></a>
           <a href="#/recordings" class="dashboard-metric"><span>오늘 처리 시간</span><strong id="dashboardWorkTime">—</strong><small>대기 시간 제외</small></a>
           <a href="#/recordings" class="dashboard-metric attention"><span>확인 필요</span><strong id="dashboardAttentionMetric">0</strong><small>검토와 오류</small></a>
         </nav>
         <div class="dashboard-grid">
-          <section class="dashboard-section dashboard-queue"><header><div><h3>현재 작업 <span class="dashboard-count" id="dashboardQueueCount">0</span></h3><p>전사·검수·강의노트 분석</p></div><a href="#/recordings">보관함 열기</a></header><div class="dashboard-list" id="dashboardQueue"></div></section>
+          <section class="dashboard-section dashboard-queue"><header><div><h3>현재 작업·복구 <span class="dashboard-count" id="dashboardQueueCount">0</span></h3></div><a href="#/recordings">보관함 열기</a></header><div id="recoveryNotices"></div><div class="dashboard-list" id="dashboardQueue"></div></section>
+          <section class="dashboard-section dashboard-usage"><header><h3>AI 사용량</h3><div id="usagePeriod"></div></header><div id="usageGroups"></div><p class="insight-caption" id="usageCaption"></p><button class="insight-link" type="button" id="usageDetails">모델별 상세</button></section>
           <section class="dashboard-section dashboard-attention"><header><div><h3>검토함 <span class="dashboard-count" id="dashboardAttentionCount">0</span></h3><p>먼저 확인할 결과</p></div></header><div class="dashboard-list" id="dashboardAttention"></div><a href="#/recordings" class="dashboard-section-footer" id="dashboardAttentionMore">검토함 열기</a></section>
+          <section class="dashboard-section dashboard-backup"><header><h3>백업 및 이동</h3></header><p>강의 자료와 작업 기록을 한 파일로 보관하세요.</p><div class="transfer-actions"><button type="button" id="backupCreate">백업 만들기</button><button type="button" id="backupImport">가져오기</button></div><input type="file" id="backupFile" accept=".zip" hidden /><p class="insight-caption">모델과 API 키는 제외됩니다. 브라우저에만 남은 녹음 조각은 먼저 업로드해야 합니다.</p><div id="backupProgress" role="status"></div></section>
         </div>
       </section>
 

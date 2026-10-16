@@ -7,6 +7,7 @@ from .ai_runtime import runtime_for
 import tempfile
 import time
 import wave
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
@@ -15,6 +16,16 @@ from .ai_settings import current, configured_settings
 from .ai_transport import request_json, ProviderError
 from .note_analysis import hint_terms
 from .transcription import CancellationToken, Options, TranscriptSegment, WhisperResult
+
+
+def audio_identity(wav):
+    from .services import current_services
+    if not getattr(current_services(), 'history', None):
+        return None, None
+    with wav.open('rb') as source:
+        value = hashlib.file_digest(source, 'sha256').hexdigest()
+    with wave.open(str(wav), 'rb') as audio:
+        return value, audio.getnframes() / audio.getframerate()
 
 
 class SpeechProcessing:
@@ -150,9 +161,12 @@ class SpeechProcessing:
         started = time.monotonic()
         wait_before = current_trace()['waiting_seconds']
         from .ai_control import run
-        body = run(lambda token: request_json(api_url(config['base_url'], '/audio/transcriptions'),
+        from .request_history import request as tracked
+        audio_hash, audio_seconds = audio_identity(wav)
+        body = run(lambda token: tracked(lambda child: request_json(api_url(config['base_url'], '/audio/transcriptions'),
                             headers={'Authorization': 'Bearer ' + key}, multipart=fields,
-                            cancellation=token, timeout=1200), cancellation, kind='speech')
+                            cancellation=child, timeout=1200), config, 'speech',
+                            [audio_hash, {k:v for k,v in fields.items() if k != 'file'}], token, audio_seconds), cancellation, kind='speech')
         if not isinstance(body.get('segments'), list) or (body.get('text', '').strip() and not body['segments']):
             raise ValueError('전사 API가 구간 타임스탬프를 반환하지 않았습니다.')
         for segment in body['segments']:
@@ -213,12 +227,17 @@ class SpeechProcessing:
             def request_once(token):
                 with inference.lease(speech=True, cancellation=token,
                                      local=config.get('managed', False)), runtime_for(config).session(token):
-                    return request_json(
+                    payload = request_json(
                         config['base_url'] + '/inference',
                         headers={'Authorization': 'Bearer ' + key} if key else {},
                         multipart={'file': wav, **request_data}, cancellation=token, timeout=14400,
                     )
-            payload = run(request_once, cancellation, kind='speech')
+                    cls._whisper_result(payload)
+                    return payload
+            from .request_history import request as tracked
+            audio_hash, audio_seconds = audio_identity(wav)
+            payload = run(lambda token: tracked(request_once, config, 'speech',
+                          [audio_hash, request_data], token, audio_seconds), cancellation, kind='speech')
             if cancellation:
                 cancellation.check()
             return cls._whisper_result(payload), max(0, time.monotonic() - request_started - (current_trace()['waiting_seconds']-wait_before))

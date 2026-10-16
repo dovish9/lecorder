@@ -30,7 +30,7 @@ class RecordingIntakeTests(RecorderCase):
             for status in states:
                 self.assertEqual(reader.get_recording(status).status, status)
             reader.recover_interrupted()
-            for old, new in zip(states, ("recoverable", "failed", "failed", "queued", "completed")):
+            for old, new in zip(states, ("recoverable", "queued", "cancelled", "queued", "completed")):
                 self.assertEqual(reader.get_recording(old).status, new)
 
 
@@ -43,7 +43,7 @@ class RecordingIntakeTests(RecorderCase):
             with patch("web.backend.pipeline.threading.Thread") as worker:
                 RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work")
                 self.assertEqual(worker.return_value.start.call_count, 4)
-            self.assertEqual(store.get_recording("interrupted").status, "failed")
+            self.assertEqual(store.get_recording("interrupted").status, "queued")
 
 
     def test_suggestion_counts_are_grouped_and_include_empty_jobs(self) -> None:

@@ -78,6 +78,16 @@ def register(app, *, lectures, recording_payload, serialize_outputs, workflow):
             return jsonify(error=str(error)), 400
 
 
+    @app.get('/api/recordings/<recording_id>/chunks')
+    def recording_chunks(recording_id):
+        try:
+            workflow.store.get_recording(recording_id)
+            with workflow.store.transaction() as db:
+                rows=db.execute('SELECT number,size,sha256 FROM recording_chunks WHERE recording_id=? ORDER BY number',(recording_id,)).fetchall()
+            return jsonify(chunks=[dict(r) for r in rows])
+        except KeyError:
+            return jsonify(error='녹음을 찾을 수 없습니다.'),404
+
     @app.put("/api/recordings/<recording_id>/chunks/<int:index>")
     def save_recording_chunk(recording_id: str, index: int):
         try:
@@ -97,6 +107,9 @@ def register(app, *, lectures, recording_payload, serialize_outputs, workflow):
             recording = workflow.finalize_chunked(
                 recording_id, float(payload.get("duration_seconds") or 0)
             )
+            if payload.get('recovered') is True:
+                from .services import current_services
+                current_services().history.capture_recovered(recording_id)
             return jsonify(ok=True, recording=recording_payload(recording)), 202
         except KeyError as error:
             return jsonify(error=error.args[0]), 404

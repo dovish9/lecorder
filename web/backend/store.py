@@ -46,11 +46,16 @@ class LectureStore:
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
-        connection = sqlite3.connect(self.path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
+        self._lock.acquire()
         try:
+            connection = sqlite3.connect(self.path, timeout=10)
+        except Exception:
+            self._lock.release()
+            raise
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 10000")
             yield connection
             connection.commit()
         except Exception:
@@ -58,6 +63,7 @@ class LectureStore:
             raise
         finally:
             connection.close()
+            self._lock.release()
 
     def _setup(self) -> None:
         if self.path.exists() and self.path.stat().st_size:
@@ -119,6 +125,10 @@ class LectureStore:
                 );
                 CREATE INDEX IF NOT EXISTS recordings_created_idx
                     ON recordings(created_at DESC);
+                CREATE TABLE IF NOT EXISTS recording_chunks (
+                    recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+                    number INTEGER NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,
+                    PRIMARY KEY(recording_id,number));
                 CREATE INDEX IF NOT EXISTS recordings_status_idx
                     ON recordings(status, created_at);
                 CREATE TABLE IF NOT EXISTS suggestions (
@@ -178,10 +188,11 @@ class LectureStore:
                 "WHERE status = 'recording'"
             )
             db.execute(
-                "UPDATE recordings SET status = 'failed', "
-                "error = '앱이 종료되어 처리 작업이 중단되었습니다.' "
-                "WHERE status IN ('processing', 'cancelling')"
+                "UPDATE recordings SET status = 'queued', "
+                "error = '앱이 종료되어 완료된 구간부터 복구합니다.' "
+                "WHERE status = 'processing'"
             )
+            db.execute("UPDATE recordings SET status='cancelled',error='중단 요청 후 앱이 종료되었습니다.' WHERE status='cancelling'")
 
     @staticmethod
     def now() -> str:
@@ -496,6 +507,8 @@ class LectureStore:
             if str(row["status"]) not in allowed:
                 raise ValueError(invalid_message)
             db.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='recovery_sessions'").fetchone():
+                db.execute('DELETE FROM recovery_sessions WHERE owner=?', (recording_id,))
 
     def discard_recording(self, recording_id: str) -> None:
         self._delete_recording_in_states(
@@ -532,16 +545,25 @@ class LectureStore:
         )
 
     def commit_result(self, recording: Recording, suggestions: list[dict[str, Any]],
-                      publish: Callable[[], None]) -> None:
+                      publish: Callable[[], None], *, output_paths=()) -> None:
         """Publish files while committing transcript and review data together."""
         values = asdict(recording)
         values.pop("id")
-        with self._lock, self._connect() as db:
-            assignments = ", ".join(f"{key} = ?" for key in values)
-            db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
-                       (*values.values(), recording.id))
-            self._replace_suggestions(db, recording.id, suggestions)
-            publish()
+        from .publication import Publication
+        journal = Publication(self, recording, output_paths) if output_paths else None
+        try:
+            with self._lock, self._connect() as db:
+                assignments = ", ".join(f"{key} = ?" for key in values)
+                db.execute(f"UPDATE recordings SET {assignments} WHERE id = ?",
+                           (*values.values(), recording.id))
+                self._replace_suggestions(db, recording.id, suggestions)
+                publish()
+        except Exception:
+            if journal:
+                journal.rollback()
+            raise
+        if journal:
+            journal.complete()
 
     def suggestion_counts(self, recording_ids: list[str]) -> dict[str, dict[str, int]]:
         counts = {
