@@ -235,7 +235,8 @@
   overscroll-behavior: contain;
   padding: 20px 22px;
 }
-.note-body-workspace{padding:0;overflow:hidden}
+.note-body-workspace{display:flex;flex-direction:column;padding:0;overflow:hidden}
+.note-body-workspace>.note-error{flex:none;margin:0;border-radius:0;border-width:0 0 .5px}
 .note-body > :first-child {
   margin-top: 0;
 }
@@ -254,7 +255,7 @@
 .note-page-options{position:absolute;z-index:4;top:calc(100% + 5px);left:0;display:grid;min-width:178px;max-height:270px;overflow:auto;padding:5px;border:.5px solid var(--line2);border-radius:8px;background:var(--raised);box-shadow:0 12px 28px #0003}
 .note-page-options button{border:0;text-align:left;background:transparent;border-radius:5px;padding:7px 9px;white-space:nowrap}
 .note-page-options button[aria-selected="true"]{background:var(--blue-soft);color:var(--blue);font-weight:600}
-.note-workspace{display:grid;grid-template-columns:minmax(360px,1fr) minmax(360px,1fr);height:100%;min-height:0;background:var(--window)}
+.note-workspace{display:grid;grid-template-columns:minmax(360px,1fr) minmax(360px,1fr);flex:1;min-height:0;background:var(--window)}
 .note-page-panel,.note-explanation-panel{min-width:0;min-height:0;display:flex;flex-direction:column}
 .note-page-panel{border-right:.5px solid var(--line);background:var(--surface)}
 .note-page-viewport{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:24px;background:#e8e8eb}
@@ -336,7 +337,7 @@
   max-width: 110px;
   font-size: 11px;
 }
-.note-body section {
+.note-body section:not(.note-page-panel):not(.note-explanation-panel) {
   border-bottom: 0.5px solid var(--line);
   padding: 18px 0;
 }
@@ -409,7 +410,7 @@
     padding: 4px 12px;
   }
   .note-body-workspace{overflow:auto;padding:16px}
-  .note-workspace{grid-template-columns:1fr;height:auto;gap:14px;background:transparent}
+  .note-workspace{grid-template-columns:1fr;flex:none;height:auto;gap:14px;background:transparent}
   .note-page-panel,.note-explanation-panel{min-height:420px;border:.5px solid var(--line);border-radius:9px;overflow:hidden}
   .note-page-panel{border-right:.5px solid var(--line)}
   .note-page-viewport{max-height:520px;padding:14px}
