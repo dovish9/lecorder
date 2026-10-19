@@ -199,6 +199,7 @@ class RecordingOutput:
             raise ValueError("수정 제안의 문장 위치를 찾지 못했습니다.") from error
         if suggestion.original not in current:
             raise ValueError("현재 전사문에서 원래 표현을 찾지 못했습니다.")
+        context = dict(segments[index], index=index)
         segments[index]["text"] = current.replace(suggestion.original, suggestion.replacement, 1)
         breaks = {int(item) for item in json.loads(recording.breaks_json)}
         updated = replace(
@@ -212,12 +213,8 @@ class RecordingOutput:
         temporary = note.with_name(f".{note.name}.{recording.id}.review")
         try:
             temporary.write_text(render_note(updated, segments, breaks), encoding="utf-8")
-            temporary.replace(note)
+            recording = self.store.accept_suggestion(
+                suggestion_id, updated, context, lambda: temporary.replace(note))
         finally:
             temporary.unlink(missing_ok=True)
-        recording = self.store.update_recording(
-            recording.id, segments_json=updated.segments_json,
-            transcript_text=updated.transcript_text,
-        )
-        self.store.decide_suggestion(suggestion_id, "accepted")
         return recording, None

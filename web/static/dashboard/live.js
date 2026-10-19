@@ -76,14 +76,14 @@ export function createLive(context) {
       session.id = result.live.session_id;
       synchronize(session, result.live);
       if (current !== session || session.stopped) {
-        void bounded(`${base(recordingId)}/${session.id}/control`, json({stop: true})).catch(() => {});
+        void bounded(`${base(recordingId)}/${session.id}/control`, json({stop: true, reason: "start_superseded"})).catch(() => {});
         disconnect(session); return;
       }
       void drain(session);
     } catch (error) {
       failures.set(recordingId, `실시간 전사 시작 실패: ${error.message} · 원음 녹음은 계속됩니다.`);
       disconnect(session);
-      if (session.id) void bounded(`${base(recordingId)}/${session.id}/control`, json({stop: true})).catch(() => {});
+      if (session.id) void bounded(`${base(recordingId)}/${session.id}/control`, json({stop: true, reason: "start_failed"})).catch(() => {});
     }
   }
   function pauseLive(paused) {
@@ -93,12 +93,12 @@ export function createLive(context) {
     session.node?.port.postMessage({paused});
     if (session.id) void bounded(`${base(session.recordingId)}/${session.id}/control`, json({paused})).catch(() => {});
   }
-  function stopLive() {
+  function stopLive(reason = "capture_stopped") {
     const session = current;
     current = null;
     if (!session) return;
     session.stopped = true; session.queue = []; disconnect(session);
-    if (session.id) void bounded(`${base(session.recordingId)}/${session.id}/control`, json({stop: true})).catch(() => {});
+    if (session.id) void bounded(`${base(session.recordingId)}/${session.id}/control`, json({stop: true, reason})).catch(() => {});
   }
   function livePreview(recording) {
     const panel = document.createElement('section'); panel.className = 'live-preview'; panel.dataset.liveRecording = recording.id;

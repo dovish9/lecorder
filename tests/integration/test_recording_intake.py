@@ -242,6 +242,11 @@ class RecordingIntakeTests(RecorderCase):
             pipeline.save_chunk(recording.id, 0, io.BytesIO(b"first"))
             pipeline.save_chunk(recording.id, 1, io.BytesIO(b"second"))
             pipeline.finalize_chunked(recording.id, 18.0)
+            with patch.object(pipeline, 'enqueue') as enqueue:
+                repeated = pipeline.finalize_chunked(recording.id, 999.0)
+                enqueue.assert_not_called()
+                self.assertEqual(repeated.duration_seconds, 18.0)
+                self.assertEqual(Path(repeated.source_path).read_bytes(), b"firstsecond")
             pipeline.process_next()
             completed = store.get_recording(recording.id)
             self.assertEqual(completed.status, "completed")

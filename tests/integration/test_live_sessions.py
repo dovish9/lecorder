@@ -52,12 +52,27 @@ class LiveSessionContractTests(RecorderCase):
         self.assertFalse(live.has_draft(row))
         self.assertFalse(live.folder(row.id).exists())
 
+    def test_empty_or_incomplete_recovery_never_stops_active_live_session(self):
+        live = Mock(); self.workflow.live = live
+        for chunk in (None, 1):
+            if chunk is not None:
+                self.workflow.save_chunk(self.row.id, chunk, io.BytesIO(b'partial'))
+            with self.assertRaises(ValueError):
+                self.workflow.finalize_chunked(self.row.id)
+            live.end.assert_not_called()
+            self.assertEqual(self.store.get_recording(self.row.id).status, 'recording')
+
+    def test_stop_reason_is_recorded_once(self):
+        session = LiveSession(self.services.live, self.row.id, {})
+        session.stop('pagehide'); session.stop('another')
+        self.assertEqual([e['reason'] for e in session.events if e['event']=='stop_requested'], ['pagehide'])
+
     def test_original_finalization_stops_live_before_queueing(self):
         live = Mock(); self.workflow.live = live
         self.workflow.save_chunk(self.row.id, 0, io.BytesIO(b'original'))
         with patch.object(self.workflow, '_preserve_intake', side_effect=lambda row: row):
             self.workflow.finalize_chunked(self.row.id, 3)
-        live.end.assert_called_once_with(self.row.id)
+        live.end.assert_called_once_with(self.row.id, reason="recording_finalized")
         self.assertEqual(Path(self.row.source_path).read_bytes(), b'original')
         priority, _, item = self.workflow._queue.get_nowait()
         self.assertEqual((priority,item), (0,self.row.id))

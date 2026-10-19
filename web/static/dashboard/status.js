@@ -87,7 +87,7 @@ export function createStatus(context) {
       await actions.refreshStorage();
       if (!window.location.hash) {
         const restored = window.localStorage.getItem(VIEW_STORAGE_KEY);
-        window.location.hash = restored === "courses" ? actions.courseRoute() : restored === "recordings" ? "#/recordings" : "#/dashboard";
+        window.location.hash = restored === "courses" ? actions.courseRoute() : restored === "recordings" ? "#/recordings" : restored === "settings" ? "#/settings" : "#/dashboard";
       }
       await actions.applyRoute();
       every(refreshStatus, 1800);

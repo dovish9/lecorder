@@ -22,6 +22,7 @@
       <a class="source-item active" href="#/dashboard" data-view="dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span>대시보드</span></a>
       <a class="source-item" href="#/courses" data-view="courses"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg><span>강의</span></a>
       <a class="source-item" href="#/recordings" data-view="recordings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h6l1.8 2H20v10H4zM4 9h16M8 13h8M8 16h5"/></svg><span>보관함</span><b id="libraryBadge" hidden></b></a>
+      <a class="source-item" href="#/settings" data-view="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.7 3.65h4.6l.55 2.23c.48.2.93.46 1.34.77l2.18-.67 2.3 3.99-1.65 1.56a7 7 0 0 1 0 1.54l1.65 1.56-2.3 3.99-2.18-.67c-.41.31-.86.57-1.34.77l-.55 2.23H9.7l-.55-2.23a7.2 7.2 0 0 1-1.34-.77l-2.18.67-2.3-3.99 1.65-1.56a7 7 0 0 1 0-1.54L3.33 9.97l2.3-3.99 2.18.67c.41-.31.86-.57 1.34-.77z"/><circle cx="12" cy="12.3" r="2.65"/></svg><span>설정</span></a>
     </nav>
     <section class="sidebar-activity" id="progressCard" data-phase="idle" aria-live="polite">
       <header><span id="progressKicker">대기 중</span><i aria-hidden="true"></i></header>
@@ -38,7 +39,6 @@
       <div class="toolbar-actions">
         <div class="server-status has-tooltip" id="serverPill" tabindex="0" role="status" aria-live="polite" data-tooltip="Whisper와 LLM의 실제 연결 상태입니다."><i></i><span id="serverText">서버 확인 중</span></div>
         <a class="toolbar-icon has-tooltip" id="guideButton" href="/guide" aria-label="사용 안내 열기" data-tooltip="사용 안내"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 3.75h7.5l3 3v13.5H6.75zM14.25 3.75v3h3M9.5 11h5M9.5 14.5h5"/></svg></a>
-        <button class="toolbar-icon has-tooltip" id="systemButton" type="button" aria-label="시스템 경로 설정 열기" data-tooltip="시스템 경로 설정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.7 3.65h4.6l.55 2.23c.48.2.93.46 1.34.77l2.18-.67 2.3 3.99-1.65 1.56a7 7 0 0 1 0 1.54l1.65 1.56-2.3 3.99-2.18-.67c-.41.31-.86.57-1.34.77l-.55 2.23H9.7l-.55-2.23a7.2 7.2 0 0 1-1.34-.77l-2.18.67-2.3-3.99 1.65-1.56a7 7 0 0 1 0-1.54L3.33 9.97l2.3-3.99 2.18.67c.41-.31.86-.57 1.34-.77z"/><circle cx="12" cy="12.3" r="2.65"/></svg></button>
       </div>
     </header>
 
@@ -95,6 +95,42 @@
         <aside class="library-detail" id="libraryDetail" aria-live="polite"><div class="detail-empty"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 9h8l2 3h12v14H5zM5 12h22"/></svg><h2>녹음을 선택하세요</h2><p>원음, Markdown, 수정 제안과 처리 기록을 한곳에서 볼 수 있습니다.</p></div></aside>
       </section>
 
+<section class="workspace-panel settings-workspace" id="systemDialog" data-view-panel="settings" hidden aria-labelledby="systemDialogTitle">
+  <form class="system-settings" id="systemForm" autocomplete="off">
+    <nav class="system-settings-tabs" role="tablist" aria-label="설정 영역" aria-orientation="vertical">
+      <button type="button" role="tab" data-ai-tab="paths" aria-selected="true" tabindex="0"><span class="settings-category-icon paths" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3z M3 7V4h7l2 3"/></svg></span><span>저장 위치</span></button>
+      <button type="button" role="tab" data-ai-tab="speech" aria-selected="false" tabindex="-1"><span class="settings-category-icon speech" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6v10H9z M6 11v2a6 6 0 0 0 12 0v-2 M12 19v3"/></svg></span><span>음성 전사</span></button>
+      <button type="button" role="tab" data-ai-tab="llm" aria-selected="false" tabindex="-1"><span class="settings-category-icon llm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v12H9l-4 4z M9 9h6 M9 13h4"/></svg></span><span>LLM</span></button>
+      <button type="button" role="tab" data-ai-tab="history" aria-selected="false" tabindex="-1"><span class="settings-category-icon history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z M9 11l2 2 4-4 M9 17h6"/></svg></span><span>수정 승인 이력</span></button>
+    </nav>
+    <div class="settings-content">
+    <header class="system-settings-header"><h2 id="systemDialogTitle">저장 위치</h2><p id="settingsDescription">프로젝트와 전사 결과를 저장할 위치를 관리합니다.</p></header>
+    <div class="system-settings-body" id="pathSettingsPanel">
+      <section class="system-path-group" aria-labelledby="projectDirLabel">
+        <div class="system-path-heading"><label id="projectDirLabel" for="projectDir">Lecorder 프로젝트</label><small id="projectCheck">확인 중</small></div>
+        <textarea id="projectDir" name="lecorder-project-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="systemWhisperInfo"></textarea>
+        <div class="system-dependency" id="systemWhisperInfo"><span>Whisper <code>dependencies/whisper.cpp</code></span><small id="whisperCheck">확인 중</small></div>
+      </section>
+      <section class="system-path-group" aria-labelledby="outputDirLabel">
+        <div class="system-path-heading"><label id="outputDirLabel" for="outputDir">전사 결과 저장 폴더</label><small id="outputCheck">확인 중</small></div>
+        <textarea id="outputDir" name="lecorder-output-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="outputDirHint"></textarea>
+        <p id="outputDirHint">원본 오디오와 Markdown 결과를 이 폴더에 저장합니다.</p>
+      </section>
+    </div>
+    <div class="system-settings-body ai-settings-panel" id="aiSettingsPanel" hidden></div>
+    <section id="approvalHistory" class="approval-history" hidden aria-label="수정 승인 이력">
+      <header><h3>수정 승인 이력</h3><p>승인한 수정의 당시 발화와 시간 범위를 자료로 보관합니다. 재검수 후에도 유지됩니다.</p><p>이 기능을 적용한 이후의 승인부터 기록합니다. 시간 범위는 수정 단어가 포함된 발화 전체입니다.</p></header>
+      <p id="approvalHistoryStatus" role="status"></p><div id="approvalHistoryList"></div>
+      <div class="history-pagination"><button type="button" id="historyPrevious">이전</button><span id="historyPage"></span><button type="button" id="historyNext">다음</button></div>
+    </section>
+    <footer class="system-settings-footer">
+      <p id="systemSaveHint">경로 저장 시 앱과 로컬 서버가 다시 시작됩니다.</p>
+      <p id="systemMessage" role="status"></p>
+      <div><button id="cancelSystemButton" type="button">변경 취소</button><button id="saveSystemButton" type="submit">경로 저장</button></div>
+    </footer>
+    </div>
+  </form>
+</section>
       <section class="review-workspace" id="reviewDialog" hidden aria-labelledby="reviewDialogTitle">
         <header class="review-heading"><div><p id="reviewRecordingName">선택한 녹음</p><h2 id="reviewDialogTitle">수정 제안</h2><span id="reviewSubtitle">제안된 표현을 원음과 함께 확인합니다.</span></div><button id="closeReviewButton" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12.5 4-6 6 6 6"/></svg>상세로 돌아가기</button></header>
         <div class="review-list" id="reviewList"></div>
@@ -135,37 +171,7 @@
 </dialog>
 
 <dialog class="guide-dialog" id="guideDialog" aria-label="Lecorder 사용 안내"><div class="guide-frame"><iframe id="guideFrame" title="Lecorder 사용 안내" loading="lazy"></iframe><button class="guide-dialog-close" id="closeGuideButton" type="button" aria-label="사용 안내 닫기">×</button></div></dialog>
-<dialog class="system-dialog" id="systemDialog" aria-labelledby="systemDialogTitle">
-  <form method="dialog" class="system-settings" id="systemForm" autocomplete="off">
-    <header class="system-settings-header">
-      <div><h2 id="systemDialogTitle">시스템 설정</h2><p>저장 위치와 AI 연결을 관리합니다.</p></div>
-      <button class="dialog-close" id="closeSystemButton" type="button" aria-label="설정 창 닫기">×</button>
-    </header>
-    <nav class="system-settings-tabs" role="tablist" aria-label="설정 영역">
-      <button type="button" role="tab" data-ai-tab="paths" aria-selected="true">저장 위치</button>
-      <button type="button" role="tab" data-ai-tab="speech" aria-selected="false" tabindex="-1">음성 전사</button>
-      <button type="button" role="tab" data-ai-tab="llm" aria-selected="false" tabindex="-1">LLM</button>
-    </nav>
-    <div class="system-settings-body" id="pathSettingsPanel">
-      <section class="system-path-group" aria-labelledby="projectDirLabel">
-        <div class="system-path-heading"><label id="projectDirLabel" for="projectDir">Lecorder 프로젝트</label><small id="projectCheck">확인 중</small></div>
-        <textarea id="projectDir" name="lecorder-project-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="systemWhisperInfo"></textarea>
-        <div class="system-dependency" id="systemWhisperInfo"><span>Whisper <code>dependencies/whisper.cpp</code></span><small id="whisperCheck">확인 중</small></div>
-      </section>
-      <section class="system-path-group" aria-labelledby="outputDirLabel">
-        <div class="system-path-heading"><label id="outputDirLabel" for="outputDir">전사 결과 저장 폴더</label><small id="outputCheck">확인 중</small></div>
-        <textarea id="outputDir" name="lecorder-output-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="outputDirHint"></textarea>
-        <p id="outputDirHint">원본 오디오와 Markdown 결과를 이 폴더에 저장합니다.</p>
-      </section>
-    </div>
-    <div class="system-settings-body ai-settings-panel" id="aiSettingsPanel" hidden></div>
-    <footer class="system-settings-footer">
-      <p id="systemSaveHint">경로 저장 시 앱과 로컬 서버가 다시 시작됩니다.</p>
-      <p id="systemMessage" role="status"></p>
-      <div><button id="cancelSystemButton" type="button">취소</button><button id="saveSystemButton" type="submit">경로 저장</button></div>
-    </footer>
-  </form>
-</dialog>
+
 <dialog class="pipeline-dialog" id="pipelineDialog" aria-labelledby="pipelineDialogTitle"><section class="pipeline-dialog-frame"><header><div><h2 id="pipelineDialogTitle">작업 로그</h2><p id="pipelineDialogSubtitle"></p></div><button class="dialog-close" id="closePipelineButton" type="button" aria-label="작업 로그 닫기">×</button></header><div class="pipeline-dialog-body" id="pipelineDialogBody"></div></section></dialog>
 <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><h2 id="confirmTitle">확인</h2><p id="confirmMessage"></p><div><button id="confirmCancel" value="cancel">취소</button><button id="confirmAccept" class="danger" value="confirm">확인</button></div></form></dialog>
 <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>

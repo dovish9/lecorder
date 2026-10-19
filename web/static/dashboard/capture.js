@@ -1,3 +1,4 @@
+import {acquireRecordingOwnership} from "../recording-ownership.js";
 import * as recoveryStore from "../recording-store.js";
 import {requestJson} from "./api.js";
 import {clockText, frequencyBandLevel, recordingExtension} from "./selectors.js";
@@ -5,6 +6,8 @@ import {clockText, frequencyBandLevel, recordingExtension} from "./selectors.js"
 export function createCapture(context) {
   const {deletePendingChunk, deleteRecordingRecovery, pendingChunks, putPendingChunk, putRecordingSession, recordingSessions, updateRecordingSession} = context.recovery || recoveryStore;
   const {app, ui, $, $$, actions, listen, every} = context;
+  const acquireOwnership = context.acquireOwnership || acquireRecordingOwnership;
+  let releaseOwnership = null;
   function timeoutError(message) {
     const error = new Error(message);
     error.name = "TimeoutError";
@@ -181,14 +184,15 @@ export function createCapture(context) {
     if (!blob.size || !app.recordingId) return;
     const item = {recordingId: app.recordingId, index: app.chunkIndex, blob};
     app.chunkIndex += 1;
+    const nextChunkIndex = app.chunkIndex;
+    const durationSeconds = Math.max(0, (app.pausedAt || Date.now()) - app.recordingStartedAt - app.pausedDuration) / 1000;
     // Persist immediately. A stalled upload must never hold up later chunks from
     // reaching durable browser storage.
     const persistence = (async () => {
       try {
         await putPendingChunk(item);
         await updateRecordingSession(item.recordingId, {
-          durationSeconds: Math.max(0, Date.now() - app.recordingStartedAt - app.pausedDuration) / 1000,
-          nextChunkIndex: app.chunkIndex,
+          durationSeconds, nextChunkIndex,
         });
         return true;
       } catch (_) {
@@ -284,35 +288,46 @@ export function createCapture(context) {
     const existing = app.recoveryTasks.get(session.recordingId);
     if (existing) return existing;
     const task = (async () => {
-      await retryFailedChunks(session.recordingId);
-      const result = await requestJson(`/api/recordings/${session.recordingId}/finalize`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({duration_seconds: Number(session.durationSeconds) || 0, recovered:true}),
-      });
-      await deleteRecordingRecovery(session.recordingId).catch(() => {});
-      return result;
+      const release = await acquireOwnership(session.recordingId);
+      if (!release) return null; // Another tab is still recording; never finalize it.
+      try {
+        await retryFailedChunks(session.recordingId);
+        const result = await requestJson(`/api/recordings/${session.recordingId}/finalize`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({duration_seconds: Number(session.durationSeconds) || 0, recovered:true}),
+        });
+        await deleteRecordingRecovery(session.recordingId).catch(() => {});
+        return result;
+      } finally { release(); }
     })();
     app.recoveryTasks.set(session.recordingId, task);
     void task.finally(() => app.recoveryTasks.delete(session.recordingId)).catch(() => {});
     return task;
   }
 
-  async function recoverRecordingSessions(recordings) {
-    if (app.recoverySyncing) return;
+  let recoveryPromise = null;
+  function recoverRecordingSessions(recordings) {
+    if (recoveryPromise) return recoveryPromise;
+    recoveryPromise = recoverSessions(recordings).finally(() => { recoveryPromise = null; });
+    return recoveryPromise;
+  }
+
+  async function recoverSessions(recordings) {
+    let complete = true;
     app.recoverySyncing = true;
     try {
       let sessions = [];
       try {
         sessions = await recordingSessions();
       } catch (_) {
-        return;
+        return false;
       }
       for (const session of sessions) {
         let recording = recordings.find((item) => item.id === session.recordingId);
         if (!recording) {
           try { recording = (await requestJson(`/api/recordings/${encodeURIComponent(session.recordingId)}`)).recording; }
-          catch (_) { continue; }
+          catch (_) { complete = false; continue; }
         }
         if (!recording) continue; // A partial status listing is not a server receipt.
         if (["queued", "processing", "cancelling", "cancelled", "completed", "failed"].includes(recording.status)) {
@@ -324,7 +339,8 @@ export function createCapture(context) {
         const activelyRecording = session.recordingId === app.recordingId
           && app.mediaRecorder
           && app.mediaRecorder.state !== "inactive";
-        if (session.recordingId === app.finalizingRecordingId) continue;
+        if (session.recordingId === app.finalizingRecordingId
+            || (session.recordingId === app.recordingId && app.recordingState === "starting")) continue;
         if (activelyRecording) {
           app.chunkUploadChain = app.chunkUploadChain.then(
             () => retryFailedChunks(session.recordingId)
@@ -337,17 +353,19 @@ export function createCapture(context) {
           }
           continue;
         }
-        if (!["recording", "recoverable"].includes(recording.status)
-            || app.recoveryAttempted.has(session.recordingId)) continue;
+        if (!["recording", "recoverable"].includes(recording.status)) continue;
+        if (app.recoveryAttempted.has(session.recordingId)) { complete = false; continue; }
         app.recoveryAttempted.add(session.recordingId);
         try {
           const result = await restoreRecordingSession(session);
+          if (!result) { app.recoveryAttempted.delete(session.recordingId); continue; }
           actions.renderRecordings([
             result.recording,
             ...app.recordings.filter((item) => item.id !== session.recordingId),
           ]);
           actions.showToast(`중단됐던 ‘${recording.title}’ 녹음을 복구해 전사 대기열에 추가했습니다.`, "success");
         } catch (error) {
+          complete = false;
           actions.showToast(`녹음 자동 복구 실패: ${error.message}`, "error");
           window.setTimeout(() => app.recoveryAttempted.delete(session.recordingId), 10000);
         }
@@ -355,6 +373,7 @@ export function createCapture(context) {
     } finally {
       app.recoverySyncing = false;
     }
+    return complete;
   }
 
   let recordingNoteSave = Promise.resolve();
@@ -494,6 +513,9 @@ export function createCapture(context) {
     ui.dockCoursePicker.removeAttribute("open");
     setRecorderState("starting");
     try {
+      if (!await recoverRecordingSessions(app.recordings || [])) {
+        throw new Error("이전 녹음 저장을 완료하지 못했습니다. 연결을 확인한 뒤 다시 시작해 주세요.");
+      }
       await actions.flushCourseSave({requireSaved: true});
 
     } catch (error) {
@@ -521,6 +543,8 @@ export function createCapture(context) {
         body: JSON.stringify({title: app.recordingTitle, extension, lecture_note_id: app.recordingNoteSaved || null}),
       });
       app.recordingId = prepared.recording.id;
+      releaseOwnership = await acquireOwnership(app.recordingId);
+      if (!releaseOwnership) throw new Error("녹음 소유권을 확보하지 못했습니다. 다른 탭을 확인해 주세요.");
       app.recordingTitle = prepared.recording.title;
       app.chunkIndex = 0;
       app.chunkUploadChain = Promise.resolve();
@@ -546,13 +570,14 @@ export function createCapture(context) {
           actions.showToast(`${error.message} · 보관함에서 남은 녹음을 복구할 수 있습니다.`, "error");
           app.recordingId = null;
         } finally {
+          releaseOwnership?.(); releaseOwnership = null;
           app.mediaRecorder = null;
           app.recordingTitle = "";
           app.recordingCourseId = null;
           setRecorderState("idle");
         }
       }, {once: true});
-      app.mediaRecorder.start(5000);
+      app.mediaRecorder.start(1000);
       startSoundMeter(app.mediaStream);
       app.recordingStartedAt = Date.now();
       app.pausedAt = 0;
@@ -572,6 +597,7 @@ export function createCapture(context) {
         void fetch(`/api/recordings/${abandoned}`, {method: "DELETE"});
         void deleteRecordingRecovery(abandoned).catch(() => {});
       }
+      releaseOwnership?.(); releaseOwnership = null;
       app.mediaRecorder = null;
       app.recordingTitle = "";
       app.recordingCourseId = null;
@@ -582,6 +608,7 @@ export function createCapture(context) {
 
   function stopDockRecording() {
     if (!app.mediaRecorder || app.mediaRecorder.state === "inactive") return;
+    if (!app.pausedAt) app.pausedAt = Date.now();
     ui.dockPauseButton.disabled = true;
     setRecorderState("finalizing");
     app.mediaRecorder.stop();
@@ -612,6 +639,12 @@ export function createCapture(context) {
     if (!app.mediaRecorder || app.mediaRecorder.state === "inactive") return;
     event.preventDefault();
     event.returnValue = "";
+  });
+
+  // Unload cannot await IndexedDB/network work. Stop best-effort here; the next
+  // page must finish durable recovery before it may create another recording.
+  listen(window, "pagehide", () => {
+    stopDockRecording();
   });
 
   listen(document, "visibilitychange", () => {

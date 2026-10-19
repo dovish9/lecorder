@@ -8,6 +8,7 @@ export function createRouting(context) {
   }
 
   const viewCopy = {
+    settings: ["설정", "저장 위치와 AI 연결, 수정 이력을 관리합니다."],
     dashboard: ["대시보드", "녹음과 전사 작업의 현재 상태를 확인합니다."],
     courses: ["강의", "강의별 음성 인식 설정과 강의노트를 관리합니다."],
     recordings: ["보관함", "원음, 결과 파일, 수정 검토와 처리 기록을 함께 봅니다."],
@@ -47,6 +48,11 @@ export function createRouting(context) {
     if (parts[0] === "dashboard" && parts.length === 1) {
       switchWorkspace("dashboard");
       actions.renderDashboard();
+      return;
+    }
+    if (parts[0] === "settings") {
+      if(app.activeView!=="settings") actions.renderEnvironment(app.environment);
+      switchWorkspace("settings");
       return;
     }
     if (parts[0] === "courses") {

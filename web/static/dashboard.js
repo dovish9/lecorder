@@ -50,7 +50,7 @@ Object.assign(context.actions, createInsights(context));
 
 window.addEventListener("pagehide", event => {
   if (event.persisted) return;
-  context.actions.stopLive();
+  context.actions.stopLive("pagehide");
   controller.abort();
   timers.forEach(window.clearInterval);
 });

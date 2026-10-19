@@ -190,8 +190,11 @@ class LiveSession:
             if ended is not None and not self.stopped.is_set():
                 self.event('displayed', version=version, latency_seconds=time.monotonic()-ended)
 
-    def stop(self):
+    def stop(self, reason='unspecified'):
         with self.lock:
+            if self.lifetime.cancelled:
+                return
+            self.event('stop_requested', reason=reason)
             self.accepting = False
             self.pending.clear()
             self.pending_samples = 0
@@ -476,14 +479,14 @@ class LiveTranscription:
                 raise ValueError('만료된 실시간 전사 세션입니다.')
             return session
 
-    def end(self, recording_id, session_id=None):
+    def end(self, recording_id, session_id=None, *, reason="server_stop"):
         with self.lock:
             session = self.active
             if not session or session.recording_id != recording_id:
                 return
             if session_id is not None and session.id != session_id:
                 raise ValueError('만료된 실시간 전사 세션입니다.')
-            session.stop()
+            session.stop(reason)
         if not session.stopped.wait(12):
             raise RuntimeError('실시간 전사 종료를 기다리고 있습니다.')
 
@@ -493,7 +496,7 @@ class LiveTranscription:
                 session = self.active
                 if session and not session.stopped.is_set() and time.monotonic()-session.last_seen > 30:
                     session.event('heartbeat_expired')
-                    session.stop()
+                    session.stop('heartbeat_expired')
 
     def draft(self, recording_id):
         path = self.folder(recording_id) / 'live-draft.json'
@@ -514,6 +517,6 @@ class LiveTranscription:
         with self.lock:
             session = self.active
         if session:
-            self.end(session.recording_id)
+            self.end(session.recording_id, reason='app_shutdown')
         if self.watcher:
             self.watcher.join(timeout=3)

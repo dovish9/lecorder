@@ -17,13 +17,11 @@ export function createSettings(context) {
     }
   }
 
-  listen(ui.systemButton, "click", () => {
+  $("#cancelSystemButton").addEventListener("click", () => {
     renderEnvironment(app.environment);
-    ui.systemMessage.textContent = "";
-    ui.systemDialog.showModal();
+    ui.systemMessage.textContent = "변경을 취소했습니다.";
+    ui.systemDialog.dispatchEvent(new Event("settings-reset"));
   });
-  listen(ui.closeSystemButton, "click", () => ui.systemDialog.close());
-  $("#cancelSystemButton").addEventListener("click", () => ui.systemDialog.close());
   for (const field of [ui.projectDir, ui.outputDir]) {
     field.addEventListener("input", () => {
       field.value = field.value.replace(/[\r\n]+/g, "");
@@ -32,10 +30,6 @@ export function createSettings(context) {
       if (event.key === "Enter") event.preventDefault();
     });
   }
-  listen(ui.systemDialog, "click", (event) => {
-    if (event.target === ui.systemDialog) ui.systemDialog.close();
-  });
-
   async function waitForServerRestart() {
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
     const deadline = Date.now() + 30000;

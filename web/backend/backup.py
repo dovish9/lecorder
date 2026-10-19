@@ -16,7 +16,7 @@ from .files import safe_name
 
 TABLES = ('courses', 'lecture_notes', 'note_revisions', 'note_pages', 'note_details',
           'recordings', 'recording_chunks', 'suggestions', 'transcription_runs', 'review_runs',
-          'recovery_sessions', 'request_checkpoints', 'ai_requests')
+          'recovery_sessions', 'request_checkpoints', 'ai_requests', 'suggestion_history')
 
 
 def digest(path):
@@ -200,7 +200,7 @@ class Backups:
             if archive.getinfo('manifest.json').file_size > 128*1024*1024:
                 raise ValueError('백업 목록이 너무 큽니다.')
             manifest = json.loads(archive.read('manifest.json'))
-            if manifest.get('version') != 1 or set(manifest.get('tables', {})) != set(TABLES):
+            if manifest.get('version') != 1 or set(manifest.get('tables', {})) not in (set(TABLES), set(TABLES)-{'suggestion_history'}):
                 raise ValueError('지원하지 않는 백업 형식입니다.')
             with self.store.transaction() as db:
                 for table, rows in manifest['tables'].items():
@@ -262,9 +262,12 @@ class Backups:
             with self.consistent(job), zipfile.ZipFile(inspected['source']) as archive, self.store.transaction() as db:
                 manifest = json.loads(archive.read('manifest.json'))
                 tables = manifest['tables']
+                tables.setdefault('suggestion_history', [])
                 ids = {}
-                for table in ('lecture_notes','note_revisions','recordings','transcription_runs','review_runs','recovery_sessions','ai_requests'):
+                for table in ('lecture_notes','note_revisions','recordings','transcription_runs','review_runs','recovery_sessions','ai_requests','suggestion_history'):
                     ids.update({row['id']: uuid.uuid4().hex for row in tables[table]})
+                for entry in tables['suggestion_history']:
+                    ids.setdefault(entry['recording_id'], uuid.uuid4().hex)
                 courses = {}
                 def unique(name, used):
                     name = safe_name(name) or '가져온 자료'
@@ -338,6 +341,11 @@ class Backups:
                         for key, value in list(row.items()):
                             if isinstance(value,str) and (key.endswith('_json') or key in {'payload','settings','metrics','ai_settings','result'}):
                                 row[key] = json.dumps(remap(json.loads(value)), ensure_ascii=False)
+                        if table=='suggestion_history':
+                            # Historical speech/text is evidence, never rename its contents.
+                            evidence=json.loads(original['payload'])
+                            if evidence.get('run_id'): evidence['run_id']=ids.get(evidence['run_id'],evidence['run_id'])
+                            row['payload']=json.dumps(evidence,ensure_ascii=False)
                         if table=='note_details':
                             detail=json.loads(row['payload'])
                             if 'ai_settings' in detail:

@@ -35,7 +35,9 @@ def register(app, service):
                 raise ValueError('실시간 제어 요청은 JSON 객체여야 합니다.')
             session = service.get(recording_id, session_id)
             if value.get('stop'):
-                service.end(recording_id, session_id)
+                reason = value.get('reason')
+                allowed = {'capture_stopped', 'pagehide', 'start_superseded', 'start_failed'}
+                service.end(recording_id, session_id, reason=reason if reason in allowed else 'client_stop')
             else:
                 session.control(value.get('paused', session.paused) is True)
                 version = value.get('displayed_version')

@@ -3,6 +3,8 @@ export function setupAISettings() {
   const $ = (s) => document.querySelector(s);
   const dialog = $('#systemDialog'), form = $('#systemForm');
   const panels = $('#aiSettingsPanel'), paths = $('#pathSettingsPanel');
+  const history = $('#approvalHistory'), footer = form.querySelector('footer');
+  let historyOffset = 0, historyGeneration = 0;
   const message = $('#systemMessage'), save = $('#saveSystemButton'), hint = $('#systemSaveHint');
   let capabilities = {};
   let area = 'paths', response, draft, key = '', busy = false, checked = false, generation = 0;
@@ -35,19 +37,27 @@ export function setupAISettings() {
     input.value=prop==='api_key'?key:draft[prop]||'';
     input.addEventListener('input',()=>{if(prop==='api_key')key=input.value;else draft[prop]=input.value;invalidate();});wrap.append(title,input);return wrap;
   }
+  const sectionCopy = {
+    paths: ['저장 위치', '프로젝트와 전사 결과를 저장할 위치를 관리합니다.'],
+    speech: ['음성 전사', '녹음을 마친 뒤 전체 음성을 전사할 모델을 설정합니다.'],
+    llm: ['LLM', '전사 검수와 강의노트 분석에 사용할 모델을 설정합니다.'],
+    history: ['수정 승인 이력', '승인한 수정의 전후 문맥과 발화 구간을 자료로 보관합니다.'],
+  };
   function render() {
-    paths.hidden=area!=='paths'; panels.hidden=area==='paths';
+    $('#systemDialogTitle').textContent=sectionCopy[area][0];
+    $('#settingsDescription').textContent=sectionCopy[area][1];
+    paths.hidden=area!=='paths'; panels.hidden=!['speech','llm'].includes(area);
+    history.hidden=area!=='history'; footer.hidden=area==='history';
     document.querySelectorAll('[data-ai-tab]').forEach(b=>{const active=b.dataset.aiTab===area;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});
     hint.textContent=area==='paths'?'경로 저장 시 앱과 로컬 서버가 다시 시작됩니다.':'저장한 설정은 다음 작업부터 적용됩니다. 진행 중인 작업은 유지됩니다.';
     save.textContent=area==='paths'?'경로 저장':'설정 저장'; save.disabled=busy || (area!=='paths'&&!checked);
-    panels.replaceChildren(); if(area==='paths'||!draft)return;
+    panels.replaceChildren(); if(!['speech','llm'].includes(area)||!draft)return;
     const local=['llama_cpp','whisper_cpp'].includes(draft.provider);
-    const top=element('div','ai-settings-intro');top.append(element('h3','',area==='speech'?'음성을 텍스트로':'검수와 강의노트 분석'),element('p','',area==='speech'?'언어와 강의노트 인식 힌트는 각 작업의 설정을 따릅니다.':'검수·개요·페이지 해설·의미 검증에 같은 모델을 사용합니다.'));panels.append(top);
-    if(area==='speech')panels.append(element('p','ai-privacy','실시간 초안: 로컬 large-v3-turbo · 녹음 종료 후 전체 전사는 아래 제공자와 모델을 사용합니다.'));
+    if(area==='speech')panels.append(element('p','ai-privacy','녹음 중 실시간 초안은 로컬 large-v3-turbo로 처리합니다.'));
     panels.append(picker('제공자',providers[area],draft.provider,id=>{
       draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};key='';checked=false;render();
     }));
-    if(local){const label=element('label','ai-managed');const check=element('input');check.disabled=busy;check.type='checkbox';check.checked=draft.managed;check.addEventListener('change',()=>{draft.managed=check.checked;checked=false;render();});label.append(check,element('span','','Lecorder가 서버 시작·종료 관리'));panels.append(label);}
+    if(local){const label=element('label','ai-managed');const check=element('input');check.disabled=busy;check.type='checkbox';check.setAttribute('role','switch');check.checked=draft.managed;check.addEventListener('change',()=>{draft.managed=check.checked;checked=false;render();});label.append(element('span','','로컬 서버 자동 관리'),check);panels.append(label);}
     if(!local && area==='llm')panels.append(picker('모델 프리셋',[...(models[draft.provider]||[]).map(m=>[m,m]),['','직접 입력']],draft.model,id=>{draft.model=id;checked=false;render();}));
     panels.append(field('모델 ID','model'),field('서버 URL','base_url','url'));
     if(draft.managed){
@@ -57,7 +67,7 @@ export function setupAISettings() {
       const keyline=element('div','ai-key-line');keyline.append(element('span','',draft.key_present?'보안 저장소에 키가 저장되어 있습니다.':`키는 ${capabilities.credential_store || '운영체제 보안 저장소'}에 보관됩니다.`));
       const del=element('button','ai-text-button','저장된 키 삭제');del.disabled=busy;del.type='button';del.addEventListener('click',async()=>{if(!confirm('이 서버에 저장된 API 키를 삭제할까요?'))return;try{await api('/api/ai-settings/'+area+'/key','DELETE',{config:draft});draft.key_present=false;key='';checked=false;render();message.textContent='API 키를 삭제했습니다.';}catch(e){message.textContent=e.message;}});keyline.append(del);panels.append(keyline);
     }
-    panels.append(element('p','ai-privacy',local&&draft.managed?'음성과 강의노트가 이 컴퓨터 안에서 처리됩니다.':`선택한 서버로 ${area==='speech'?'음성':'전사문과 강의노트 텍스트·이미지'}를 전송합니다. 외부 API 요금이 발생할 수 있으며, 요청 후 취소해도 이미 처리된 요청은 과금될 수 있습니다.`));
+    panels.append(element('p','ai-privacy',local&&draft.managed?'음성과 강의노트가 이 컴퓨터 안에서 처리됩니다.':`선택한 서버로 ${area==='speech'?'음성을':'전사문과 강의노트 텍스트·이미지를'} 전송합니다. 외부 API 요금이 발생할 수 있으며, 요청 후 취소해도 이미 처리된 요청은 과금될 수 있습니다.`));
     const actions=element('div','ai-settings-actions'), reset=element('button','','기본값으로 초기화'),check=element('button','ai-check','연결 확인');reset.type=check.type='button';
     reset.disabled=check.disabled=busy;
     reset.addEventListener('click',()=>{draft=structuredClone(response.defaults[area]);key='';checked=false;render();message.textContent='로컬 기본값으로 되돌렸습니다. 연결 확인 후 저장하면 적용됩니다.';});
@@ -66,18 +76,77 @@ export function setupAISettings() {
       try{await api('/api/ai-settings/'+area+'/check','POST',{config:draft,api_key:key});if(own!==generation)return;checked=true;message.textContent=area==='llm'?'이미지 입력·구조화 응답 확인 완료':'전사 서버 연결 확인 완료';}
       catch(e){if(own===generation)message.textContent=e.message;}
       finally{if(own===generation){busy=false;render();}}
-    });actions.append(reset,check);panels.append(actions);
+    });actions.append(reset,check);
+    const connection=element('div','settings-row-group');
+    const files=element('details','settings-local-files');
+    files.append(element('summary','','로컬 파일'));
+    const fileRows=element('div','settings-file-rows');
+    for(const row of [...panels.children]) {
+      if(row.matches('.ai-field,.ai-managed,.ai-key-line')) {
+        const input=row.querySelector('input');
+        if(draft.managed && input && ['lecorder-ai-binary','lecorder-ai-model_path','lecorder-ai-vad_path','lecorder-ai-projector_path'].includes(input.name)) fileRows.append(row);
+        else connection.append(row);
+      }
+    }
+    panels.prepend(connection);
+    if(fileRows.childElementCount){files.append(fileRows);panels.insertBefore(files,connection.nextSibling);}
+    panels.append(actions);
   }
   for(const button of document.querySelectorAll('[data-ai-tab]')) {
-    button.addEventListener('click',()=>{if(busy)return;area=button.dataset.aiTab;draft=area==='paths'?null:structuredClone(response?.settings[area]||{});key='';checked=false;message.textContent='';render();});
-    button.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const tabs=[...document.querySelectorAll('[data-ai-tab]')];const i=tabs.indexOf(button);const next=tabs[(i+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length];next.click();next.focus();}});
+    button.addEventListener('click',()=>{if(busy)return;area=button.dataset.aiTab;draft=['paths','history'].includes(area)?null:structuredClone(response?.settings[area]||{});key='';checked=false;message.textContent='';render();if(area==='history'){historyOffset=0;void loadHistory();}});
+    button.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const tabs=[...document.querySelectorAll('[data-ai-tab]')];const i=tabs.indexOf(button);const next=tabs[(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:-1)+tabs.length)%tabs.length];next.click();next.focus();}});
   }
   form.addEventListener('submit',async event=>{
+    if(area==='history'){event.preventDefault();event.stopImmediatePropagation();return;}
     if(area==='paths')return;event.preventDefault();event.stopImmediatePropagation();if(!checked||busy)return;
     busy=true;render();
     try{response=await api('/api/ai-settings/'+area,'PUT',{config:draft,api_key:key});key='';draft=structuredClone(response.settings[area]);message.textContent='저장했습니다. 다음 작업부터 적용됩니다.';}
     catch(e){message.textContent=e.message;checked=false;}
     finally{busy=false;render();}
   },true);
-  new MutationObserver(async()=>{if(dialog.open){area='paths';checked=false;render();try{[response, capabilities]=await Promise.all([api('/api/ai-settings'),api('/api/capabilities')]);}catch(e){message.textContent=e.message;}}else{generation++;busy=false;key='';draft=null;panels.replaceChildren();}}).observe(dialog,{attributes:true,attributeFilter:['open']});
+  async function loadHistory() {
+    const own=++historyGeneration, list=$('#approvalHistoryList'), status=$('#approvalHistoryStatus');
+    status.textContent='불러오는 중…'; list.replaceChildren();
+    $('#historyPrevious').disabled=$('#historyNext').disabled=true;
+    try {
+      const data=await api(`/api/suggestion-history?offset=${historyOffset}&limit=25`);
+      if(own!==historyGeneration || area!=='history')return;
+      status.textContent=data.total?`승인 ${data.total}건`:'아직 저장된 승인 이력이 없습니다.';
+      for(const item of data.items) {
+        const row=element('details','approval-entry'), summary=element('summary');
+        const title=element('div','approval-change');
+        title.append(element('del','',item.original),element('span','approval-arrow','→'),element('strong','',item.replacement));
+        const time=value=>Number.isFinite(value)?`${Math.floor(value/60)}:${String(Math.floor(value%60)).padStart(2,'0')}`:'미기록';
+        summary.append(title,element('small','',`${item.recording_title} · ${time(item.start)}–${time(item.end)}`));
+        const body=element('div','approval-evidence');
+        for(const [label,value] of [['수정 전 발화',item.context_before],['수정 후 발화',item.context_after],['제안 이유',item.reason],['승인 시각',new Date(item.approved_at).toLocaleString()],['검수 모델',item.model||'미기록']]) {
+          const group=element('div');group.append(element('h4','',label),element('p','',value));body.append(group);
+        }
+        row.append(summary,body);list.append(row);
+      }
+      $('#historyPage').textContent=data.total?`${Math.floor(historyOffset/25)+1} / ${Math.ceil(data.total/25)}`:'';
+      $('#historyPrevious').disabled=historyOffset===0;
+      $('#historyNext').disabled=historyOffset+25>=data.total;
+    }catch(e){if(own===historyGeneration)status.textContent=e.message;}
+  }
+  $('#historyPrevious').addEventListener('click',()=>{historyOffset=Math.max(0,historyOffset-25);void loadHistory();});
+  $('#historyNext').addEventListener('click',()=>{historyOffset+=25;void loadHistory();});
+  async function enterSettings(resetArea=true) {
+    const own=++generation;
+    message.textContent='';
+    if(resetArea)area='paths';
+    checked=false;busy=true;draft=null;key='';render();
+    try {
+      const result=await Promise.all([api('/api/ai-settings'),api('/api/capabilities')]);
+      if(own!==generation)return;
+      [response,capabilities]=result;
+      draft=['speech','llm'].includes(area)?structuredClone(response.settings[area]):null;
+    }catch(e){if(own===generation)message.textContent=e.message;}
+    finally{if(own===generation){busy=false;render();}}
+  }
+  dialog.addEventListener('settings-reset',()=>void enterSettings(false));
+  new MutationObserver(()=>{
+    if(!dialog.hidden)void enterSettings();
+    else{generation++;historyGeneration++;busy=false;key='';draft=null;panels.replaceChildren();}
+  }).observe(dialog,{attributes:true,attributeFilter:['hidden']});
 }

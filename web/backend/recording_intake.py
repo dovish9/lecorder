@@ -189,11 +189,19 @@ class RecordingIntake:
 
     def finalize_chunked(self, recording_id: str, duration_seconds: float = 0.0,
                          allow_partial: bool = False) -> Recording:
+        with self._lock:
+            return self._finalize_chunked(recording_id, duration_seconds, allow_partial)
+
+    def _finalize_chunked(self, recording_id, duration_seconds, allow_partial):
         recording = self.store.get_recording(recording_id)
+        # A reload can lose the successful response and repeat finalization.
+        # Never assemble or enqueue an already committed browser recording again.
+        if (recording.source_kind == "browser"
+                and recording.status in {"queued", "processing", "completed", "failed"}
+                and any(value and Path(value).is_file() for value in (recording.source_path, recording.audio_path))):
+            return recording
         if recording.status not in {"recording", "recoverable"}:
             raise ValueError("완료할 수 없는 녹음 작업입니다.")
-        if getattr(self, "live", None):
-            self.live.end(recording_id)
         chunks = sorted((self.folder(recording_id) / "chunks").glob("*.part"))
         if not chunks:
             raise ValueError("저장된 녹음 조각이 없습니다.")
@@ -209,6 +217,8 @@ class RecordingIntake:
             chunks = contiguous
             if not chunks:
                 raise ValueError("처음부터 이어지는 녹음 조각을 찾지 못했습니다.")
+        if getattr(self, "live", None):
+            self.live.end(recording_id, reason='recording_finalized')
         source = Path(recording.source_path)
         temporary = source.with_suffix(source.suffix + ".assembling")
         try:

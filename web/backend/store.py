@@ -156,6 +156,10 @@ class LectureStore:
                 id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, started_at TEXT NOT NULL,
                 completed_at TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
                 settings TEXT NOT NULL, metrics TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')""")
+            db.execute("""CREATE TABLE IF NOT EXISTS suggestion_history (
+                id TEXT PRIMARY KEY, recording_id TEXT NOT NULL,
+                approved_at TEXT NOT NULL, payload TEXT NOT NULL)""")
+            db.execute("CREATE INDEX IF NOT EXISTS suggestion_history_date ON suggestion_history(approved_at DESC, id)")
             columns = {row[1] for row in db.execute("PRAGMA table_info(recordings)")}
             for name, definition in {
                 "note_revision_id": "TEXT", "note_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
@@ -613,3 +617,58 @@ class LectureStore:
                     raise KeyError("수정 제안을 찾지 못했습니다.")
                 raise ValueError("이미 검토한 제안입니다.")
         return self.get_suggestion(suggestion_id)
+
+    def accept_suggestion(self, suggestion_id: int, recording: Recording,
+                          context: dict[str, Any], publish: Callable[[], None]) -> Recording:
+        """Commit the edited transcript, decision and immutable evidence together."""
+        import uuid
+        from .publication import Publication
+        journal = Publication(self, recording, [Path(recording.note_path)])
+        try:
+            with self.transaction() as db:
+                suggestion = db.execute("SELECT * FROM suggestions WHERE id=? AND status='pending'", (suggestion_id,)).fetchone()
+                if suggestion is None:
+                    raise ValueError("이미 검토한 제안입니다.")
+                current = db.execute("SELECT segments_json FROM recordings WHERE id=?", (recording.id,)).fetchone()
+                if (suggestion['recording_id'] != recording.id or current is None or
+                        json.loads(current['segments_json'])[context['index']]['text'] != context['text']):
+                    raise ValueError("전사문이 변경됐습니다. 수정 제안을 다시 확인하세요.")
+                now = self.now()
+                runs = db.execute("""SELECT id, settings, started_at, 'review' AS kind FROM review_runs WHERE recording_id=? AND status='completed' AND started_at<=?
+                    UNION ALL SELECT id, settings, started_at, 'transcription' AS kind FROM transcription_runs WHERE recording_id=? AND status='completed' AND started_at<=?
+                    ORDER BY started_at DESC LIMIT 1""", (recording.id, suggestion['created_at'], recording.id, suggestion['created_at'])).fetchone()
+                settings = json.loads(runs['settings']) if runs else {}
+                llm = (settings.get('ai_settings') or {}).get('llm') or {}
+                snapshot = {
+                    'version': 1, 'recording_title': recording.title, 'course_name': recording.course_name,
+                    'sentence_id': suggestion['sentence_id'], 'original': suggestion['original'],
+                    'replacement': suggestion['replacement'], 'reason': suggestion['reason'],
+                    'confidence': suggestion['confidence'], 'proposed_at': suggestion['created_at'],
+                    'context_before': context['text'], 'context_after': json.loads(recording.segments_json)[context['index']]['text'],
+                    'start': context.get('start'), 'end': context.get('end'),
+                    'time_scope': 'utterance', 'run_id': runs['id'] if runs else None,
+                    'model': llm.get('model') or settings.get('llm_model') or (settings.get('model') if runs and runs['kind']=='review' else None),
+                    'audio_name': Path(recording.audio_path).name if recording.audio_path else None,
+                    'language': recording.language,
+                    'provider': llm.get('provider'),
+                }
+                db.execute("UPDATE recordings SET segments_json=?,transcript_text=? WHERE id=?",
+                           (recording.segments_json, recording.transcript_text, recording.id))
+                db.execute("UPDATE suggestions SET status='accepted',decided_at=? WHERE id=?", (now, suggestion_id))
+                db.execute("INSERT INTO suggestion_history VALUES (?,?,?,?)",
+                           (uuid.uuid4().hex, recording.id, now, json.dumps(snapshot, ensure_ascii=False)))
+                publish()
+        except Exception:
+            journal.rollback()
+            raise
+        journal.complete()
+        return recording
+
+    def approval_history(self, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        with self.transaction() as db:
+            total = db.execute("SELECT COUNT(*) FROM suggestion_history").fetchone()[0]
+            rows = db.execute("SELECT * FROM suggestion_history ORDER BY approved_at DESC,id DESC LIMIT ? OFFSET ?",
+                              (limit, offset)).fetchall()
+        return {'total': total, 'offset': offset, 'items': [
+            dict(id=row['id'], recording_id=row['recording_id'], approved_at=row['approved_at'],
+                 **json.loads(row['payload'])) for row in rows]}

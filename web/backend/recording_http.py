@@ -24,6 +24,15 @@ def register(app, *, lectures, recording_payload, serialize_outputs, suggestions
         except ValueError as error:
             return jsonify(error=str(error)), 400
 
+    @app.get("/api/suggestion-history")
+    def suggestion_history():
+        try:
+            offset = max(0, int(request.args.get('offset', 0)))
+            limit = min(100, max(1, int(request.args.get('limit', 50))))
+        except ValueError:
+            return jsonify(error="올바른 페이지 범위가 아닙니다."), 400
+        return jsonify(lectures.approval_history(offset, limit))
+
     @app.get("/api/recordings")
     def list_recordings():
         return jsonify(recordings=[recording_payload(item) for item in lectures.list_recordings(50)])
@@ -182,6 +191,7 @@ def register(app, *, lectures, recording_payload, serialize_outputs, suggestions
 
 
     @app.post("/api/suggestions/<int:suggestion_id>/decision")
+    @serialize_outputs
     def decide_suggestion(suggestion_id: int):
         payload = request.get_json(silent=True) or {}
         try:
