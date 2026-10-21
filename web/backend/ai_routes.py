@@ -1,18 +1,42 @@
 """Settings API: capability probes are bound to the exact submitted configuration."""
-import hashlib
-import json
 import threading
 import time
+from uuid import UUID
+from .processes import CancellationToken
 from urllib.parse import urlsplit
 from flask import Blueprint, jsonify, request
 from .ai_providers import check_connection
-from .ai_settings import defaults
 
 
 def ai_routes(store):
     api = Blueprint('ai_settings', __name__)
-    verified = {}
-    lock = threading.RLock()
+    checks = {}
+    checks_lock = threading.Lock()
+
+    def check_token(area):
+        identifier = (request.get_json() or {}).get('check_id')
+        if identifier is None:
+            return CancellationToken()
+        identifier = str(UUID(identifier))
+        with checks_lock:
+            now = time.monotonic()
+            for key, (_, expires) in list(checks.items()):
+                if expires < now:
+                    del checks[key]
+            key = (area, identifier)
+            if key not in checks:
+                checks[key] = (CancellationToken(), now + 120)
+            return checks[key][0]
+
+    @api.post('/api/ai-settings/<area>/check/cancel')
+    def cancel_check(area):
+        try:
+            token = check_token(area)
+            token.cancel()
+            return jsonify(ok=True)
+        except (ValueError, TypeError, AttributeError):
+            return jsonify(error='잘못된 검증 요청 ID'), 400
+
 
     @api.before_request
     def same_origin():
@@ -29,8 +53,7 @@ def ai_routes(store):
         key = data.get('api_key') or store.credentials.get(config)
         if not isinstance(key, str) or len(key) > 4096:
             raise ValueError('API 키 형식 오류')
-        fingerprint = hashlib.sha256((json.dumps(config, sort_keys=True) + key).encode()).hexdigest()
-        return config, key, fingerprint
+        return config, key
 
     @api.get('/api/ai-settings')
     def get():
@@ -39,13 +62,20 @@ def ai_routes(store):
     @api.post('/api/ai-settings/<area>/check')
     def check(area):
         try:
-            config, key, fingerprint = config_and_key(area)
-            result = check_connection(area, config, key)
-            with lock:
-                now = time.monotonic()
-                for expired in [k for k, checked in verified.items() if now - checked >= 600]:
-                    del verified[expired]
-                verified[fingerprint] = now
+            config, key = config_and_key(area)
+            from .processes import CancellationToken, TranscriptionCancelled
+            token = check_token(area)
+            timer = threading.Timer(55, token.cancel)
+            timer.daemon = True
+            timer.start()
+            try:
+                token.check()
+                result = check_connection(area, config, key, cancellation=token)
+                token.check()
+            except TranscriptionCancelled:
+                raise ValueError('연결 검증이 취소되었거나 시간이 초과되었습니다.')
+            finally:
+                timer.cancel()
             return jsonify(ok=True, result=result)
         except Exception as error:
             # Provider errors are already sanitized; 보안 저장소/backend failures are not.
@@ -56,11 +86,7 @@ def ai_routes(store):
     @api.put('/api/ai-settings/<area>')
     def save(area):
         try:
-            config, key, fingerprint = config_and_key(area)
-            with lock:
-                checked = time.monotonic() - verified.get(fingerprint, -1000) < 600
-            if not checked:
-                raise ValueError('변경한 설정으로 연결 확인을 먼저 실행하세요.')
+            config, key = config_and_key(area)
             return jsonify(ok=True, **store.save(area, config, (request.get_json() or {}).get('api_key')))
         except ValueError as error:
             return jsonify(error=str(error)), 400

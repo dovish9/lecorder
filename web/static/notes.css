@@ -228,6 +228,7 @@
 .note-viewer .note-toolbar button {
   font-size: 11px;
 }
+.note-viewer .note-toolbar button.note-remove{color:var(--red, #ff3b30)}
 .note-body {
   flex: 1;
   min-height: 0;

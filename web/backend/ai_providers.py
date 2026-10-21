@@ -184,7 +184,7 @@ def _generate(messages, schema, *, max_tokens=2048, temperature=0, cancellation=
             'waiting_seconds': waiting, 'input_tokens': input_tokens, 'output_tokens': output_tokens}
 
 
-def check_connection(area, config, key=None):
+def check_connection(area, config, key=None, cancellation=None):
     if area == 'llm':
         # A tiny red PNG generated from fixed bytes; no user document is uploaded.
         import struct, zlib
@@ -192,7 +192,7 @@ def check_connection(area, config, key=None):
             return struct.pack('!I', len(data)) + kind + data + struct.pack('!I', zlib.crc32(kind + data) & 0xffffffff)
         png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', 32, 32, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress((b'\0' + b'\xff\0\0' * 32) * 32)) + chunk(b'IEND', b'')
         schema = {'type': 'object', 'properties': {'color': {'type': 'string'}}, 'required': ['color'], 'additionalProperties': False}
-        response = generate([{'role': 'user', 'content': 'What is the solid color of the image? Reply in English.', 'images': [base64.b64encode(png).decode()]}], schema, max_tokens=128, config=config, api_key=key)
+        response = generate([{'role': 'user', 'content': 'What is the solid color of the image? Reply in English.', 'images': [base64.b64encode(png).decode()]}], schema, max_tokens=128, config=config, api_key=key, cancellation=cancellation)
         if 'red' not in response['result']['color'].lower():
             raise ValueError('이미지 입력 확인에 실패했습니다. 이미지 지원 모델을 선택하세요.')
         return {k: response[k] for k in ('model', 'provider', 'seconds')}
@@ -205,11 +205,11 @@ def check_connection(area, config, key=None):
                                       headers={'Authorization': 'Bearer ' + key} if key else None)
                 if result.get('status') != 'ok':
                     raise ProviderError('전사 서버 상태 확인 실패')
-        run(probe, kind='speech_check')
+        run(probe, cancellation, kind='speech_check')
         return {'model': config['model'], 'provider': config['provider']}
     key = configured_settings().credentials.get(config) if key is None else key
     if not key:
         raise ProviderError('API 키를 입력하세요.')
     # Auth/model availability check only; real transcription is verified by tests.
-    request_json(api_url(config['base_url'], '/models/whisper-1'), headers={'Authorization': 'Bearer ' + key}, method='GET')
+    request_json(api_url(config['base_url'], '/models/whisper-1'), cancellation=cancellation, headers={'Authorization': 'Bearer ' + key}, method='GET')
     return {'model': config['model'], 'provider': config['provider']}

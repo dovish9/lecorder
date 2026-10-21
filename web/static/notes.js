@@ -25,7 +25,7 @@ function node(tag, text, cls) {
   if (cls) e.className = cls;
   return e;
 }
-function button(text, action) {
+function button(text, action, disabled = () => false) {
   const b = node("button", text);
   b.type = "button";
   b.onclick = async () => {
@@ -35,7 +35,7 @@ function button(text, action) {
     } catch (e) {
       alert(e.message);
     } finally {
-      b.disabled = false;
+      b.disabled = disabled();
     }
   };
   return b;
@@ -228,6 +228,8 @@ export async function openNote(id, initial = {}) {
     data = null,
     pageNumber = Math.max(1, Number(initial.page) || 1),
     poll = null,
+    refreshGeneration = 0,
+    cancelling = false,
     fingerprint = "",
     etag = "",
     excluded = new Set(),
@@ -242,21 +244,34 @@ export async function openNote(id, initial = {}) {
         body.scrollTop = 0;
       }),
     );
+  const cancelDisabled = () => cancelling || !data || !(
+    ["queued", "extracting"].includes(data.note.status) ||
+    ["pending", "analyzing"].includes(data.note.study_status)
+  );
   actions.append(
     button("다시 분석", async () => {
       await api(`/api/notes/${id}/reanalyze`, { method: "POST" });
       await refresh();
     }),
     button("분석 중단", async () => {
-      await api(`/api/notes/${id}/cancel`, { method: "POST" });
-      await refresh();
-    }),
+      cancelling = true;
+      ++refreshGeneration; // Ignore a poll that began before cancellation.
+      try {
+        const result = await api(`/api/notes/${id}/cancel`, { method: "POST" });
+        if (data) data.note = result.note;
+        etag = "";
+        await refresh();
+      } finally {
+        cancelling = false;
+      }
+    }, cancelDisabled),
     button("목록에서 제거", async () => {
       await api(`/api/notes/${id}`, { method: "DELETE" });
       d.close();
       await showCourseNotes(activeCourse);
     }),
   );
+  actions.lastElementChild.classList.add("note-remove");
   function setCurrent(name) {
     current = name;
     render();
@@ -319,7 +334,6 @@ export async function openNote(id, initial = {}) {
     if (pageIssue(page)) title.append(node("span", "확인 필요", "note-needs-review"));
     const pageActions = node("div", null, "note-toolbar");
     if (current === "페이지별 해설") {
-      pageActions.append(button("강의노트 다시 분석", async () => { await api(`/api/notes/${id}/reanalyze`, {method:"POST"}); await refresh(); }));
       pageActions.append(button("상세 해설 요청", async () => { await api(`/api/notes/${id}/pages/${page.number}/explain`, {method:"POST"}); fingerprint = ""; await refresh(); }));
     }
     rightHead.append(title, pageActions); right.append(rightHead);
@@ -365,7 +379,6 @@ export async function openNote(id, initial = {}) {
     footer.replaceChildren();
     footer.hidden = current !== "용어집";
     body.classList.toggle("note-body-workspace", ["페이지별 해설", "원문"].includes(current));
-    actions.hidden = ["페이지별 해설", "원문"].includes(current);
     tabs
       .querySelectorAll("button")
       .forEach((b) =>
@@ -487,10 +500,12 @@ export async function openNote(id, initial = {}) {
   }
   async function refresh() {
     if (!d.open) return;
+    const generation = ++refreshGeneration;
     try {
       const response = await fetch(`/api/notes/${id}`, {
         headers: etag ? { "If-None-Match": etag } : {},
       });
+      if (generation !== refreshGeneration || !d.open) return;
       if (response.status === 304) {
         if (data)
           state.textContent = `${statuses[data.note.status]} · 학습 정리 ${data.note.needs_review ? "확인 필요" : statuses[data.note.study_status]} ${data.note.error || ""}`;
@@ -499,6 +514,7 @@ export async function openNote(id, initial = {}) {
         return;
       }
       const next = await response.json();
+      if (generation !== refreshGeneration || !d.open) return;
       if (!response.ok)
         throw new Error(next.error || "노트를 읽지 못했습니다.");
       etag = response.headers.get("ETag") || "";
@@ -506,10 +522,7 @@ export async function openNote(id, initial = {}) {
       data = next;
       d.querySelector("h2").textContent = data.note.title;
       state.textContent = `${statuses[data.note.status]} · 학습 정리 ${data.note.needs_review ? "확인 필요" : statuses[data.note.study_status]} ${data.note.error || ""}`;
-      actions.children[1].hidden = !(
-        ["queued", "extracting"].includes(data.note.status) ||
-        ["pending", "analyzing"].includes(data.note.study_status)
-      );
+      actions.children[1].disabled = cancelDisabled();
       if (fp !== fingerprint && !dirty) {
         const position = body.scrollTop;
         fingerprint = fp;

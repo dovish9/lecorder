@@ -97,7 +97,7 @@ class AIProviderTests(unittest.TestCase):
             settings=AISettings(Path(folder)/'ai.json',Keys());app=Flask(__name__);app.register_blueprint(ai_routes(settings));client=app.test_client()
             config={'provider':'openai','model':'example','base_url':'https://api.openai.com/v1','managed':False}
             body={'config':config,'api_key':'test-secret'}
-            self.assertEqual(client.put('/api/ai-settings/llm',json=body).status_code,400)
+            self.assertEqual(client.put('/api/ai-settings/llm',json=body).status_code,200)
             with patch('web.backend.ai_routes.check_connection',return_value={}):
                 self.assertEqual(client.post('/api/ai-settings/llm/check',json=body).status_code,200)
             saved=client.put('/api/ai-settings/llm',json=body)
@@ -112,6 +112,39 @@ class AIProviderTests(unittest.TestCase):
             self.assertEqual(client.delete('/api/ai-settings/llm/key',json={'config':config}).status_code,200)
             self.assertFalse(client.get('/api/ai-settings').json['settings']['llm']['key_present'])
             self.assertEqual(client.put('/api/ai-settings/llm',json=body,headers={'Origin':'https://evil.invalid'}).status_code,403)
+
+    def test_settings_check_cancel_before_request_and_during_probe(self):
+        import threading
+        from uuid import uuid4
+        with tempfile.TemporaryDirectory() as folder:
+            settings=AISettings(Path(folder)/'ai.json',Keys())
+            app=Flask(__name__);app.register_blueprint(ai_routes(settings))
+            body={'config':{'provider':'openai','model':'example','base_url':'https://api.openai.com/v1','managed':False},'api_key':'test-secret','check_id':str(uuid4())}
+            client=app.test_client()
+            self.assertEqual(client.post('/api/ai-settings/llm/check/cancel',json={'check_id':body['check_id']}).status_code,200)
+            with patch('web.backend.ai_routes.check_connection') as probe:
+                self.assertEqual(client.post('/api/ai-settings/llm/check',json=body).status_code,400)
+                probe.assert_not_called()
+            started=threading.Event();finished=threading.Event();results=[]
+            body['check_id']=str(uuid4())
+            def slow_probe(*args,cancellation,**kwargs):
+                started.set()
+                for _ in range(100):
+                    if cancellation.cancelled:break
+                    finished.wait(.01)
+                cancellation.check()
+                self.fail('probe was not cancelled')
+            def run():
+                with app.test_client() as worker:
+                    results.append(worker.post('/api/ai-settings/llm/check',json=body).status_code)
+            with patch('web.backend.ai_routes.check_connection',side_effect=slow_probe):
+                thread=threading.Thread(target=run);thread.start()
+                self.assertTrue(started.wait(2))
+                client.post('/api/ai-settings/llm/check/cancel',json={'check_id':body['check_id']})
+                thread.join(2)
+                self.assertFalse(thread.is_alive())
+            self.assertEqual(results,[400])
+            self.assertFalse(settings.path.exists())
 
     def test_openai_speech_requires_real_segment_timestamps(self):
         config=defaults();config['speech']={'provider':'openai','model':'whisper-1','base_url':'https://example.invalid','managed':False}

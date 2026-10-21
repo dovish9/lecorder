@@ -112,7 +112,32 @@ class NoteContentTests(NoteCase):
         with patch("web.backend.note_study._generate", side_effect=generate) as call:
             result = build_overview(pages, CancellationToken())
         self.assertEqual(result[0]["pages"], list(range(1, 15)))
-        self.assertEqual(call.call_count, 4)
+        self.assertEqual(call.call_count, 5)
+
+    def test_overview_long_reductions_converge(self):
+        pages = [{"number": i, "analysis": {"summary": str(i), "markdown": "body", "keywords": []}}
+                 for i in range(1, 33)]
+
+        def generate(*args, **kwargs):
+            return {"summary": "summary", "markdown": "긴 개요 " * 700, "uncertainties": [],
+                    "validation": {"status": "passed"}}
+
+        with patch("web.backend.note_study._generate", side_effect=generate) as call:
+            result = build_overview(pages, CancellationToken())
+        self.assertEqual(result[0]["pages"], list(range(1, 33)))
+        self.assertLess(call.call_count, 30)
+
+    def test_overview_stops_when_reduction_makes_no_progress(self):
+        pages = [{"number": i, "analysis": {"summary": str(i), "markdown": "body", "keywords": []}}
+                 for i in range(1, 3)]
+
+        def singleton_groups(entries, **kwargs):
+            yield from ([entry] for entry in entries)
+
+        with patch("web.backend.note_study.overview_groups", side_effect=singleton_groups), \
+             patch("web.backend.note_study._generate", return_value={"summary": "summary", "markdown": "overview", "uncertainties": [], "validation": {"status": "passed"}}):
+            with self.assertRaisesRegex(RuntimeError, "개요 압축이 진행되지"):
+                build_overview(pages, CancellationToken())
 
 
     def test_ocr_position_merge_preserves_additional_annotation(self):

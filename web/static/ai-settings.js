@@ -6,8 +6,9 @@ export function setupAISettings() {
   const history = $('#approvalHistory'), footer = form.querySelector('footer');
   let historyOffset = 0, historyGeneration = 0;
   const message = $('#systemMessage'), save = $('#saveSystemButton'), hint = $('#systemSaveHint');
-  let capabilities = {};
-  let area = 'paths', response, draft, key = '', busy = false, checked = false, generation = 0;
+  let capabilities = {}, loading = false;
+  const saves = new Map();
+  let area = 'paths', response, draft, key = '', busy = false, checking = false, generation = 0;
   const providers = {speech: [['whisper_cpp','로컬 · whisper.cpp'],['openai','OpenAI']], llm: [['llama_cpp','로컬 · llama.cpp'],['openai','OpenAI'],['claude','Claude'],['gemini','Gemini']]};
   providers.speech[0][1] = '로컬 · whisper.cpp'; providers.llm[0][1] = '로컬 · llama.cpp';
   const presets = {
@@ -17,11 +18,11 @@ export function setupAISettings() {
   };
   const models = {openai:['gpt-4.1-mini','gpt-4.1'], claude:['claude-sonnet-4-5'], gemini:['gemini-2.5-flash','gemini-2.5-pro']};
   const element = (tag, cls, text) => {const e=document.createElement(tag); if(cls)e.className=cls; if(text!==undefined)e.textContent=text; return e;};
-  async function api(url, method='GET', body) {
-    const result = await fetch(url, {method, headers: {'Content-Type':'application/json'}, body: body===undefined ? undefined : JSON.stringify(body)});
+  async function api(url, method='GET', body, signal) {
+    const result = await fetch(url, {signal: AbortSignal.any([AbortSignal.timeout(url.endsWith('/check')?60000:15000),...(signal?[signal]:[])]), method, headers: {'Content-Type':'application/json'}, body: body===undefined ? undefined : JSON.stringify(body)});
     const data = await result.json(); if(!result.ok) throw new Error(data.error || '요청 실패'); return data;
   }
-  function invalidate(){ checked=false; save.disabled=true; message.textContent='변경한 설정을 연결 확인한 뒤 저장하세요.'; }
+  function invalidate(){ saves.delete(area); ++generation; checking=false; save.disabled=busy; message.textContent='설정 저장을 누르면 연결을 검증한 뒤 저장합니다.'; }
   function picker(label, options, value, onChange) {
     const wrap=element('div','ai-field'), title=element('span','ai-field-label',label), details=element('details','upload-course-picker ai-picker');
     const summary=element('summary','',options.find(o=>o[0]===value)?.[1] || value || '모델 선택');
@@ -44,40 +45,39 @@ export function setupAISettings() {
     history: ['승인한 검토', '승인한 수정의 전후 문맥과 발화 구간을 자료로 보관합니다.'],
   };
   function render() {
+    const task = saves.get(area);
+    busy = loading || Boolean(task?.pending);
+    checking = task?.phase === 'checking';
+    if(task)message.textContent=task.message;
     $('#systemDialogTitle').textContent=sectionCopy[area][0];
     $('#settingsDescription').textContent=sectionCopy[area][1];
     paths.hidden=area!=='paths'; panels.hidden=!['speech','llm'].includes(area);
     history.hidden=area!=='history'; footer.hidden=area==='history';
     document.querySelectorAll('[data-ai-tab]').forEach(b=>{const active=b.dataset.aiTab===area;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});
     hint.textContent='저장 후 상단 알림의 재시작 버튼을 누르면 변경한 설정을 적용합니다.';
-    save.textContent=area==='paths'?'경로 저장':'설정 저장'; save.disabled=busy || (area!=='paths'&&!checked);
+    save.textContent=area==='paths'?'경로 저장':checking?'검증 중…':'설정 저장'; save.disabled=busy || (area!=='paths'&&!draft);
     panels.replaceChildren(); if(!['speech','llm'].includes(area)||!draft)return;
     const local=['llama_cpp','whisper_cpp'].includes(draft.provider);
 
     panels.append(picker('제공자',providers[area],draft.provider,id=>{
       const live=area==='speech'?Object.fromEntries(['binary','live_base_url','live_model','live_model_path','live_vad_path'].map(k=>[k,draft[k]??response.defaults.speech[k]])):{};
-      draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};Object.assign(draft,live);key='';checked=false;render();
+      draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};Object.assign(draft,live);key='';invalidate();render();
     }));
-    if(local){const label=element('label','ai-managed');const check=element('input');check.disabled=busy;check.type='checkbox';check.setAttribute('role','switch');check.checked=draft.managed;check.addEventListener('change',()=>{draft.managed=check.checked;checked=false;render();});label.append(element('span','','로컬 서버 자동 관리'),check);panels.append(label);}
-    if(!local && area==='llm')panels.append(picker('모델 프리셋',[...(models[draft.provider]||[]).map(m=>[m,m]),['','직접 입력']],draft.model,id=>{draft.model=id;checked=false;render();}));
+    if(local){const label=element('label','ai-managed');const check=element('input');check.disabled=busy;check.type='checkbox';check.setAttribute('role','switch');check.checked=draft.managed;check.addEventListener('change',()=>{draft.managed=check.checked;invalidate();render();});label.append(element('span','','로컬 서버 자동 관리'),check);panels.append(label);}
+    if(!local && area==='llm')panels.append(picker('모델 프리셋',[...(models[draft.provider]||[]).map(m=>[m,m]),['','직접 입력']],draft.model,id=>{draft.model=id;invalidate();render();}));
     panels.append(field('모델 ID','model'),field('서버 URL','base_url','url'));
     if(draft.managed){
       panels.append(field('서버 실행 파일','binary'),field('모델 파일','model_path'),field(area==='speech'?'VAD 모델 파일':'이미지 projector 파일',area==='speech'?'vad_path':'projector_path'));
     }else{
       panels.append(field('API 키','api_key','password'));
       const keyline=element('div','ai-key-line');keyline.append(element('span','',draft.key_present?'보안 저장소에 키가 저장되어 있습니다.':`키는 ${capabilities.credential_store || '운영체제 보안 저장소'}에 보관됩니다.`));
-      const del=element('button','ai-text-button','저장된 키 삭제');del.disabled=busy;del.type='button';del.addEventListener('click',async()=>{if(!confirm('이 서버에 저장된 API 키를 삭제할까요?'))return;try{await api('/api/ai-settings/'+area+'/key','DELETE',{config:draft});draft.key_present=false;key='';checked=false;render();message.textContent='API 키를 삭제했습니다.';}catch(e){message.textContent=e.message;}});keyline.append(del);panels.append(keyline);
+      const del=element('button','ai-text-button','저장된 키 삭제');del.disabled=busy;del.type='button';del.addEventListener('click',async()=>{if(!confirm('이 서버에 저장된 API 키를 삭제할까요?'))return;try{await api('/api/ai-settings/'+area+'/key','DELETE',{config:draft});draft.key_present=false;key='';invalidate();render();message.textContent='API 키를 삭제했습니다.';}catch(e){message.textContent=e.message;}});keyline.append(del);panels.append(keyline);
     }
     panels.append(element('p','ai-privacy',local&&draft.managed?'음성과 강의노트가 이 컴퓨터 안에서 처리됩니다.':`선택한 서버로 ${area==='speech'?'음성을':'전사문과 강의노트 텍스트·이미지를'} 전송합니다. 외부 API 요금이 발생할 수 있으며, 요청 후 취소해도 이미 처리된 요청은 과금될 수 있습니다.`));
-    const actions=element('div','ai-settings-actions'), reset=element('button','','기본값으로 초기화'),check=element('button','ai-check','연결 확인');reset.type=check.type='button';
-    reset.disabled=check.disabled=busy;
-    reset.addEventListener('click',()=>{draft=structuredClone(response.defaults[area]);key='';checked=false;render();message.textContent='로컬 기본값으로 되돌렸습니다. 연결 확인 후 저장하면 적용됩니다.';});
-    check.addEventListener('click',async()=>{
-      const own=++generation;busy=true;message.textContent='연결과 모델 기능을 확인하고 있습니다…';render();
-      try{await api('/api/ai-settings/'+area+'/check','POST',{config:draft,api_key:key});if(own!==generation)return;checked=true;message.textContent=area==='llm'?'이미지 입력·구조화 응답 확인 완료':'전사 서버 연결 확인 완료';}
-      catch(e){if(own===generation)message.textContent=e.message;}
-      finally{if(own===generation){busy=false;render();}}
-    });actions.append(reset,check);
+    const actions=element('div','ai-settings-actions'), reset=element('button','','기본값으로 초기화');reset.type='button';
+    reset.disabled=busy;
+    reset.addEventListener('click',()=>{draft=structuredClone(response.defaults[area]);key='';invalidate();render();message.textContent='로컬 기본값으로 되돌렸습니다. 저장 후 재시작하면 적용됩니다.';});
+    actions.append(reset);
     const connection=element('div','settings-row-group');
     const files=element('details','settings-local-files');
     files.append(element('summary','','로컬 파일'));
@@ -107,16 +107,32 @@ export function setupAISettings() {
     panels.append(actions);
   }
   for(const button of document.querySelectorAll('[data-ai-tab]')) {
-    button.addEventListener('click',()=>{if(busy)return;area=button.dataset.aiTab;draft=['paths','history'].includes(area)?null:structuredClone(response?.settings[area]||{});key='';checked=false;message.textContent='';render();if(area==='history'){historyOffset=0;void loadHistory();}});
+    button.addEventListener('click',()=>{++generation;loading=false;busy=false;checking=false;area=button.dataset.aiTab;if(!response){void enterSettings(false);return;}draft=['paths','history'].includes(area)?null:structuredClone(saves.get(area)?.pending?saves.get(area).config:response?.settings[area]||{});key='';message.textContent='';render();if(area==='history'){historyOffset=0;void loadHistory();}});
     button.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const tabs=[...document.querySelectorAll('[data-ai-tab]')];const i=tabs.indexOf(button);const next=tabs[(i+(['ArrowRight','ArrowDown'].includes(e.key)?1:-1)+tabs.length)%tabs.length];next.click();next.focus();}});
   }
   form.addEventListener('submit',async event=>{
     if(area==='history'){event.preventDefault();event.stopImmediatePropagation();return;}
-    if(area==='paths')return;event.preventDefault();event.stopImmediatePropagation();if(!checked||busy)return;
-    busy=true;render();
-    try{response=await api('/api/ai-settings/'+area,'PUT',{config:draft,api_key:key});key='';draft=structuredClone(response.settings[area]);message.textContent='저장했습니다. 재시작하면 적용됩니다.';document.dispatchEvent(new Event('settings-saved'));}
-    catch(e){message.textContent=e.message;checked=false;}
-    finally{busy=false;render();}
+    if(area==='paths')return;event.preventDefault();event.stopImmediatePropagation();if(!draft||busy)return;
+    const savedArea=area, payload={config:structuredClone(draft),api_key:key,check_id:crypto.randomUUID()};
+    const task={controller:new AbortController(),checkId:payload.check_id,cancelled:false,pending:true,phase:'checking',config:payload.config,message:'연결과 모델 기능을 검증하고 있습니다.'};
+    saves.set(savedArea,task);render();
+    const refresh=()=>{if(saves.get(savedArea)===task&&area===savedArea&&!dialog.hidden)render();};
+    try {
+      await api('/api/ai-settings/'+savedArea+'/check','POST',payload,task.controller.signal);
+      if(task.cancelled)return;
+      task.phase='saving';task.message='검증을 완료했습니다. 저장하고 있습니다.';refresh();
+      const saved=await api('/api/ai-settings/'+savedArea,'PUT',payload);
+      // Other tabs may have their own pending save or unsaved edits.
+      if(response)response.settings[savedArea]=saved.settings[savedArea];else response=saved;
+      task.message='저장했습니다. 재시작하면 적용됩니다.';
+      if(area===savedArea){key='';draft=structuredClone(saved.settings[savedArea]);}
+      document.dispatchEvent(new Event('settings-saved'));
+    } catch(e) {
+      if(task.cancelled)return;
+      task.message=(e.name==='TimeoutError'?'연결 검증 시간이 초과되었습니다.':e.message)+' 설정은 저장하지 않았습니다.';
+    } finally {
+      task.pending=false;task.phase='done';payload.api_key='';refresh();
+    }
   },true);
   async function loadHistory() {
     const own=++historyGeneration, list=$('#approvalHistoryList'), status=$('#approvalHistoryStatus');
@@ -149,18 +165,31 @@ export function setupAISettings() {
     const own=++generation;
     message.textContent='';
     if(resetArea)area='paths';
-    checked=false;busy=true;draft=null;key='';render();
+    checking=false;
+    loading=true;draft=null;key='';render();
     try {
       const result=await Promise.all([api('/api/ai-settings'),api('/api/capabilities')]);
       if(own!==generation)return;
       [response,capabilities]=result;
-      draft=['speech','llm'].includes(area)?structuredClone(response.settings[area]):null;
+      draft=['speech','llm'].includes(area)?structuredClone(saves.get(area)?.pending?saves.get(area).config:response.settings[area]):null;
     }catch(e){if(own===generation)message.textContent=e.message;}
-    finally{if(own===generation){busy=false;render();}}
+    finally{if(own===generation){loading=false;render();}}
   }
-  dialog.addEventListener('settings-reset',()=>void enterSettings(false));
+  dialog.addEventListener('settings-reset',async()=>{
+    const cancellations=[];
+    for(const [savedArea,task] of saves) {
+      if(task.pending&&task.phase==='checking') {
+        task.cancelled=true;task.controller.abort();
+        cancellations.push(api('/api/ai-settings/'+savedArea+'/check/cancel','POST',{check_id:task.checkId}).catch(()=>{}));
+        saves.delete(savedArea);
+      } else if(!task.pending) saves.delete(savedArea);
+    }
+    await enterSettings(false);
+    message.textContent='변경과 진행 중인 검증을 취소했습니다.';
+    await Promise.all(cancellations);
+  });
   new MutationObserver(()=>{
     if(!dialog.hidden)void enterSettings();
-    else{generation++;historyGeneration++;busy=false;key='';draft=null;panels.replaceChildren();}
+    else{generation++;historyGeneration++;loading=false;busy=false;key='';draft=null;panels.replaceChildren();}
   }).observe(dialog,{attributes:true,attributeFilter:['hidden']});
 }
