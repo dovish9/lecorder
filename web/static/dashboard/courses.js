@@ -100,7 +100,7 @@ export function createCourses(context) {
         const option = document.createElement("option");
         option.value = String(course.id);
         option.textContent = course.name;
-        option.selected = course.id === app.activeCourseId;
+        option.selected = course.id === (select === ui.dockCourseSelect ? captureCourseId : app.activeCourseId);
         select.append(option);
       }
       const item = document.createElement("button");

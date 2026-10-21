@@ -68,3 +68,18 @@ class ConfigurationTests(RecorderCase):
             self.assertIn("WHISPER_RETRY_MAX_GROUPS=6", saved)
             self.assertIn("WHISPER_LOW_CONFIDENCE=-0.7", saved)
             self.assertNotIn("OLLAMA_MODEL=", saved)
+
+    def test_path_checks_do_not_require_local_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            (project / "web/backend").mkdir(parents=True)
+            (project / "app.py").write_text("")
+            output = Path(temporary) / "output"
+            output.mkdir()
+            store = EnvironmentStore(Path(temporary) / ".env", project)
+            saved = store.update(project_dir=str(project), output_dir=str(output))
+            self.assertEqual(saved.public()["checks"], {"project": True, "output": True})
+            (project / "app.py").unlink()
+            self.assertFalse(store.get().public()["checks"]["project"])
+            with self.assertRaises(ValueError):
+                store.update(project_dir=str(project), output_dir=str(output))

@@ -38,10 +38,10 @@ export function setupAISettings() {
     input.addEventListener('input',()=>{if(prop==='api_key')key=input.value;else draft[prop]=input.value;invalidate();});wrap.append(title,input);return wrap;
   }
   const sectionCopy = {
-    paths: ['저장 위치', '프로젝트와 전사 결과를 저장할 위치를 관리합니다.'],
-    speech: ['음성 전사', '녹음을 마친 뒤 전체 음성을 전사할 모델을 설정합니다.'],
+    paths: ['경로', '프로젝트와 전사 결과를 저장할 위치를 관리합니다.'],
+    speech: ['음성 변환', '녹음을 마친 뒤 전체 음성을 전사할 모델을 설정합니다.'],
     llm: ['LLM', '전사 검수와 강의노트 분석에 사용할 모델을 설정합니다.'],
-    history: ['수정 승인 이력', '승인한 수정의 전후 문맥과 발화 구간을 자료로 보관합니다.'],
+    history: ['승인한 검토', '승인한 수정의 전후 문맥과 발화 구간을 자료로 보관합니다.'],
   };
   function render() {
     $('#systemDialogTitle').textContent=sectionCopy[area][0];
@@ -49,13 +49,14 @@ export function setupAISettings() {
     paths.hidden=area!=='paths'; panels.hidden=!['speech','llm'].includes(area);
     history.hidden=area!=='history'; footer.hidden=area==='history';
     document.querySelectorAll('[data-ai-tab]').forEach(b=>{const active=b.dataset.aiTab===area;b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});
-    hint.textContent=area==='paths'?'경로 저장 시 앱과 로컬 서버가 다시 시작됩니다.':'저장한 설정은 다음 작업부터 적용됩니다. 진행 중인 작업은 유지됩니다.';
+    hint.textContent='저장 후 상단 알림의 재시작 버튼을 누르면 변경한 설정을 적용합니다.';
     save.textContent=area==='paths'?'경로 저장':'설정 저장'; save.disabled=busy || (area!=='paths'&&!checked);
     panels.replaceChildren(); if(!['speech','llm'].includes(area)||!draft)return;
     const local=['llama_cpp','whisper_cpp'].includes(draft.provider);
-    if(area==='speech')panels.append(element('p','ai-privacy','녹음 중 실시간 초안은 로컬 large-v3-turbo로 처리합니다.'));
+
     panels.append(picker('제공자',providers[area],draft.provider,id=>{
-      draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};key='';checked=false;render();
+      const live=area==='speech'?Object.fromEntries(['live_model','live_model_path','live_vad_path'].map(k=>[k,draft[k]??response.defaults.speech[k]])):{};
+      draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};Object.assign(draft,live);key='';checked=false;render();
     }));
     if(local){const label=element('label','ai-managed');const check=element('input');check.disabled=busy;check.type='checkbox';check.setAttribute('role','switch');check.checked=draft.managed;check.addEventListener('change',()=>{draft.managed=check.checked;checked=false;render();});label.append(element('span','','로컬 서버 자동 관리'),check);panels.append(label);}
     if(!local && area==='llm')panels.append(picker('모델 프리셋',[...(models[draft.provider]||[]).map(m=>[m,m]),['','직접 입력']],draft.model,id=>{draft.model=id;checked=false;render();}));
@@ -89,7 +90,15 @@ export function setupAISettings() {
       }
     }
     panels.prepend(connection);
-    if(fileRows.childElementCount){files.append(fileRows);panels.insertBefore(files,connection.nextSibling);}
+    if(fileRows.childElementCount){files.append(fileRows);connection.append(files);}
+    if(area==='speech') {
+      const liveSection=element('section','settings-live-section');
+      liveSection.append(element('h3','','실시간 전사'),element('p','ai-privacy','녹음 중 초안에 사용하는 로컬 모델입니다. 변경한 설정은 서버를 재시작하면 적용됩니다.'));
+      const liveRows=element('div','settings-row-group');
+      for(const prop of ['live_model','live_model_path','live_vad_path']) draft[prop]??=response.defaults.speech[prop];
+      liveRows.append(field('모델 ID','live_model'),field('모델 파일','live_model_path'),field('VAD 모델 파일','live_vad_path'));
+      liveSection.append(liveRows);panels.insertBefore(liveSection,connection.nextSibling);
+    }
     panels.append(actions);
   }
   for(const button of document.querySelectorAll('[data-ai-tab]')) {
@@ -100,7 +109,7 @@ export function setupAISettings() {
     if(area==='history'){event.preventDefault();event.stopImmediatePropagation();return;}
     if(area==='paths')return;event.preventDefault();event.stopImmediatePropagation();if(!checked||busy)return;
     busy=true;render();
-    try{response=await api('/api/ai-settings/'+area,'PUT',{config:draft,api_key:key});key='';draft=structuredClone(response.settings[area]);message.textContent='저장했습니다. 다음 작업부터 적용됩니다.';}
+    try{response=await api('/api/ai-settings/'+area,'PUT',{config:draft,api_key:key});key='';draft=structuredClone(response.settings[area]);message.textContent='저장했습니다. 재시작하면 적용됩니다.';document.dispatchEvent(new Event('settings-saved'));}
     catch(e){message.textContent=e.message;checked=false;}
     finally{busy=false;render();}
   },true);

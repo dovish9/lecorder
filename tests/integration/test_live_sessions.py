@@ -96,3 +96,22 @@ class LiveSessionContractTests(RecorderCase):
         self.assertTrue(any(g['reason']=='AI 처리 일시정지' for g in session.gaps))
         self.assertEqual(self.client.post('/api/ai/control', json={'enabled': True}).status_code, 200)
         self.assertEqual((self.workflow.folder(self.row.id)/'chunks/00000000.part').read_bytes(), b'original while AI off')
+
+    def test_live_settings_are_frozen_until_the_next_recording(self):
+        settings=self.services.ai.snapshot()
+        settings['speech'].update(live_model='selected-live',live_model_path='/test/live.bin',live_vad_path='/test/vad.bin')
+        with patch.object(self.services.ai,'snapshot',return_value=settings), patch('web.backend.live_transcription.start_thread',return_value=Mock()):
+            self.services.live.begin(self.row.id)
+            session=self.services.live.active
+            self.assertEqual(session.public()['model'],'selected-live')
+            self.assertEqual(session.config['model_path'],'/test/live.bin')
+            self.assertEqual(session.config['vad_path'],'/test/vad.bin')
+            settings['speech']['live_model']='next-live'
+            self.services.live.begin(self.row.id)
+            self.assertEqual(session.config['model'],'selected-live')
+            session.stop('client_stop')
+            session.stopped.set()  # The worker is intentionally mocked in this snapshot test.
+            row=self.workflow.begin_chunked(self.store.get(),'next','.webm')
+            self.services.live.begin(row.id)
+            self.assertEqual(self.services.live.active.config['model'],'next-live')
+            self.services.live.active.stopped.set()

@@ -42,7 +42,10 @@ class InsightsBackupTests(RecorderCase):
         config = {'provider':'llama_cpp','model':'test','managed':True}
         with collect(), history.scope('source','review'):
             for _ in range(2): history.request(lambda t:{'result':{}}, config,'llm','same',CancellationToken())
-        group = self.client.get('/api/usage?days=0').json['groups'][0]
+        response = self.client.get('/api/usage?days=0').json
+        self.assertIsNone(response['daily'][0]['value'])
+        self.assertEqual(response['daily'][0]['requests'], 1)
+        group = response['groups'][0]
         self.assertEqual(group['requests'],1)
         self.assertIsNone(group['input_tokens'])
         self.assertEqual(group['unknown_usage'],1)
@@ -126,7 +129,11 @@ class InsightsBackupTests(RecorderCase):
             for index,started in enumerate(('2026-10-15T14:59:59+00:00','2026-10-15T15:00:00+00:00')):
                 db.execute("INSERT INTO ai_requests(id,source_id,owner,kind,provider,model,location,started_at,status) VALUES (?,?,?,?,?,?,?,?,?)",(str(index),str(index),'source','speech','whisper_cpp','test','local',started,'interrupted'))
         with patch('web.backend.insights.datetime',Clock):
-            group=self.services.insights.usage(1,540,'Asia/Seoul')['groups'][0]
+            response=self.services.insights.usage(1,540,'Asia/Seoul')
+            group=response['groups'][0]
+            self.assertEqual(response['daily'][0]['date'], '2026-10-16')
+            self.assertIsNone(response['daily'][0]['value'])
+            self.assertEqual(response['daily'][0]['unknown'], 1)
         self.assertEqual(group['requests'],1)
         self.assertEqual(group['unknown_time'],1)
 

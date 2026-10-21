@@ -7,8 +7,7 @@ export function createSettings(context) {
     ui.projectDir.value = environment.project_dir;
     ui.outputDir.value = environment.output_dir;
     const checks = [
-      [ui.projectCheck, environment.checks.project, "프로젝트 확인됨", "app.py를 찾지 못함"],
-      [ui.whisperCheck, environment.checks.whisper && environment.checks.model && environment.checks.vad_model, "서버·large-v3·VAD 확인됨", "빌드 또는 모델 확인 필요"],
+      [ui.projectCheck, environment.checks.project, "프로젝트 확인됨", "프로젝트 구조 확인 필요"],
       [ui.outputCheck, environment.checks.output, "폴더 확인됨", "폴더를 찾지 못함"],
     ];
     for (const [element, ok, yes, no] of checks) {
@@ -30,25 +29,35 @@ export function createSettings(context) {
       if (event.key === "Enter") event.preventDefault();
     });
   }
-  async function waitForServerRestart() {
-    await new Promise((resolve) => window.setTimeout(resolve, 1200));
-    const deadline = Date.now() + 30000;
-    while (Date.now() < deadline) {
-      try {
-        const response = await fetch(`/api/bootstrap?restart=${Date.now()}`, {cache: "no-store"});
-        if (response.ok) {
-          window.location.reload();
-          return;
-        }
-      } catch (_) {
-        // A connection failure is expected while the managed servers restart.
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-    }
-    ui.systemMessage.className = "error";
-    ui.systemMessage.textContent = "자동 재시작을 확인하지 못했습니다. start.command를 다시 실행해 주세요.";
-    ui.saveSystemButton.disabled = false;
+  let notice;
+  function showRestartNotice() {
+    if(notice)return;
+    notice=document.createElement('aside');notice.className='settings-restart-notice';notice.setAttribute('aria-label','설정 변경 적용');
+    const text=document.createElement('p');text.textContent='변경한 내용을 반영하여 지금 재시작하시겠습니까? 작업은 손실되지 않고 이어서 실행됩니다.';
+    const status=document.createElement('p');status.className='restart-status';status.setAttribute('role','status');
+    const button=document.createElement('button');button.type='button';button.textContent='재시작';
+    button.addEventListener('click',async()=>{
+      button.disabled=true;status.textContent='작업을 보존하고 서버를 다시 시작합니다…';
+      try{
+        const data=await requestJson('/api/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+        await waitForServerRestart(data.instance_id);
+      }catch(error){status.textContent=error.message;button.disabled=false;}
+    });
+    notice.append(text,button,status);document.body.append(notice);
   }
+  async function waitForServerRestart(previousInstance) {
+    const deadline=Date.now()+120000;
+    while(Date.now()<deadline){
+      await new Promise(resolve=>window.setTimeout(resolve,1500));
+      try{
+        const response=await fetch(`/api/bootstrap?restart=${Date.now()}`,{cache:'no-store'});
+        if(response.ok){const data=await response.json();if(data.instance_id&&data.instance_id!==previousInstance){window.location.reload();return;}}
+      }catch(_){/* Expected while the server is restarting. */}
+    }
+    throw new Error('서버 재시작을 확인하지 못했습니다. start.command 실행 창을 확인해 주세요.');
+  }
+  listen(document,'settings-saved',showRestartNotice);
+  requestJson('/api/bootstrap').then(data=>{if(data.restart_required)showRestartNotice();}).catch(()=>{});
 
   listen(ui.systemForm, "submit", async (event) => {
     event.preventDefault();
@@ -65,17 +74,13 @@ export function createSettings(context) {
         }),
       });
       renderEnvironment(data.environment);
-      if (data.restart_scheduled) {
-        ui.systemMessage.textContent = "저장됨 · 서버를 다시 시작하는 중";
-        void waitForServerRestart();
-        return;
-      }
-      ui.systemMessage.textContent = "저장됨 · start.command로 실행해야 자동 재시작됩니다.";
+      ui.systemMessage.textContent = '저장했습니다. 재시작하면 적용됩니다.';
+      showRestartNotice();
     } catch (error) {
       ui.systemMessage.className = "error";
       ui.systemMessage.textContent = error.message;
     } finally {
-      if (!ui.systemMessage.textContent.includes("다시 시작하는 중")) ui.saveSystemButton.disabled = false;
+      ui.saveSystemButton.disabled = false;
     }
   });
 

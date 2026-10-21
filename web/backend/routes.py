@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import uuid
 from pathlib import Path
 from functools import wraps
 from typing import Any
@@ -39,7 +40,12 @@ def schedule_managed_restart(delay: float = 0.8) -> bool:
     services = current_services()
     def restart():
         if services:
+            saved = services.ai.saved_snapshot()
+            active = services.ai.snapshot()
+            changed = [area for area in saved if saved[area] != active[area]]
             services.close()
+            from .settings_restart import rebind_pending
+            rebind_pending(services.workflow.store, saved, changed)
         close_all()
         os._exit(RESTART_EXIT_CODE)
     timer = threading.Timer(delay, restart)
@@ -61,6 +67,11 @@ def create_app(
     state = jobs or JobState()
     engine = transcriber or Transcriber()
     services = services or Services.create(lectures.path.parent)
+    services.ai.freeze()
+    paths.freeze()
+    instance_id = uuid.uuid4().hex
+    restarting = threading.Event()
+    restart_lock = threading.Lock()
     lectures.ai = services.ai
     with services.scope():
         workflow = pipeline or RecordingPipeline(lectures, state, engine,
@@ -74,7 +85,9 @@ def create_app(
     services.backups = Backups(services, lectures)
     from .live_transcription import LiveTranscription
     from .live_http import register as register_live_http
-    services.live = LiveTranscription(workflow, services.platform, ai_control=services.ai_control)
+    from .ai_settings import live_configuration
+    services.live = LiveTranscription(workflow, services.platform, ai_control=services.ai_control,
+        config_provider=lambda: live_configuration(services.ai.snapshot()["speech"]))
     workflow.live = services.live
     app = Flask(__name__, static_folder=str(ROOT / "web" / "static"))
     register_live_http(app, services.live)
@@ -85,6 +98,8 @@ def create_app(
     def enter_services():
         g.service_scope = services.scope()
         g.service_scope.__enter__()
+        if restarting.is_set() and request.method not in {'GET','HEAD','OPTIONS'}:
+            return jsonify(error='서버 재시작 중입니다. 잠시 후 다시 시도하세요.'), 503
         if request.method not in {'GET','HEAD','OPTIONS'}:
             origin=request.headers.get('Origin')
             if origin and origin.rstrip('/')!=request.host_url.rstrip('/'):
@@ -289,7 +304,9 @@ def create_app(
         payload.update({
             "courses": [course.public() for course in lectures.list_courses()],
             "active_course_id": payload["settings"]["course_id"],
-            "environment": paths.get().public(),
+            "environment": paths.saved().public(),
+            "instance_id": instance_id,
+            "restart_required": paths.saved() != paths.get() or services.ai.saved_snapshot() != services.ai.snapshot(),
         })
         return payload
 
@@ -312,6 +329,21 @@ def create_app(
             return jsonify(ai_control=services.ai_control.public())
         except ValueError as error:
             return jsonify(error=str(error)), 409
+
+    @app.post('/api/restart')
+    def restart_server():
+        with restart_lock:
+            with lectures.transaction() as db:
+                recording = db.execute("SELECT 1 FROM recordings WHERE status='recording' LIMIT 1").fetchone()
+            if recording:
+                return jsonify(error='녹음과 원음 업로드를 마친 뒤 재시작해 주세요. 다른 탭의 녹음도 확인하세요.'), 409
+            if not flag(os.getenv('LECORDER_MANAGED_RESTART')):
+                return jsonify(error='자동 재시작은 start.command로 실행했을 때 사용할 수 있습니다. 저장된 설정은 앱을 다시 실행하면 적용됩니다.'), 409
+            restarting.set()
+            if not schedule_managed_restart():
+                restarting.clear()
+                return jsonify(error='재시작을 예약하지 못했습니다.'), 409
+            return jsonify(ok=True, instance_id=instance_id, restart_scheduled=True), 202
 
     @app.get("/api/bootstrap")
     def bootstrap():

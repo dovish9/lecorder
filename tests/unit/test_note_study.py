@@ -8,7 +8,7 @@ from web.backend.transcription import CancellationToken
 class StudyValidationTests(unittest.TestCase):
     def setUp(self):
         availability = patch("web.backend.note_study.require_llm", return_value=(True, True))
-        semantic = patch("web.backend.note_study._semantic_issues", return_value=[])
+        semantic = patch("web.backend.note_study._semantic_issues", return_value={'findings': [], 'checks': []})
         semantic.start()
         self.addCleanup(semantic.stop)
         availability.start()

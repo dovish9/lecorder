@@ -1,3 +1,5 @@
+import { pageNeedsReview } from "./note-review.js";
+import { attachPageZoom } from "./note-zoom.js";
 import { markdown } from "./note-markdown.js?v=20260921-math2";
 /* Lecture-note UI. All model/document text is rendered as text, never HTML. */
 const statuses = {
@@ -230,7 +232,8 @@ export async function openNote(id, initial = {}) {
     etag = "",
     excluded = new Set(),
     dirty = false,
-    zoom = 1;
+    zoom = 1,
+    disposeZoom = () => {};
   for (const name of ["개요", "페이지별 해설", "용어집", "원문"])
     tabs.append(
       button(name, () => {
@@ -259,9 +262,9 @@ export async function openNote(id, initial = {}) {
     render();
   }
   function pageIssue(page) {
-    const detail = page.detail || page.analysis;
-    return page.needs_review || detail?.validation?.status === "needs_review" || detail?.uncertainties?.length;
+    return pageNeedsReview(page, current === "원문");
   }
+
   function pageNavigation(pages) {
     const index = pages.findIndex((page) => page.number === pageNumber);
     const bar = node("div", null, "note-pagebar");
@@ -286,35 +289,32 @@ export async function openNote(id, initial = {}) {
     const next = button("›", () => navigatePage(pages[Math.min(pages.length - 1, index + 1)]?.number));
     next.setAttribute("aria-label", "다음 페이지");
     next.disabled = index < 0 || index === pages.length - 1;
-    const zoomOut = button("−", () => { zoom = Math.max(.5, zoom - .25); render(); });
+    const zoomOut = button("−", () => {});
     zoomOut.setAttribute("aria-label", "축소");
-    const reset = button("100%", () => { zoom = 1; render(); });
-    const zoomIn = button("+", () => { zoom = Math.min(2.5, zoom + .25); render(); });
+    const reset = button(`${Math.round(zoom * 100)}%`, () => {});
+    reset.setAttribute("aria-label", "확대 비율, 클릭하면 100%로 초기화");
+    const zoomIn = button("+", () => {});
     zoomIn.setAttribute("aria-label", "확대");
     bar.append(previous, picker, next, node("span", `전체 ${pages.length}쪽`, "note-muted"), node("span", null, "note-pagebar-spacer"), zoomOut, reset, zoomIn);
-    return bar;
+    return {bar, controls: {out:zoomOut, label:reset, in:zoomIn}};
   }
   function pageWorkspace(note, pages) {
     const page = pages.find((item) => item.number === pageNumber) || pages[0];
     if (!page) return node("p", "페이지를 추출하고 있습니다.", "note-muted");
     const workspace = node("div", null, "note-workspace");
     const left = node("section", null, "note-page-panel");
-    left.append(pageNavigation(pages));
+    const navigation = pageNavigation(pages);
+    left.append(navigation.bar);
     const viewport = node("div", null, "note-page-viewport");
     const image = node("img");
     image.alt = `${page.number}쪽 원문`;
     image.style.width = `${zoom * 100}%`;
     if (page.image) image.src = `/api/notes/${id}/pages/${page.number}/image?revision=${note.revision_id}`;
-    viewport.addEventListener("wheel", (event) => {
-      if (!event.ctrlKey) return;
-      event.preventDefault();
-      zoom = Math.max(.5, Math.min(2.5, zoom + (event.deltaY < 0 ? .1 : -.1)));
-      image.style.width = `${zoom * 100}%`;
-    }, {passive: false});
+    disposeZoom = attachPageZoom(viewport, image, navigation.controls, zoom, value => { zoom = value; });
     viewport.append(image); left.append(viewport);
     const right = node("section", null, "note-explanation-panel");
     const rightHead = node("header", null, "note-explanation-head");
-    const title = node("div");
+    const title = node("div", null, "note-explanation-title");
     title.append(node("h3", current === "원문" ? "추출 원문" : `${page.number}쪽 해설`));
     if (pageIssue(page)) title.append(node("span", "확인 필요", "note-needs-review"));
     const pageActions = node("div", null, "note-toolbar");
@@ -331,10 +331,28 @@ export async function openNote(id, initial = {}) {
       if (explanation?.source_excerpt) content.append(node("p", "이전 방식의 원문 발췌입니다. 다시 분석하면 이미지 근거 해설을 생성합니다.", "note-muted"));
       else if (explanation) content.append(markdown(explanation.markdown || [explanation.summary, ...(explanation.points || []).map((item) => `- ${item}`)].join("\n\n")));
       else content.append(node("p", "이 페이지의 학습 정리를 준비하고 있습니다.", "note-muted"));
-      if (explanation?.uncertainties?.length || page.analysis_error) {
-        const warning = node("div", null, "note-error"); warning.append(node("strong", "확인 필요"));
-        [...(explanation?.uncertainties || []), page.analysis_error].filter(Boolean).forEach((item) => warning.append(node("p", item)));
+      if (page.analysis_error) content.append(node("p", page.analysis_error, "note-error"));
+      const structured = explanation?.validation?.version === "note-review-v2";
+      if (structured && explanation.uncertainties?.length) {
+        const warning = node("div", null, "note-error");
+        warning.append(node("strong", "원문과 확인해 주세요"));
+        explanation.uncertainties.forEach(message => warning.append(node("p", message)));
         content.append(warning);
+      }
+      const diagnosticMessages = structured
+        ? [...new Set((explanation.validation.history || []).flatMap(attempt => [
+            ...(attempt.generation_uncertainties || []),
+            ...(attempt.findings || []).map(item => item.detail),
+          ]))]
+        : explanation?.uncertainties || [];
+      if (diagnosticMessages.length) {
+        const diagnostics = node("details", null, "note-diagnostics");
+        diagnostics.append(node("summary", "검증 메모 보기"));
+        const messages = node("div", null, "note-diagnostics-content");
+        messages.append(node("p", "자동 검증 기록이며 수정 전의 지적도 포함합니다. 현재 확인할 내용은 위 안내를 참고하세요.", "note-muted"));
+        diagnosticMessages.forEach(item => messages.append(node("p", item)));
+        diagnostics.append(messages);
+        content.append(diagnostics);
       }
       if (page.detail_status && page.detail_status !== "completed") content.append(node("p", `상세 해설: ${statuses[page.detail_status] || page.detail_status}`, "note-muted"));
     }
@@ -342,6 +360,7 @@ export async function openNote(id, initial = {}) {
   }
   function render() {
     if (!data) return;
+    disposeZoom();
     body.replaceChildren();
     footer.replaceChildren();
     footer.hidden = current !== "용어집";
@@ -510,6 +529,7 @@ export async function openNote(id, initial = {}) {
     "close",
     () => {
       clearTimeout(poll);
+      disposeZoom();
       showCourseNotes(activeCourse);
     },
     { once: true },

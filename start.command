@@ -106,8 +106,8 @@ LECORDER_PORT="$APP_PORT" LECORDER_MANAGED_RESTART=1 "$PYTHON_BIN" "$ROOT/app.py
 APP_PID=$!
 wait_for "$APP_PORT" "대시보드"
 
-echo "ℹ️ 제공자·모델 변경: 환경설정 → 음성 전사 / LLM"
-echo "ℹ️ AI 설정 변경은 새 작업부터 적용됩니다. 진행 중인 작업은 기존 설정을 유지합니다."
+echo "ℹ️ 제공자·모델 변경: 설정 → 음성 변환 / LLM"
+echo "ℹ️ 설정을 저장한 뒤 상단 알림에서 재시작하면 적용됩니다. 미완료 작업은 복구됩니다."
 echo "✅ http://127.0.0.1:$APP_PORT"
 echo "💡 종료: Ctrl+C"
 
@@ -117,7 +117,7 @@ fi
 wait "$APP_PID"
 APP_STATUS=$?
 if [ "$APP_STATUS" -eq 75 ]; then
-    echo "🔄 새 경로 설정으로 서버를 다시 시작합니다."
+    echo "🔄 새 설정으로 서버를 다시 시작합니다."
     stop
     exec "$SCRIPT_ROOT/start.command"
 fi

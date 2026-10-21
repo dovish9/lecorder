@@ -258,8 +258,6 @@ class NoteLibrary(NoteRepository, NoteIntake):
                         image_path=self.folder / revision["note_id"] / page["image"],
                     )
                     page.pop("analysis_error", None)
-                    if result.get("validation", {}).get("status") == "needs_review":
-                        page["needs_review"] = True
                     page["detail" if number is not None else "analysis"] = result
                     page[
                         "detail_status" if number is not None else "analysis_status"

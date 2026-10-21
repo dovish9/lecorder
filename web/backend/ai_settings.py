@@ -24,12 +24,27 @@ def defaults():
         'speech': {'provider': 'whisper_cpp', 'managed': True, 'base_url': 'http://127.0.0.1:8080',
                    'model': 'large-v3', 'model_path': str(whisper / 'models/ggml-large-v3.bin'),
                    'binary': str(host.executable(whisper / 'build/bin', 'whisper-server')),
-                   'vad_path': str(whisper / 'models/ggml-silero-v6.2.0.bin'), 'idle_seconds': 60},
+                   'vad_path': str(whisper / 'models/ggml-silero-v6.2.0.bin'), 'idle_seconds': 60,
+                   'live_model': 'large-v3-turbo',
+                   'live_model_path': str(whisper / 'models/ggml-large-v3-turbo.bin'),
+                   'live_vad_path': str(whisper / 'models/ggml-silero-v6.2.0.bin')},
         'llm': {'provider': 'llama_cpp', 'managed': True, 'base_url': 'http://127.0.0.1:8081',
                 'model': 'Qwen3.5-9B', 'model_path': str(llama / 'models/Qwen3.5-9B-Q4_K_M.gguf'),
                 'projector_path': str(llama / 'models/mmproj-F16.gguf'),
                 'binary': str(host.executable(llama / 'build/bin', 'llama-server')), 'idle_seconds': 60},
     }
+
+
+def live_configuration(speech):
+    """Freeze local live settings independently of the final transcription provider."""
+    config = defaults()['speech']
+    if speech.get('provider') == 'whisper_cpp' and speech.get('managed'):
+        config['binary'] = speech['binary']
+        config['base_url'] = speech['base_url']
+    config.update(model=speech.get('live_model', config['live_model']),
+                  model_path=speech.get('live_model_path', config['live_model_path']),
+                  vad_path=speech.get('live_vad_path', config['live_vad_path']))
+    return config
 
 
 class Credentials:
@@ -66,26 +81,38 @@ class AISettings:
         self.path = Path(path)
         self.credentials = credentials or Credentials()
         self.lock = threading.RLock()
+        self._active = None
+
+    def freeze(self):
+        self._active = self.saved_snapshot()
 
     def snapshot(self):
+        return copy.deepcopy(self._active) if self._active is not None else self.saved_snapshot()
+
+    def saved_snapshot(self):
         with self.lock:
             if not self.path.exists():
                 return defaults()
-            return json.loads(self.path.read_text(encoding="utf-8"))['settings']
+            settings = json.loads(self.path.read_text(encoding="utf-8"))['settings']
+            for field in ('live_model', 'live_model_path', 'live_vad_path'):
+                settings['speech'].setdefault(field, defaults()['speech'][field])
+            return settings
 
     def public(self):
-        settings = self.snapshot()
+        settings = self.saved_snapshot()
         for config in settings.values():
             try:
                 config['key_present'] = bool(self.credentials.get(config))
             except Exception:
                 config['key_present'] = False
-        return {'settings': settings, 'defaults': defaults()}
+        return {'settings': settings, 'defaults': defaults(), 'restart_required': self._active is not None and self.saved_snapshot() != self._active}
 
     def clean(self, area, supplied):
         if area not in {'speech', 'llm'} or not isinstance(supplied, dict):
             raise ValueError('올바른 AI 설정 영역이 필요합니다.')
         allowed = {'provider', 'managed', 'base_url', 'model', 'model_path', 'binary', 'vad_path', 'projector_path', 'idle_seconds'}
+        if area == 'speech':
+            allowed.update({'live_model', 'live_model_path', 'live_vad_path'})
         config = {k: v for k, v in supplied.items() if k in allowed}
         providers = {'whisper_cpp', 'openai'} if area == 'speech' else {'llama_cpp', 'openai', 'claude', 'gemini'}
         if config.get('provider') not in providers:
@@ -112,13 +139,25 @@ class AISettings:
                 path = Path(str(config.get(field, ''))).expanduser()
                 if not path.is_file():
                     raise ValueError(f'{field}: 파일을 찾을 수 없습니다.')
-                config[field] = str(path.resolve())
+                config[field] = str(path.absolute())
+        if area == 'speech':
+            for field in ('live_model', 'live_model_path', 'live_vad_path'):
+                value = str(config.get(field, defaults()['speech'][field])).strip()
+                if not value or len(value) > (200 if field == 'live_model' else 4096):
+                    raise ValueError(f'{field}: 값을 확인하세요.')
+                if field != 'live_model':
+                    path = Path(value).expanduser()
+                    # Missing default turbo must not prevent configuring final/external transcription.
+                    if path.resolve() != Path(defaults()['speech'][field]).resolve() and not path.is_file():
+                        raise ValueError(f'{field}: 파일을 찾을 수 없습니다.')
+                    value = str(path.absolute())
+                config[field] = value
         return config
 
     def save(self, area, config, key=None):
         config = self.clean(area, config)
         with self.lock:
-            settings = self.snapshot()
+            settings = self.saved_snapshot()
             if key:
                 self.credentials.set(config, key)
             settings[area] = config

@@ -151,4 +151,26 @@ class AIProviderTests(unittest.TestCase):
             self.assertNotIn('secret',json.dumps(trace))
             self.assertNotIn('private source',json.dumps(trace))
 
+
+    def test_live_model_settings_persist_independently_of_external_final_provider(self):
+        from web.backend.ai_settings import live_configuration
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for name in ('turbo.bin','vad.bin'):
+                (root/name).write_bytes(b'fixture')
+            store=AISettings(root/'settings.json', Keys())
+            config={'provider':'openai','managed':False,'base_url':'https://api.openai.com/v1','model':'whisper-1',
+                    'live_model':'custom-live','live_model_path':str(root/'turbo.bin'),'live_vad_path':str(root/'vad.bin')}
+            store.save('speech',config)
+            saved=AISettings(store.path,Keys()).snapshot()['speech']
+            live=live_configuration(saved)
+            self.assertEqual(live['provider'],'whisper_cpp')
+            self.assertTrue(live['managed'])
+            self.assertEqual(live['model'],'custom-live')
+            self.assertEqual(live['model_path'],str((root/'turbo.bin').absolute()))
+            self.assertEqual(live['vad_path'],str((root/'vad.bin').absolute()))
+            with self.assertRaisesRegex(ValueError,'파일'):
+                store.save('speech',dict(config,live_vad_path=str(root/'missing.bin')))
+            self.assertEqual(store.snapshot()['speech'],saved)
+
 if __name__=='__main__':unittest.main()

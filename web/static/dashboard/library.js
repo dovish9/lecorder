@@ -97,7 +97,7 @@ export function createLibrary(context) {
     app.libraryEntries = sortLibraryEntries(deriveLibraryEntries(), ui.librarySort.value);
     const query = ui.librarySearch.value.trim().toLocaleLowerCase("ko");
     const filter = ui.libraryFilter.value;
-    const selectedCourseId = (app.recordingState === "idle" ? app.activeCourseId : app.recordingCourseId) || 0;
+    const selectedCourseId = app.activeCourseId || 0;
     const courseEntries = app.libraryEntries.filter(entry => (entry.recording?.course_id || 0) === selectedCourseId);
     const visible = courseEntries.filter((entry) => {
       const recording = entry.recording;
@@ -532,15 +532,11 @@ export function createLibrary(context) {
   function renderDashboard() {
     ui.dashboardDate.textContent = new Intl.DateTimeFormat("ko-KR", {year: "numeric", month: "long", day: "numeric", weekday: "long"}).format(new Date());
     const entries = deriveLibraryEntries();
-    const activeOrder = {processing: 0, cancelling: 0, queued: 1, recoverable: 2, recording: 2};
-    const active = entries.filter((entry) => entry.category === "active")
-      .sort((left, right) => (activeOrder[left.recording.status] ?? 9) - (activeOrder[right.recording.status] ?? 9));
     const attention = entries.filter((entry) => ["review", "problem"].includes(entry.category))
       .sort((left, right) => {
         const priority = (entry) => entry.recording?.status === "failed" ? 0 : entry.recording?.status === "recoverable" ? 1 : entry.category === "review" ? 2 : 3;
         return priority(left) - priority(right);
       });
-    const noteJobs = (app.noteJobs || []).filter((note) => ["processing", "queued"].includes(note.status));
     const today = new Date();
     const completedToday = entries.filter((entry) => {
       if (entry.category !== "completed") return false;
@@ -552,7 +548,6 @@ export function createLibrary(context) {
     ui.dashboardWorkTime.textContent = processingSeconds ? durationText(processingSeconds) : "—";
     ui.dashboardAttentionMetric.textContent = String(attention.length);
     ui.dashboardAttentionMore.textContent = attention.length > 4 ? `검토함 ${attention.length}개 모두 보기` : "검토함 열기";
-    $("#dashboardQueueCount").textContent = active.length + noteJobs.length;
     $("#dashboardAttentionCount").textContent = attention.length;
     const fill = (container, items, emptyText) => {
       container.replaceChildren();
@@ -561,17 +556,6 @@ export function createLibrary(context) {
       }
       items.forEach((entry) => container.append(dashboardRow(entry, libraryState(entry))));
     };
-    ui.dashboardQueue.replaceChildren();
-    const activeItems = [...active, ...noteJobs];
-    if (!activeItems.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = app.courses.length ? "진행 중인 작업이 없습니다. 하단 도구에서 녹음하거나 파일을 가져올 수 있습니다." : "강의를 추가하면 하단 도구에서 녹음을 시작할 수 있습니다.";
-      ui.dashboardQueue.append(empty);
-    } else {
-      active.forEach((entry) => ui.dashboardQueue.append(dashboardRow(entry, libraryState(entry))));
-      noteJobs.forEach((note) => ui.dashboardQueue.append(dashboardNoteRow(note)));
-    }
     fill(ui.dashboardAttention, attention.slice(0, 4), "확인이 필요한 항목이 없습니다.");
   }
 

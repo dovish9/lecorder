@@ -246,12 +246,12 @@
   gap: 12px;
   margin-bottom: 16px;
 }
-.note-pagebar{flex:none;margin:0;padding:10px 12px;border-bottom:.5px solid var(--line);background:var(--surface)}
+.note-pagebar{flex:none;margin:0;min-height:52px;box-sizing:border-box;padding:10px 12px;border-bottom:.5px solid var(--line);background:var(--surface)}
 .note-pagebar-spacer{flex:1}
 .note-page-picker{position:relative}
-.note-page-picker summary{list-style:none;min-width:88px;padding:5px 24px 5px 10px;border:.5px solid var(--line2);border-radius:6px;background:var(--raised);cursor:pointer;position:relative}
+.note-page-picker summary{display:flex;align-items:center;box-sizing:border-box;height:30px;list-style:none;min-width:88px;padding:5px 30px 5px 10px;border:.5px solid var(--line2);border-radius:6px;background:var(--raised);cursor:pointer;position:relative}
 .note-page-picker summary::-webkit-details-marker{display:none}
-.note-page-picker summary:after{content:"⌄";position:absolute;right:8px;color:var(--muted)}
+.note-page-picker summary:after{content:"";position:absolute;right:12px;top:50%;width:6px;height:6px;border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:translateY(-70%) rotate(45deg)}
 .note-page-options{position:absolute;z-index:4;top:calc(100% + 5px);left:0;display:grid;min-width:178px;max-height:270px;overflow:auto;padding:5px;border:.5px solid var(--line2);border-radius:8px;background:var(--raised);box-shadow:0 12px 28px #0003}
 .note-page-options button{border:0;text-align:left;background:transparent;border-radius:5px;padding:7px 9px;white-space:nowrap}
 .note-page-options button[aria-selected="true"]{background:var(--blue-soft);color:var(--blue);font-weight:600}
@@ -259,9 +259,9 @@
 .note-page-panel,.note-explanation-panel{min-width:0;min-height:0;display:flex;flex-direction:column}
 .note-page-panel{border-right:.5px solid var(--line);background:var(--surface)}
 .note-page-viewport{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:24px;background:#e8e8eb}
-.note-page-viewport img{display:block;min-width:100%;max-width:none;background:white;box-shadow:0 4px 16px #0003}
+.note-page-viewport img{display:block;min-width:0;max-width:none;height:auto;margin-inline:auto;background:white;box-shadow:0 4px 16px #0003}
 .note-explanation-panel{background:var(--raised)}
-.note-explanation-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:18px 20px 14px;border-bottom:.5px solid var(--line);background:var(--surface)}
+.note-explanation-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;box-sizing:border-box;padding:10px 20px;border-bottom:.5px solid var(--line);background:var(--surface)}
 .note-explanation-head h3{margin:0;font-size:16px}
 .note-explanation-head .note-toolbar{flex-wrap:wrap;justify-content:flex-end}
 .note-needs-review{display:inline-flex;margin-top:7px;padding:2px 7px;border-radius:999px;background:#fff1df;color:#a84d00;font-size:11px;font-weight:600}
@@ -351,6 +351,11 @@
   border-radius: 6px;
   background: var(--surface);
 }
+.note-diagnostics{margin-top:18px;border-top:.5px solid var(--line);color:var(--muted);font-size:12px}
+.note-diagnostics>summary{padding:12px 0;cursor:pointer;font-weight:500}
+.note-diagnostics>summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}
+.note-diagnostics-content{padding:0 12px 8px;border-radius:6px;background:var(--surface);line-height:1.65;overflow-wrap:anywhere}
+.note-diagnostics-content p{padding-top:10px;margin:0 0 8px}
 .note-upload > input {
   width: 100%;
 }
@@ -532,3 +537,8 @@
 .note-keyword-card .note-term-spoken{margin:0;color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .note-keyword-card .note-source-chips{margin-top:auto;padding-top:4px}
 @media(max-width:600px){.note-keywords{grid-template-columns:minmax(0,1fr)}}
+
+.note-explanation-title{display:flex;align-items:center;gap:10px;flex-shrink:0;white-space:nowrap}
+.note-explanation-title .note-needs-review{margin:0;white-space:nowrap}
+.note-pagebar>button{height:30px;min-width:30px;padding:4px 9px;font-variant-numeric:tabular-nums}
+@media(max-width:700px){.note-explanation-head{flex-wrap:wrap}.note-explanation-head .note-toolbar{margin-left:auto}}

@@ -7,7 +7,6 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
-from .platforms import host
 from .atomic import write_text
 
 
@@ -86,13 +85,9 @@ class Environment:
     def public(self) -> dict[str, Any]:
         data = asdict(self)
         project = Path(self.project_dir).expanduser()
-        whisper = Path(self.whisper_cpp_dir).expanduser()
         output = Path(self.output_dir).expanduser()
         data["checks"] = {
             "project": (project / "app.py").is_file() and (project / "web/backend").is_dir(),
-            "whisper": host.executable(whisper / "build/bin", "whisper-server").is_file(),
-            "model": (whisper / "models/ggml-large-v3.bin").is_file(),
-            "vad_model": (whisper / "models/ggml-silero-v6.2.0.bin").is_file(),
             "output": output.is_dir(),
         }
         return data
@@ -110,8 +105,15 @@ class EnvironmentStore:
         self.path = path
         self.script_root = script_root
         self._lock = threading.RLock()
+        self._active = None
+
+    def freeze(self):
+        self._active = self.saved()
 
     def get(self) -> Environment:
+        return self._active or self.saved()
+
+    def saved(self) -> Environment:
         values = _read_env(self.path)
         project = resolve_path(values.get("LECORDER_DIR", os.getenv("LECORDER_DIR", ".")), self.script_root)
         return Environment(
@@ -125,7 +127,7 @@ class EnvironmentStore:
 
     def update(self, **changes: Any) -> Environment:
         with self._lock:
-            current = self.get()
+            current = self.saved()
             clean: dict[str, str] = {}
             for field in self.KEYS:
                 value = text(changes.get(field, getattr(current, field)), 2000)

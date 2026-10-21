@@ -148,6 +148,7 @@ class Insights:
                 SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) AS cancelled,
                 SUM(CASE WHEN status IN ('failed','interrupted') THEN 1 ELSE 0 END) AS failed,
                 SUM(seconds) AS seconds,SUM(audio_seconds) AS audio_seconds,
+                SUM(CASE WHEN audio_seconds IS NULL THEN 1 ELSE 0 END) AS unknown_audio,
                 SUM(CASE WHEN seconds IS NULL THEN 1 ELSE 0 END) AS unknown_time,
                 SUM(input_tokens) AS input_tokens,SUM(output_tokens) AS output_tokens,
                 SUM(CASE WHEN kind='llm' AND (input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) AS unknown_usage
@@ -155,7 +156,26 @@ class Insights:
                   (SELECT MIN(id) FROM ai_requests GROUP BY CASE WHEN source_id='' THEN id ELSE source_id END)
                 GROUP BY location,provider,model,kind
                 ORDER BY location,provider,model,kind''', (since,)).fetchall()
+            requests = db.execute("""SELECT started_at,kind,audio_seconds,input_tokens,output_tokens
+                FROM ai_requests WHERE started_at>=? AND id IN
+                (SELECT MIN(id) FROM ai_requests GROUP BY CASE WHEN source_id='' THEN id ELSE source_id END)
+                ORDER BY started_at""", (since,)).fetchall()
             began = db.execute("SELECT MIN(started_at) FROM ai_requests WHERE source_id NOT LIKE 'legacy-%'").fetchone()[0]
             partial = bool(db.execute("SELECT 1 FROM ai_requests WHERE source_id LIKE 'legacy-%' LIMIT 1").fetchone())
-        return {'groups': [dict(r) for r in rows], 'recording_since': began, 'days': days, 'partial_history':partial,
+        daily = {}
+        for row in requests:
+            date = datetime.fromisoformat(row['started_at']).astimezone(zone).date().isoformat()
+            kind = 'llm' if row['kind'] == 'llm' else 'speech'
+            bucket = daily.setdefault((date, kind), {'date': date, 'kind': kind, 'requests': 0,
+                'value': None, 'unknown': 0})
+            bucket['requests'] += 1
+            values = [row['input_tokens'], row['output_tokens']] if kind == 'llm' else [row['audio_seconds']]
+            if any(v is None for v in values):
+                bucket['unknown'] += 1
+            known = [v for v in values if v is not None]
+            if known:
+                bucket['value'] = (bucket['value'] or 0) + sum(known)
+        start_date = (now.date()-timedelta(days=days-1)).isoformat() if days else min((d for d, _ in daily), default=now.date().isoformat())
+        return {'daily': list(daily.values()), 'start_date': start_date, 'end_date': now.date().isoformat(),
+                'groups': [dict(r) for r in rows], 'recording_since': began, 'days': days, 'partial_history':partial,
                 'note': '요청 기준 집계입니다. 재시도 음성과 취소 전 처리 시간이 포함됩니다.'}

@@ -79,7 +79,7 @@ export function createRouting(context) {
       }
       const targetEntry = app.libraryEntries.find(entry => entry.key === key);
       const targetCourseId = targetEntry?.recording?.course_id || 0;
-      if (app.recordingState === "idle" && targetCourseId !== app.activeCourseId) {
+      if (targetCourseId !== app.activeCourseId) {
         await actions.selectCourse(targetCourseId, {updateRoute:false});
         window.history.replaceState(null, "", libraryRoute(targetEntry)+(params.has('time')?'?'+params.toString():''));
       }

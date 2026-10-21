@@ -133,7 +133,7 @@ class LiveSession:
     def public(self):
         with self.lock:
             return {'session_id': self.id, 'recording_id': self.recording_id,
-                    'state': self.state, 'error': self.error, 'model': 'large-v3-turbo',
+                    'state': self.state, 'error': self.error, 'model': self.config.get('model', 'large-v3-turbo'),
                     'paused': self.paused, 'ai_paused': self.ai_paused, 'input_generation': self.input_generation,
                     'segments': list(self.segments), 'gaps': list(self.gaps), 'version': self.version,
                     'hint_warning': self.options.recognition_hint_warning if self.options else ''}
@@ -412,10 +412,11 @@ class LiveSession:
 
 
 class LiveTranscription:
-    def __init__(self, workflow, platform, *, config=None, vad_factory=VadWorker, ai_control=None):
+    def __init__(self, workflow, platform, *, config=None, vad_factory=VadWorker, ai_control=None, config_provider=None):
         self.workflow, self.platform = workflow, platform
         self.config = config or {**defaults()['speech'], 'model': 'large-v3-turbo',
             'model_path': str(Path(defaults()['speech']['model_path']).with_name('ggml-large-v3-turbo.bin'))}
+        self.config_provider = config_provider
         self.vad_factory = vad_factory
         self.ai_control = ai_control
         if ai_control:
@@ -464,7 +465,7 @@ class LiveTranscription:
                 if self.active.recording_id == recording_id:
                     return self.active.public()
                 raise ValueError('다른 녹음에서 실시간 전사를 사용 중입니다.')
-            session = LiveSession(self, recording_id, dict(self.config))
+            session = LiveSession(self, recording_id, dict(self.config_provider() if self.config_provider else self.config))
             if self.ai_control and not self.ai_control.public()['enabled']:
                 session.set_ai_enabled(False)
             self.active = session

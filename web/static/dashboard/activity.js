@@ -1,7 +1,7 @@
 import {openNote} from "../notes.js";
 import {deleteRecordingRecovery, recordingSessions} from "../recording-store.js";
 import {requestJson} from "./api.js";
-import {recordingWorkflowStatus, pendingReview, noteQueueProgress, shortDate, stageTime, hasPipelineLog, runSeconds, legacyStages, phaseLabels, recordingStatusLabels} from "./selectors.js";
+import {recordingWorkflowStatus, pendingReview, noteQueueProgress, noteQueueSummary, shortDate, stageTime, hasPipelineLog, runSeconds, legacyStages, phaseLabels, recordingStatusLabels} from "./selectors.js?v=20261021-note-stages";
 
 export function createActivity(context) {
   const {app, ui, $, $$, actions, listen, every} = context;
@@ -211,11 +211,8 @@ export function createActivity(context) {
       title.textContent = recording.title;
       const meta = document.createElement("small");
       const position = recording.reviewPending ? (isQueued ? "검수 대기" : "검수 중") : isQueued ? (recording.waiting_for_note ? "강의노트 분석 완료 대기" : "전사 대기") : recordingStatusLabels[recording.status] || "처리 중";
-      const noteStage = {extracting: "원문 추출", study: "해설 생성", detail: `${recording.number}쪽 상세 해설`}[recording.stage];
-      const completed = recording.stage === "extracting" ? recording.extracted_pages : recording.analyzed_pages;
-      const progress = !isQueued && recording.page_count ? ` · ${completed}/${recording.page_count}쪽 처리` : "";
       meta.textContent = isNote
-        ? `${recording.course_name || "강의노트"} · ${noteStage}${progress}`
+        ? `${recording.course_name || "강의노트"} · ${noteQueueSummary(recording)}`
         : `${recording.course_name} · ${position}`;
       if (recording.waiting_for_live) meta.textContent = `${recording.course_name} · 실시간 전사 종료 대기`;
       if (recording.waiting_for_ai) meta.textContent = `${recording.course_name || '강의노트'} · AI 처리 재개 대기`;
@@ -253,11 +250,10 @@ export function createActivity(context) {
 
   function createNoteQueuePipeline(note) {
     if (note.stage === "detail") {
-      return createStagePipeline([{phase: "detail", label: "상세 해설"}], "detail", `${note.number}쪽 상세 해설 생성 중`);
+      return createStagePipeline([{phase: "detail", label: "상세 해설"}], "detail", noteQueueProgress(note).message);
     }
     const stages = [
       {phase: "extracting", label: "원문 추출"},
-      {phase: "keywords", label: "용어 추출"},
       {phase: "study", label: "해설 생성"},
       {phase: "overview", label: "개요"},
       {phase: "glossary", label: "용어집"},

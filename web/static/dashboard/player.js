@@ -2,6 +2,11 @@ import {requestJson} from "./api.js";
 import {playerTime, markdownTimestamp} from "./selectors.js";
 import {markdownMetadata} from "./dom_helpers.js";
 
+// An external SVG is isolated from page-wide SVG/path/text styles.
+function skipIcon(forward = false) {
+  return `<img src="/static/icons/skip-${forward ? 'forward' : 'back'}.svg" width="28" height="28" alt="" aria-hidden="true" draggable="false">`;
+}
+
 export function createPlayer(context) {
   const {app, ui, $, $$, actions, listen, every} = context;
   function createAudioPlayer(source, label = "녹음", expectedDuration = 0, storageName = "") {
@@ -22,12 +27,12 @@ export function createPlayer(context) {
     const rewind = document.createElement("button");
     rewind.type = "button";
     rewind.className = "audio-skip";
-    rewind.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.2 4.5v4h-4M7 8.3a7.5 7.5 0 1 1-2 7.7"/><text x="12" y="12">5</text></svg>';
+    rewind.innerHTML = skipIcon();
     rewind.setAttribute("aria-label", "5초 뒤로");
     const forward = document.createElement("button");
     forward.type = "button";
     forward.className = "audio-skip";
-    forward.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.8 4.5v4h4M17 8.3a7.5 7.5 0 1 0 2 7.7"/><text x="12" y="12">5</text></svg>';
+    forward.innerHTML = skipIcon(true);
     forward.setAttribute("aria-label", "5초 앞으로");
     const status = document.createElement("span");
     status.className = "audio-load-state sr-only";

@@ -1,0 +1,41 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {attachPageZoom} from '../../web/static/note-zoom.js';
+
+test('button center, wheel cursor and Safari pinch anchors retain their page position', () => {
+  const handlers = {};
+  globalThis.getComputedStyle = () => ({paddingLeft:'24',paddingRight:'24'});
+  globalThis.requestAnimationFrame = fn => {fn();return 1;};
+  globalThis.cancelAnimationFrame = () => {};
+  let disconnected = false;
+  globalThis.ResizeObserver = class {observe() {} disconnect(){disconnected=true;}};
+  const viewport = {clientWidth:648,scrollLeft:0,scrollTop:0,addEventListener(name,fn){handlers[name]=fn;}};
+  const image = {style:{},addEventListener(){},getBoundingClientRect(){
+    const width = parseFloat(this.style.width) || 600;
+    return {left:24-viewport.scrollLeft, top:24-viewport.scrollTop,width,height:width*1.4};
+  }};
+  const controls = {out:{},in:{},label:{}};
+  let zoom;
+  const dispose = attachPageZoom(viewport,image,controls,1,value=>zoom=value);
+  const at = (x,y) => {const r=image.getBoundingClientRect();return [(x-r.left)/r.width,(y-r.top)/r.height];};
+  const equal = (a,b) => a.forEach((v,i)=>assert.ok(Math.abs(v-b[i])<1e-9));
+  const center = at(324,444);
+  controls.in.onclick();
+  assert.equal(controls.label.textContent,'125%');
+  equal(at(324,444),center);
+  const cursor = at(200,300);
+  handlers.wheel({ctrlKey:true,deltaY:-20,clientX:200,clientY:300,preventDefault(){}});
+  equal(at(200,300),cursor);
+  handlers.gesturestart({preventDefault(){}});
+  const start = zoom;
+  handlers.gesturechange({scale:1.2,clientX:200,clientY:300,preventDefault(){}});
+  assert.ok(Math.abs(zoom-start*1.2)<1e-9);
+  equal(at(200,300),cursor);
+  handlers.gestureend({preventDefault(){}});
+  controls.label.onclick();
+  controls.out.onclick();
+  assert.equal(controls.label.textContent,'75%');
+  controls.out.onclick(); controls.out.onclick();
+  assert.equal(zoom,.5);assert.equal(controls.out.disabled,true);
+  dispose();assert.equal(disconnected,true);
+});

@@ -51,12 +51,11 @@ def register(app, *, lectures, paths, schedule_managed_restart):
         payload = request.get_json(silent=True) or {}
         try:
             current = paths.update(**payload)
-            scheduled = schedule_managed_restart()
             return jsonify(
                 ok=True,
                 environment=current.public(),
                 restart_required=True,
-                restart_scheduled=scheduled,
+                restart_scheduled=False,
             )
         except ValueError as error:
             return jsonify(error=str(error)), 400

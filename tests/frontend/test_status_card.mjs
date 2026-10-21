@@ -19,7 +19,7 @@ test('running transcription retains priority; finished notes restore the speech 
 });
 test('queued notes and extraction/detail progress are distinguished', () => {
   assert.equal(activity({},[{...note,status:'queued'}]).phase,'queued');
-  assert.equal(activity({},[{...note,stage:'extracting',extracted_pages:47}]).message,'원문 용어 후보 추출 중');
+  assert.equal(activity({},[{...note,stage:'extracting',extracted_pages:47}]).message,'원문 추출 마무리 중');
   assert.equal(activity({},[{...note,stage:'detail',number:5}]).message,'5쪽 상세 해설 생성 중');
   assert.match(activity({},[{...note,analyzed_pages:47}]).message,/개요 정리 중/);
 });
@@ -35,3 +35,20 @@ test("note glossary and overview are distinct final phases", () => {
   assert.equal(noteQueueProgress({stage:"glossary"}).phase,"glossary");
   assert.equal(noteQueueProgress({stage:"overview"}).phase,"overview");
 });
+
+test('queue subtitle uses the same stage as its pipeline, without stale page counts', async () => {
+ const {noteQueueSummary}=await import('../../web/static/dashboard/selectors.js');
+ for(const [stage,label] of [['overview','개요 생성 중'],['glossary','용어집 생성 · 의미와 읽는 말 검증 중']]) {
+  assert.equal(noteQueueSummary({stage,status:'processing',page_count:32,analyzed_pages:32}),label);
+ }
+ assert.equal(noteQueueSummary({stage:'study',status:'processing',page_count:32}), '해설 생성 · 0/32쪽 처리');
+ assert.equal(noteQueueSummary({stage:'overview',status:'queued'}),'개요 생성 대기');
+ assert.equal(noteQueueSummary({stage:'future',status:'processing'}),'분석 준비 중');
+ assert.equal(noteQueueSummary({stage:'detail',status:'processing'}),'상세 해설 생성 중');
+});
+
+ test('term extraction stays within the first source extraction step', () => {
+ const progress=noteQueueProgress({stage:'extracting',page_count:32,extracted_pages:32});
+ assert.equal(progress.phase,'extracting');
+ assert.equal(progress.message,'원문 추출 마무리 중');
+ });

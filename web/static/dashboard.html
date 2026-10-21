@@ -8,7 +8,7 @@
   <title>Lecorder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230078ff%22/><path d=%22M8 34h8l4-17 7 31 7-41 7 33 5-18 5 12h6%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%224%22/></svg>" />
 <link rel="stylesheet" href="/static/dashboard.css?v=20261016-glossary" />
-<link rel="stylesheet" href="/static/notes.css?v=20261016-glossary" />
+<link rel="stylesheet" href="/static/notes.css?v=20261021-viewer" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 </head>
 <body>
@@ -65,8 +65,8 @@
           <a href="#/recordings" class="dashboard-metric attention"><span>확인 필요</span><strong id="dashboardAttentionMetric">0</strong><small>검토와 오류</small></a>
         </nav>
         <div class="dashboard-grid">
-          <section class="dashboard-section dashboard-queue"><header><div><h3>현재 작업·복구 <span class="dashboard-count" id="dashboardQueueCount">0</span></h3></div><a href="#/recordings">보관함 열기</a></header><div id="recoveryNotices"></div><div class="dashboard-list" id="dashboardQueue"></div></section>
-          <section class="dashboard-section dashboard-usage"><header><h3>AI 사용량</h3><div id="usagePeriod"></div></header><div id="usageGroups"></div><p class="insight-caption" id="usageCaption"></p><button class="insight-link" type="button" id="usageDetails">모델별 상세</button></section>
+          <section class="dashboard-section dashboard-usage"><header><h3>AI 사용량</h3><div id="usagePeriod"></div></header><div id="usageGroups"></div><p class="insight-caption" id="usageError" role="status" hidden></p></section>
+          <section class="dashboard-section dashboard-queue"><header><h3>복구 <span class="dashboard-count" id="recoveryCount">0</span></h3><a href="#/recordings">보관함 열기</a></header><div id="recoveryNotices"></div></section>
           <section class="dashboard-section dashboard-attention"><header><div><h3>검토함 <span class="dashboard-count" id="dashboardAttentionCount">0</span></h3><p>먼저 확인할 결과</p></div></header><div class="dashboard-list" id="dashboardAttention"></div><a href="#/recordings" class="dashboard-section-footer" id="dashboardAttentionMore">검토함 열기</a></section>
           <section class="dashboard-section dashboard-backup"><header><h3>백업 및 이동</h3></header><p>강의 자료와 작업 기록을 한 파일로 보관하세요.</p><div class="transfer-actions"><button type="button" id="backupCreate">백업 만들기</button><button type="button" id="backupImport">가져오기</button></div><input type="file" id="backupFile" accept=".zip" hidden /><p class="insight-caption">모델과 API 키는 제외됩니다. 브라우저에만 남은 녹음 조각은 먼저 업로드해야 합니다.</p><div id="backupProgress" role="status"></div></section>
         </div>
@@ -98,18 +98,17 @@
 <section class="workspace-panel settings-workspace" id="systemDialog" data-view-panel="settings" hidden aria-labelledby="systemDialogTitle">
   <form class="system-settings" id="systemForm" autocomplete="off">
     <nav class="system-settings-tabs" role="tablist" aria-label="설정 영역" aria-orientation="vertical">
-      <button type="button" role="tab" data-ai-tab="paths" aria-selected="true" tabindex="0"><span class="settings-category-icon paths" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3z M3 7V4h7l2 3"/></svg></span><span>저장 위치</span></button>
-      <button type="button" role="tab" data-ai-tab="speech" aria-selected="false" tabindex="-1"><span class="settings-category-icon speech" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6v10H9z M6 11v2a6 6 0 0 0 12 0v-2 M12 19v3"/></svg></span><span>음성 전사</span></button>
+      <button type="button" role="tab" data-ai-tab="paths" aria-selected="true" tabindex="0"><span class="settings-category-icon paths" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 7h7l2 2h9v11H3z M3 7V4h7l2 3"/></svg></span><span>경로</span></button>
+      <button type="button" role="tab" data-ai-tab="speech" aria-selected="false" tabindex="-1"><span class="settings-category-icon speech" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 4h6v10H9z M6 11v2a6 6 0 0 0 12 0v-2 M12 19v3"/></svg></span><span>음성 변환</span></button>
       <button type="button" role="tab" data-ai-tab="llm" aria-selected="false" tabindex="-1"><span class="settings-category-icon llm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v12H9l-4 4z M9 9h6 M9 13h4"/></svg></span><span>LLM</span></button>
-      <button type="button" role="tab" data-ai-tab="history" aria-selected="false" tabindex="-1"><span class="settings-category-icon history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z M9 11l2 2 4-4 M9 17h6"/></svg></span><span>수정 승인 이력</span></button>
+      <button type="button" role="tab" data-ai-tab="history" aria-selected="false" tabindex="-1"><span class="settings-category-icon history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z M9 11l2 2 4-4 M9 17h6"/></svg></span><span>승인한 검토</span></button>
     </nav>
     <div class="settings-content">
-    <header class="system-settings-header"><h2 id="systemDialogTitle">저장 위치</h2><p id="settingsDescription">프로젝트와 전사 결과를 저장할 위치를 관리합니다.</p></header>
+    <header class="system-settings-header"><h2 id="systemDialogTitle">경로</h2><p id="settingsDescription">프로젝트와 전사 결과를 저장할 위치를 관리합니다.</p></header>
     <div class="system-settings-body" id="pathSettingsPanel">
       <section class="system-path-group" aria-labelledby="projectDirLabel">
         <div class="system-path-heading"><label id="projectDirLabel" for="projectDir">Lecorder 프로젝트</label><small id="projectCheck">확인 중</small></div>
-        <textarea id="projectDir" name="lecorder-project-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="systemWhisperInfo"></textarea>
-        <div class="system-dependency" id="systemWhisperInfo"><span>Whisper <code>dependencies/whisper.cpp</code></span><small id="whisperCheck">확인 중</small></div>
+        <textarea id="projectDir" name="lecorder-project-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
       </section>
       <section class="system-path-group" aria-labelledby="outputDirLabel">
         <div class="system-path-heading"><label id="outputDirLabel" for="outputDir">전사 결과 저장 폴더</label><small id="outputCheck">확인 중</small></div>
@@ -118,8 +117,8 @@
       </section>
     </div>
     <div class="system-settings-body ai-settings-panel" id="aiSettingsPanel" hidden></div>
-    <section id="approvalHistory" class="approval-history" hidden aria-label="수정 승인 이력">
-      <header><h3>수정 승인 이력</h3><p>승인한 수정의 당시 발화와 시간 범위를 자료로 보관합니다. 재검수 후에도 유지됩니다.</p><p>이 기능을 적용한 이후의 승인부터 기록합니다. 시간 범위는 수정 단어가 포함된 발화 전체입니다.</p></header>
+    <section id="approvalHistory" class="approval-history" hidden aria-label="승인한 검토">
+      <header><h3>승인한 검토</h3><p>승인한 수정의 당시 발화와 시간 범위를 자료로 보관합니다. 재검수 후에도 유지됩니다.</p><p>이 기능을 적용한 이후의 승인부터 기록합니다. 시간 범위는 수정 단어가 포함된 발화 전체입니다.</p></header>
       <p id="approvalHistoryStatus" role="status"></p><div id="approvalHistoryList"></div>
       <div class="history-pagination"><button type="button" id="historyPrevious">이전</button><span id="historyPage"></span><button type="button" id="historyNext">다음</button></div>
     </section>
