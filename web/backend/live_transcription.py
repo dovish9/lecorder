@@ -1,9 +1,11 @@
 """Bounded, disposable live drafts. Original recording intake never waits on inference."""
 from __future__ import annotations
 
+import atexit
 import json
 import queue
 import shutil
+import socket
 import struct
 import subprocess
 import threading
@@ -14,12 +16,11 @@ from contextlib import nullcontext
 from collections import deque
 from pathlib import Path
 
-from .ai_runtime import runtime_for
+from .ai_runtime import ModelRuntime
 from .ai_settings import defaults, using
 from .ai_transport import request_json
 from .atomic import write_text
 from .engine import Transcriber
-from .inference import inference
 from .processes import CancellationToken, TranscriptionCancelled
 from .services import start_thread
 from .transcription import Options
@@ -297,30 +298,33 @@ class LiveSession:
         self.token = token
         try:
             token.check()
-            inference.reserve(self.id)
-            queued = time.monotonic()
-            with inference.lease(speech=True, owner=self.id, cancellation=token):
-                self.event('resource_ready', waiting_seconds=time.monotonic()-queued)
-                self.runtime = runtime_for(self.config)
-                started = time.monotonic()
-                with self.runtime.session(token), using({'speech': self.config, 'llm': defaults()['llm']}):
-                    self.event('model_ready', processing_seconds=time.monotonic()-started)
-                    self.helper = self.service.vad_factory(self.config, self.service.platform, self.folder)
-                    with self.lock:
-                        token.check()
-                        self.state = 'streaming'
-                    self._consume()
+            # A session-owned server never joins the foreground model registry or lease.
+            # Port discovery is advisory: ModelRuntime rejects a subsequent collision
+            # without touching the process that won the port.
+            with socket.socket() as listener:
+                listener.bind(('127.0.0.1', 0))
+                port = listener.getsockname()[1]
+            self.config = {**self.config, 'managed': True, 'base_url': f'http://127.0.0.1:{port}'}
+            self.runtime = ModelRuntime(self.config, log_dir=self.folder, platform=self.service.platform)
+            started = time.monotonic()
+            with self.runtime.session(token), using({'speech': self.config, 'llm': defaults()['llm']}):
+                self.event('model_ready', processing_seconds=time.monotonic()-started)
+                self.helper = self.service.vad_factory(self.config, self.service.platform, self.folder)
+                with self.lock:
+                    token.check()
+                    self.state = 'streaming'
+                self._consume()
         finally:
             try:
                 if self.helper:
                     self.helper.close()
                     self.helper = None
             finally:
-                try:
-                    if self.runtime:
-                        self.runtime.release_idle()
-                finally:
-                    inference.release(self.id)
+                if self.runtime:
+                    try:
+                        self.runtime.close()
+                    finally:
+                        atexit.unregister(self.runtime.close)
 
     def run(self):
         try:
@@ -349,7 +353,6 @@ class LiveSession:
                 write_text(self.folder / 'live-log.json', json.dumps(self.events, ensure_ascii=False))
             finally:
                 self.accepting = False
-                inference.release(self.id)
                 self.stopped.set()
 
     def _consume(self):

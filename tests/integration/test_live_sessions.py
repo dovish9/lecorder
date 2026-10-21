@@ -26,7 +26,7 @@ class LiveSessionContractTests(RecorderCase):
         self.client = self.app.test_client()
 
     def test_live_failure_does_not_block_original_chunks_and_generations_are_checked(self):
-        with patch('web.backend.live_transcription.runtime_for', side_effect=RuntimeError('missing model')):
+        with patch('web.backend.live_transcription.ModelRuntime', side_effect=RuntimeError('missing model')):
             response = self.client.post(f'/api/recordings/{self.row.id}/live', json={})
             self.assertEqual(response.status_code, 200)
             session = self.services.live.active
@@ -115,3 +115,13 @@ class LiveSessionContractTests(RecorderCase):
             self.services.live.begin(row.id)
             self.assertEqual(self.services.live.active.config['model'],'next-live')
             self.services.live.active.stopped.set()
+
+    def test_active_live_session_does_not_label_other_jobs_as_waiting(self):
+        session = LiveSession(self.services.live, self.row.id, {})
+        self.services.live.active = session
+        session.stopped.set()  # No worker in this API-only fixture.
+        waiting = self.workflow.begin_chunked(self.store.get(), 'ordinary', '.webm')
+        self.store.update_recording(waiting.id, status='queued')
+        with patch.object(session.stopped, 'is_set', return_value=False), patch.object(self.workflow.notes, 'queue_items', return_value=[{'stage':'overview','status':'processing','managed_llm':True}]):
+            payload = self.client.get('/api/status').json
+            self.assertNotIn('waiting_for_live', str(payload))

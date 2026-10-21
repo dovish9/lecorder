@@ -15,6 +15,11 @@ from web.backend.processes import CancellationToken, TranscriptionCancelled
 class LiveTests(unittest.TestCase):
     def session(self):
         root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
+        listener = Mock()
+        listener.getsockname.return_value = ('127.0.0.1', 19082)
+        socket_patch = patch('web.backend.live_transcription.socket.socket')
+        socket_patch.start().return_value.__enter__.return_value = listener
+        self.addCleanup(socket_patch.stop)
         service = SimpleNamespace(folder=lambda _: Path(root.name), workflow=Mock(), platform=Mock())
         return LiveSession(service, 'recording', {})
 
@@ -85,20 +90,36 @@ class LiveTests(unittest.TestCase):
             owner.join(2); ordinary.join(2)
         self.assertEqual(order, ['first', 'live', 'second'])
 
-    def test_failure_and_cleanup_exception_release_reservation(self):
-        s = self.session(); c = InferenceCoordinator(); c.reserve(s.id)
+    def test_failure_closes_only_session_owned_runtime(self):
+        s = self.session()
         runtime = Mock(); runtime.session.side_effect = RuntimeError('model missing')
-        with patch('web.backend.live_transcription.inference', c), patch('web.backend.live_transcription.runtime_for', return_value=runtime):
-            s.run()
-        self.assertEqual(s.state, 'failed'); self.assertFalse(c.reserved)
-        self.assertTrue(s.stopped.is_set())
-        s = self.session(); c.reserve(s.id)
-        runtime.release_idle.side_effect = RuntimeError('cleanup')
-        with patch('web.backend.live_transcription.inference', c), patch('web.backend.live_transcription.runtime_for', return_value=runtime):
+        with patch('web.backend.live_transcription.ModelRuntime', return_value=runtime):
             s.run()
         self.assertEqual(s.state, 'failed')
-        self.assertEqual(s.error, 'cleanup')
-        self.assertFalse(c.reserved); self.assertTrue(s.stopped.is_set())
+        runtime.close.assert_called_once()
+        self.assertTrue(s.stopped.is_set())
+
+    def test_live_runs_while_foreground_slot_is_busy_and_does_not_reserve_it(self):
+        from contextlib import nullcontext
+        from web.backend.inference import inference
+        s = self.session()
+        s.config = {'base_url': 'http://127.0.0.1:8080'}
+        runtime = Mock(); runtime.session.return_value = nullcontext()
+        s.service.vad_factory = Mock(return_value=Mock())
+        entered = threading.Event(); finish = threading.Event()
+        s._consume = lambda: (entered.set(), finish.wait(2))
+        with patch('web.backend.live_transcription.ModelRuntime', return_value=runtime) as factory:
+            with inference.lease():
+                worker = threading.Thread(target=s.run); worker.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    self.assertFalse(inference.reserved)
+                    self.assertNotEqual(s.config['base_url'], 'http://127.0.0.1:8080')
+                    self.assertNotIn('peers', factory.call_args.kwargs)
+                finally:
+                    finish.set(); worker.join(3)
+        runtime.close.assert_called_once()
+        self.assertTrue(s.stopped.is_set())
 
     def test_silence_is_not_sent_to_whisper(self):
         s = self.session(); s.helper = Mock(); s.helper.probabilities.return_value = [0]*32

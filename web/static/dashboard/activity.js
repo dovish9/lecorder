@@ -214,7 +214,6 @@ export function createActivity(context) {
       meta.textContent = isNote
         ? `${recording.course_name || "강의노트"} · ${noteQueueSummary(recording)}`
         : `${recording.course_name} · ${position}`;
-      if (recording.waiting_for_live) meta.textContent = `${recording.course_name} · 실시간 전사 종료 대기`;
       if (recording.waiting_for_ai) meta.textContent = `${recording.course_name || '강의노트'} · AI 처리 재개 대기`;
       copy.append(title, meta);
       const state = document.createElement("b");

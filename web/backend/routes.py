@@ -228,11 +228,6 @@ def create_app(
         data['waiting_for_ai'] = not services.ai_control.public()['enabled'] and (recording.status in {'queued', 'processing'} or recording.review_status in {'queued', 'processing'})
         data['has_live_draft'] = services.live.has_draft(recording)
         data["total_processing_seconds"] = lectures.total_processing_seconds(recording)
-        active_live = services.live.active
-        if active_live and not active_live.stopped.is_set() and (recording.status in {"queued", "processing"} or recording.review_status in {'queued', 'processing'}):
-            settings = json.loads(recording.ai_settings_json or '{}')
-            area = 'llm' if recording.review_status in {'queued', 'processing'} else 'speech'
-            data['waiting_for_live'] = settings.get(area, {}).get('managed', False)
 
         data["lecture_note_id"] = workflow.notes.revision(recording.note_revision_id)["note_id"] if recording.note_revision_id else None
         data["suggestion_counts"] = (
@@ -280,11 +275,6 @@ def create_app(
         recordings = lectures.list_recordings(30)
         counts = lectures.suggestion_counts([item.id for item in recordings])
         note_jobs = workflow.notes.queue_items()
-        active_live = services.live.active
-        if active_live and not active_live.stopped.is_set():
-            for item in note_jobs:
-                managed = item.pop('managed_llm', None)
-                item['waiting_for_live'] = managed is None or bool(managed)
         for item in note_jobs:
             item['waiting_for_ai'] = not services.ai_control.public()['enabled'] and item.get('stage') != 'extracting'
         return {
