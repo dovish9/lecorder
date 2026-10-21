@@ -15,11 +15,6 @@ from web.backend.processes import CancellationToken, TranscriptionCancelled
 class LiveTests(unittest.TestCase):
     def session(self):
         root = tempfile.TemporaryDirectory(); self.addCleanup(root.cleanup)
-        listener = Mock()
-        listener.getsockname.return_value = ('127.0.0.1', 19082)
-        socket_patch = patch('web.backend.live_transcription.socket.socket')
-        socket_patch.start().return_value.__enter__.return_value = listener
-        self.addCleanup(socket_patch.stop)
         service = SimpleNamespace(folder=lambda _: Path(root.name), workflow=Mock(), platform=Mock())
         return LiveSession(service, 'recording', {})
 
@@ -103,7 +98,7 @@ class LiveTests(unittest.TestCase):
         from contextlib import nullcontext
         from web.backend.inference import inference
         s = self.session()
-        s.config = {'base_url': 'http://127.0.0.1:8080'}
+        s.config = {'base_url': 'http://127.0.0.1:19082'}
         runtime = Mock(); runtime.session.return_value = nullcontext()
         s.service.vad_factory = Mock(return_value=Mock())
         entered = threading.Event(); finish = threading.Event()
@@ -114,7 +109,7 @@ class LiveTests(unittest.TestCase):
                 try:
                     self.assertTrue(entered.wait(1))
                     self.assertFalse(inference.reserved)
-                    self.assertNotEqual(s.config['base_url'], 'http://127.0.0.1:8080')
+                    self.assertEqual(s.config['base_url'], 'http://127.0.0.1:19082')
                     self.assertNotIn('peers', factory.call_args.kwargs)
                 finally:
                     finish.set(); worker.join(3)

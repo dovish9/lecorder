@@ -160,10 +160,12 @@ class AIProviderTests(unittest.TestCase):
                 (root/name).write_bytes(b'fixture')
             store=AISettings(root/'settings.json', Keys())
             config={'provider':'openai','managed':False,'base_url':'https://api.openai.com/v1','model':'whisper-1',
-                    'live_model':'custom-live','live_model_path':str(root/'turbo.bin'),'live_vad_path':str(root/'vad.bin')}
+                    'live_base_url':'http://127.0.0.1:19082','live_model':'custom-live','live_model_path':str(root/'turbo.bin'),'live_vad_path':str(root/'vad.bin')}
             store.save('speech',config)
             saved=AISettings(store.path,Keys()).snapshot()['speech']
             live=live_configuration(saved)
+            self.assertEqual(live['base_url'],'http://127.0.0.1:19082')
+            self.assertEqual(live['binary'],saved['binary'])
             self.assertEqual(live['provider'],'whisper_cpp')
             self.assertTrue(live['managed'])
             self.assertEqual(live['model'],'custom-live')
@@ -171,6 +173,9 @@ class AIProviderTests(unittest.TestCase):
             self.assertEqual(live['vad_path'],str((root/'vad.bin').absolute()))
             with self.assertRaisesRegex(ValueError,'파일'):
                 store.save('speech',dict(config,live_vad_path=str(root/'missing.bin')))
+            for url in ('https://example.com:19082', 'http://user@127.0.0.1:19082', 'http://127.0.0.1:19082/path', 'http://127.0.0.1:8081'):
+                with self.assertRaises(ValueError):
+                    store.save('speech', dict(config, live_base_url=url))
             self.assertEqual(store.snapshot()['speech'],saved)
 
 if __name__=='__main__':unittest.main()

@@ -5,7 +5,6 @@ import atexit
 import json
 import queue
 import shutil
-import socket
 import struct
 import subprocess
 import threading
@@ -299,12 +298,6 @@ class LiveSession:
         try:
             token.check()
             # A session-owned server never joins the foreground model registry or lease.
-            # Port discovery is advisory: ModelRuntime rejects a subsequent collision
-            # without touching the process that won the port.
-            with socket.socket() as listener:
-                listener.bind(('127.0.0.1', 0))
-                port = listener.getsockname()[1]
-            self.config = {**self.config, 'managed': True, 'base_url': f'http://127.0.0.1:{port}'}
             self.runtime = ModelRuntime(self.config, log_dir=self.folder, platform=self.service.platform)
             started = time.monotonic()
             with self.runtime.session(token), using({'speech': self.config, 'llm': defaults()['llm']}):
@@ -417,7 +410,7 @@ class LiveSession:
 class LiveTranscription:
     def __init__(self, workflow, platform, *, config=None, vad_factory=VadWorker, ai_control=None, config_provider=None):
         self.workflow, self.platform = workflow, platform
-        self.config = config or {**defaults()['speech'], 'model': 'large-v3-turbo',
+        self.config = config or {**defaults()['speech'], 'base_url': defaults()['speech']['live_base_url'], 'model': 'large-v3-turbo',
             'model_path': str(Path(defaults()['speech']['model_path']).with_name('ggml-large-v3-turbo.bin'))}
         self.config_provider = config_provider
         self.vad_factory = vad_factory

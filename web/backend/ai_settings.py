@@ -25,6 +25,7 @@ def defaults():
                    'model': 'large-v3', 'model_path': str(whisper / 'models/ggml-large-v3.bin'),
                    'binary': str(host.executable(whisper / 'build/bin', 'whisper-server')),
                    'vad_path': str(whisper / 'models/ggml-silero-v6.2.0.bin'), 'idle_seconds': 60,
+                   'live_base_url': 'http://127.0.0.1:8082',
                    'live_model': 'large-v3-turbo',
                    'live_model_path': str(whisper / 'models/ggml-large-v3-turbo.bin'),
                    'live_vad_path': str(whisper / 'models/ggml-silero-v6.2.0.bin')},
@@ -38,9 +39,8 @@ def defaults():
 def live_configuration(speech):
     """Freeze local live settings independently of the final transcription provider."""
     config = defaults()['speech']
-    if speech.get('provider') == 'whisper_cpp' and speech.get('managed'):
-        config['binary'] = speech['binary']
-        config['base_url'] = speech['base_url']
+    config['binary'] = speech.get('binary', config['binary'])
+    config['base_url'] = speech.get('live_base_url', config['live_base_url'])
     config.update(model=speech.get('live_model', config['live_model']),
                   model_path=speech.get('live_model_path', config['live_model_path']),
                   vad_path=speech.get('live_vad_path', config['live_vad_path']))
@@ -94,7 +94,7 @@ class AISettings:
             if not self.path.exists():
                 return defaults()
             settings = json.loads(self.path.read_text(encoding="utf-8"))['settings']
-            for field in ('live_model', 'live_model_path', 'live_vad_path'):
+            for field in ('binary', 'live_base_url', 'live_model', 'live_model_path', 'live_vad_path'):
                 settings['speech'].setdefault(field, defaults()['speech'][field])
             return settings
 
@@ -112,7 +112,7 @@ class AISettings:
             raise ValueError('올바른 AI 설정 영역이 필요합니다.')
         allowed = {'provider', 'managed', 'base_url', 'model', 'model_path', 'binary', 'vad_path', 'projector_path', 'idle_seconds'}
         if area == 'speech':
-            allowed.update({'live_model', 'live_model_path', 'live_vad_path'})
+            allowed.update({'live_base_url', 'live_model', 'live_model_path', 'live_vad_path'})
         config = {k: v for k, v in supplied.items() if k in allowed}
         providers = {'whisper_cpp', 'openai'} if area == 'speech' else {'llama_cpp', 'openai', 'claude', 'gemini'}
         if config.get('provider') not in providers:
@@ -141,6 +141,17 @@ class AISettings:
                     raise ValueError(f'{field}: 파일을 찾을 수 없습니다.')
                 config[field] = str(path.absolute())
         if area == 'speech':
+            live_url = str(config.get('live_base_url', defaults()['speech']['live_base_url'])).strip().rstrip('/')
+            live = urlsplit(live_url)
+            if live.scheme != 'http' or live.hostname != '127.0.0.1' or not live.port or live.path or live.query or live.fragment or live.username or live.password:
+                raise ValueError('실시간 서버 URL은 http://127.0.0.1:포트 형식이어야 합니다.')
+            if parsed.hostname in {'localhost', '127.0.0.1', '::1'} and parsed.port == live.port:
+                raise ValueError('실시간 전사와 최종 음성 변환은 서로 다른 포트를 사용해야 합니다.')
+            config['live_base_url'] = live_url
+            binary = Path(str(config.get('binary', defaults()['speech']['binary']))).expanduser()
+            if binary != Path(defaults()['speech']['binary']) and not binary.is_file():
+                raise ValueError('binary: 파일을 찾을 수 없습니다.')
+            config['binary'] = str(binary.absolute())
             for field in ('live_model', 'live_model_path', 'live_vad_path'):
                 value = str(config.get(field, defaults()['speech'][field])).strip()
                 if not value or len(value) > (200 if field == 'live_model' else 4096):
@@ -158,6 +169,12 @@ class AISettings:
         config = self.clean(area, config)
         with self.lock:
             settings = self.saved_snapshot()
+            speech = config if area == 'speech' else settings['speech']
+            llm = config if area == 'llm' else settings['llm']
+            live_port = urlsplit(speech.get('live_base_url', defaults()['speech']['live_base_url'])).port
+            llm_url = urlsplit(llm.get('base_url', ''))
+            if llm_url.hostname in {'localhost', '127.0.0.1', '::1'} and llm_url.port == live_port:
+                raise ValueError('실시간 전사와 LLM 서버는 서로 다른 포트를 사용해야 합니다.')
             if key:
                 self.credentials.set(config, key)
             settings[area] = config

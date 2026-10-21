@@ -35,7 +35,7 @@ export function setupAISettings() {
     const wrap=element('label','ai-field'), title=element('span','ai-field-label',label), input=element('input','ai-input');
     input.disabled=busy;input.type=type; input.autocomplete='off';input.spellcheck=false;input.setAttribute('autocapitalize','off'); input.name='lecorder-ai-'+prop;
     input.value=prop==='api_key'?key:draft[prop]||'';
-    input.addEventListener('input',()=>{if(prop==='api_key')key=input.value;else draft[prop]=input.value;invalidate();});wrap.append(title,input);return wrap;
+    input.addEventListener('input',()=>{if(prop==='api_key')key=input.value;else {draft[prop]=input.value;if(prop==='binary')panels.querySelectorAll('input[name="lecorder-ai-binary"]').forEach(other=>{if(other!==input)other.value=input.value;});}invalidate();});wrap.append(title,input);return wrap;
   }
   const sectionCopy = {
     paths: ['경로', '프로젝트와 전사 결과를 저장할 위치를 관리합니다.'],
@@ -55,7 +55,7 @@ export function setupAISettings() {
     const local=['llama_cpp','whisper_cpp'].includes(draft.provider);
 
     panels.append(picker('제공자',providers[area],draft.provider,id=>{
-      const live=area==='speech'?Object.fromEntries(['live_model','live_model_path','live_vad_path'].map(k=>[k,draft[k]??response.defaults.speech[k]])):{};
+      const live=area==='speech'?Object.fromEntries(['binary','live_base_url','live_model','live_model_path','live_vad_path'].map(k=>[k,draft[k]??response.defaults.speech[k]])):{};
       draft=id===response.defaults[area].provider?structuredClone(response.defaults[area]):{provider:id,managed:false,...presets[id],model:area==='speech'?'whisper-1':''};Object.assign(draft,live);key='';checked=false;render();
     }));
     if(local){const label=element('label','ai-managed');const check=element('input');check.disabled=busy;check.type='checkbox';check.setAttribute('role','switch');check.checked=draft.managed;check.addEventListener('change',()=>{draft.managed=check.checked;checked=false;render();});label.append(element('span','','로컬 서버 자동 관리'),check);panels.append(label);}
@@ -95,8 +95,13 @@ export function setupAISettings() {
       const liveSection=element('section','settings-live-section');
       liveSection.append(element('h3','','실시간 전사'),element('p','ai-privacy','녹음 중 초안에 사용하는 로컬 모델입니다. 변경한 설정은 서버를 재시작하면 적용됩니다.'));
       const liveRows=element('div','settings-row-group');
-      for(const prop of ['live_model','live_model_path','live_vad_path']) draft[prop]??=response.defaults.speech[prop];
-      liveRows.append(field('모델 ID','live_model'),field('모델 파일','live_model_path'),field('VAD 모델 파일','live_vad_path'));
+      for(const prop of ['binary','live_base_url','live_model','live_model_path','live_vad_path']) draft[prop]??=response.defaults.speech[prop];
+      const provider=picker('제공자',[['whisper_cpp','로컬 · whisper.cpp']],'whisper_cpp',()=>{});provider.querySelector('summary').setAttribute('aria-disabled','true');provider.querySelector('summary').tabIndex=-1;for(const event of ['click','keydown'])provider.addEventListener(event,e=>{e.preventDefault();e.stopImmediatePropagation();},true);
+      const managed=element('label','ai-managed'),toggle=element('input');toggle.type='checkbox';toggle.checked=true;toggle.disabled=true;toggle.setAttribute('role','switch');managed.append(element('span','','로컬 서버 자동 관리'),toggle);
+      const liveFiles=element('details','settings-local-files'),liveFileRows=element('div','settings-file-rows');
+      liveFiles.append(element('summary','','로컬 파일'));
+      liveFileRows.append(field('서버 실행 파일','binary'),field('모델 파일','live_model_path'),field('VAD 모델 파일','live_vad_path'));liveFiles.append(liveFileRows);
+      liveRows.append(provider,managed,field('모델 ID','live_model'),field('서버 URL','live_base_url','url'),liveFiles);
       liveSection.append(liveRows);panels.insertBefore(liveSection,connection.nextSibling);
     }
     panels.append(actions);
