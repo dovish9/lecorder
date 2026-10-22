@@ -142,8 +142,8 @@ class GlossaryTests(unittest.TestCase):
         def generate(messages,schema,**kwargs):
             if 'ids' in schema['properties']:
                 body=json.loads(messages[1]['content'])
-                self.assertEqual(len(body['ranked_terms']),200)
-                return {'result':{'ids':[f'c{i+1}' for i in range(9)]}}
+                self.assertLess(len(messages[1]['content']),6500)
+                return {'result':{'ids':[s['id'] for s in body['candidates'] if s['id'] in {f'c{i+1}' for i in range(9)}]}}
             if 'entries' in schema['properties']:
                 body=json.loads(messages[1]['content'])
                 self.assertEqual(len(body['selected_candidates']),9)
@@ -156,6 +156,24 @@ class GlossaryTests(unittest.TestCase):
         self.assertEqual([len(b['entries']) for b in seen],[8,1])
         for body in seen:
             self.assertEqual({s['id'] for s in body['sources']},{i for e in body['entries'] for i in e['source_ids']})
+
+    def test_large_symbol_selection_is_bounded_and_visits_every_candidate(self):
+        sources=[dict(SOURCE,id=f's{i}',term=f'symbol{i}',pages=list(range(1,33)),
+                      sources=[{'page':p,'excerpt':'근거 '*200} for p in range(1,33)]) for i in range(200)]
+        seen=set();calls=[]
+        def generate(messages,schema,**kwargs):
+            body=json.loads(messages[1]['content']);calls.append(len(messages[1]['content']))
+            if 'ids' in schema['properties']:
+                batch=body['candidates'];seen.update(s['id'] for s in batch)
+                limit=schema['properties']['ids']['maxItems']
+                return {'result':{'ids':[s['id'] for s in batch[:limit]]}}
+            self.assertLessEqual(len(body['selected_candidates']),40)
+            return {'result':{'entries':[]}}
+        with patch('web.backend.glossary.generate',side_effect=generate):
+            build_glossary([],sources,CancellationToken())
+        self.assertEqual(seen,{f'c{i+1}' for i in range(200)})
+        self.assertLess(len(calls),40)
+        self.assertLess(max(calls),14000)
 
     def test_generated_selection_restores_canonical_term_pages_and_stable_ids(self):
         selected={k:v for k,v in ENTRY.items() if k not in {'term','pages'}}

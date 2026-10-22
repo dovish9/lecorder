@@ -112,16 +112,26 @@ cp .env.example .env
 
           <section id="structure">
 <h2><small>04</small>프로젝트 구조</h2>
-<table><thead><tr><th>위치</th><th>역할</th></tr></thead><tbody>
-<tr><td>결과 저장 폴더</td><td>원본 음성과 같은 이름의 Markdown</td></tr>
-<tr><td><code>web/data/lecorder.db</code></td><td>강의, 작업, 노트 버전, 로그와 제안</td></tr>
-<tr><td><code>web/data/recordings</code></td><td>서버가 받은 녹음 조각과 미완료 작업</td></tr>
-<tr><td><code>web/data/notes</code></td><td>원본 노트와 공유 페이지 이미지, 분석 자료</td></tr>
-<tr><td><code>web/data/ai-settings.json</code></td><td>AI 연결 설정. API 키 원문은 저장하지 않음</td></tr>
-<tr><td><code>dependencies</code></td><td>직접 빌드한 도구와 모델</td></tr>
-<tr><td><code>scripts / tests</code></td><td>설치·진단·실제 검증 도구 / 자동 회귀 테스트</td></tr>
-<tr><td><code>memories</code></td><td>Git에서 제외하는 개발 기록과 검증 샘플</td></tr>
-</tbody></table><p>녹음 중 전송하지 못한 조각은 브라우저의 IndexedDB에도 보관됩니다. 브라우저 사이트 데이터를 삭제하면 이 복구본도 사라집니다. 자료와 DB를 임의로 지우지 마세요.</p>
+<pre><code>lecorder/
+├── app.py                     앱 실행 진입점
+├── start.command              macOS 실행 파일
+├── .env                       프로젝트·결과 저장 경로
+├── dependencies/              빌드한 도구와 AI 모델
+├── scripts/                   설치·진단·검증 도구
+├── tests/                     자동 회귀 테스트
+└── web/
+    ├── backend/               서버와 작업 처리
+    ├── static/                대시보드와 사용 안내
+    └── data/
+        ├── lecorder.db        강의·작업·노트·로그·수정 제안
+        ├── ai-settings.json   AI 연결 설정 (API 키 제외)
+        ├── recordings/        수신한 녹음 조각·미완료 작업
+        └── notes/             원본 노트·페이지 이미지·분석 자료</code></pre>
+<h3>결과 저장 폴더</h3>
+<p>설정에서 지정한 위치에 원본 음성과 같은 이름의 Markdown을 저장합니다.</p>
+<pre><code>결과 저장 폴더/
+├── 녹음 이름.mp4              원본 음성·미디어
+└── 녹음 이름.md               타임스탬프가 있는 전사 결과</code></pre><p>녹음 중 전송하지 못한 조각은 브라우저의 IndexedDB에도 보관됩니다. 브라우저 사이트 데이터를 삭제하면 이 복구본도 사라집니다. 자료와 DB를 임의로 지우지 마세요.</p>
 <p>백엔드의 OS 연결은 <code>platforms.py</code>, 공통 작업 프로세스는 <code>processes.py</code>, 앱별 서비스 연결은 <code>services.py</code>에 있습니다. 프런트엔드는 기존 ES module을 사용하며 기능별로 나뉩니다. 개발 구조와 테스트 명령은 README를 참고하세요.</p>
 </section>
 
