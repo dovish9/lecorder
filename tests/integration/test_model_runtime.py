@@ -5,8 +5,8 @@ import wave
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from web.backend.engine import Transcriber
-from web.backend.transcription import CancellationToken, Options, TranscriptSegment, TranscriptionCancelled, WhisperResult
+from web.backend.speech.engine import Transcriber
+from web.backend.speech.transcription import CancellationToken, Options, TranscriptSegment, TranscriptionCancelled, WhisperResult
 from web.backend.ai_runtime import ModelRuntime
 from web.backend.ai_settings import defaults
 
@@ -144,13 +144,13 @@ class ChunkTests(unittest.TestCase):
 
     def test_silence_boundaries_prefer_pause_and_bound_chunk_size(self):
         completed = {'points': [118.0]}
-        with patch('web.backend.speech_processing.media_request', return_value=completed):
+        with patch('web.backend.speech.speech_processing.media_request', return_value=completed):
             boundaries = Transcriber._chunk_boundaries(Path('sample.wav'), 400)
         self.assertEqual(boundaries, [(0.0, True), (118.0, True), (238.0, False), (358.0, False), (400, True)])
 
     def test_boundary_does_not_leave_a_one_second_tail(self):
         completed = {'points': [132.0]}
-        with patch('web.backend.speech_processing.media_request', return_value=completed):
+        with patch('web.backend.speech.speech_processing.media_request', return_value=completed):
             boundaries = Transcriber._chunk_boundaries(Path('sample.wav'), 133)
         self.assertEqual(boundaries, [(0.0, True), (103, False), (133, True)])
 
@@ -165,7 +165,7 @@ class ChunkTests(unittest.TestCase):
         response.json.return_value={'text':'test','duration':1,'segments':[{'start':0,'end':1,'text':'test'}]}
         with tempfile.TemporaryDirectory() as d:
             wav=Path(d)/'audio.wav';wav.write_bytes(b'wav')
-            with patch('web.backend.speech_processing.runtime_for'), patch('web.backend.speech_processing.request_json',return_value=response.json.return_value) as post:
+            with patch('web.backend.speech.speech_processing.runtime_for'), patch('web.backend.speech.speech_processing.request_json',return_value=response.json.return_value) as post:
                 Transcriber._whisper(wav,Options(language='ko',recognition_hint='물리학 용어'),None)
                 self.assertEqual(post.call_args.kwargs['multipart']['prompt'], '물리학 용어')
                 Transcriber._whisper(wav,Options(language='en'),{'no_context':'false'})

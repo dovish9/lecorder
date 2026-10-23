@@ -7,11 +7,14 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
-from .atomic import write_text
+from web.backend.atomic import write_text
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = SCRIPT_ROOT / ".env"
+ENV_FILE = (SCRIPT_ROOT / os.getenv("LECORDER_ENV_FILE", ".env")).expanduser().resolve()
+if os.getenv('LECORDER_ENV_FILE') and not ENV_FILE.is_file():
+    raise ValueError(f'선택한 환경설정 파일이 없습니다: {ENV_FILE}')
+_ENV_LOCK = threading.RLock()
 LANGUAGES = {"ko", "en", "auto"}
 
 
@@ -68,12 +71,32 @@ _load_process_env()
 ROOT = resolve_path(os.getenv("LECORDER_DIR", "."))
 if not (ROOT / "app.py").is_file():
     ROOT = SCRIPT_ROOT
-DB_FILE = ROOT / "web" / "data" / "lecorder.db"
+from web.backend.runtime_config import get as runtime, validate as validate_runtime
+validate_runtime()
+DATA_DIR = resolve_path(runtime('LECORDER_DATA_DIR'), ROOT)
+DEPENDENCIES_DIR = resolve_path(runtime('LECORDER_DEPENDENCIES_DIR'), ROOT)
+DB_FILE = DATA_DIR / 'lecorder.db'
+APP_PORT = runtime('LECORDER_PORT')
+WHISPER_URL = runtime('LECORDER_SPEECH_BASE_URL').rstrip('/') + '/inference'
+DEFAULT_LLM_MODEL = runtime('LECORDER_LLM_MODEL')
 
-APP_PORT = int(os.getenv("LECORDER_PORT", "5055"))
-WHISPER_PORT = int(os.getenv("WHISPER_PORT", "8080"))
-WHISPER_URL = os.getenv("WHISPER_URL", f"http://127.0.0.1:{WHISPER_PORT}/inference")
-DEFAULT_LLM_MODEL = "Qwen3.5-9B"
+
+def write_env(path, values, *, remove=()):
+    """Update just the requested keys without destroying category comments."""
+    with _ENV_LOCK:
+        path = Path(path)
+        lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+        lines = [line for line in lines if not any(re.match(r'^\s*'+re.escape(key)+r'\s*=',line) for key in remove)]
+        remaining = dict(values)
+        for index, line in enumerate(lines):
+            match = re.match(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=', line)
+            if match and match[1] in values:
+                lines[index] = f'{match[1]}={shlex.quote(str(values[match[1]]))}'
+                remaining.pop(match[1], None)
+        if remaining:
+            lines.extend(['', '# 화면에서 저장한 설정', *(f'{key}={shlex.quote(str(value))}' for key,value in remaining.items())])
+        write_text(path, '\n'.join(lines) + '\n')
+
 
 
 @dataclass(frozen=True)
@@ -118,7 +141,7 @@ class EnvironmentStore:
         project = resolve_path(values.get("LECORDER_DIR", os.getenv("LECORDER_DIR", ".")), self.script_root)
         return Environment(
             project_dir=str(project),
-            whisper_cpp_dir=str(project / "dependencies" / "whisper.cpp"),
+            whisper_cpp_dir=str(resolve_path(values.get("LECORDER_DEPENDENCIES_DIR", os.getenv("LECORDER_DEPENDENCIES_DIR", "dependencies")), project) / "whisper.cpp"),
             output_dir=str(resolve_path(values.get(
                 "LECORDER_OUTPUT_DIR",
                 os.getenv("LECORDER_OUTPUT_DIR", "output"),
@@ -141,22 +164,10 @@ class EnvironmentStore:
             if not Path(clean["output_dir"]).is_dir():
                 raise ValueError("파일 저장 경로가 존재하는 폴더가 아닙니다.")
 
-            updated = replace(current, **clean, whisper_cpp_dir=str(project / "dependencies" / "whisper.cpp"))
+            dependency = _read_env(self.path).get("LECORDER_DEPENDENCIES_DIR", os.getenv("LECORDER_DEPENDENCIES_DIR", "dependencies"))
+            updated = replace(current, **clean, whisper_cpp_dir=str(resolve_path(dependency, project) / "whisper.cpp"))
             managed_values = {
                 env_key: getattr(updated, field) for field, env_key in self.KEYS.items()
             }
-            existing = _read_env(self.path)
-            preserved = {
-                key: value for key, value in existing.items()
-                if key not in managed_values
-                and key not in {"OLLAMA_MODEL", "WHISPER_CPP_DIR"}
-                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
-            }
-            lines = [
-                "# Lecorder paths — dashboard managed",
-                *(f"{env_key}={shlex.quote(value)}" for env_key, value in managed_values.items()),
-                *(f"{key}={shlex.quote(value)}" for key, value in sorted(preserved.items())),
-                "",
-            ]
-            write_text(self.path, "\n".join(lines))
+            write_env(self.path, managed_values)
             return updated

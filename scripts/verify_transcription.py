@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from web.backend.engine import Transcriber
-from web.backend.transcription import CancellationToken, Options
+from web.backend.speech.engine import Transcriber
+from web.backend.speech.transcription import CancellationToken, Options
 from web.backend.services import Services
 from web.backend.ai_settings import defaults
 

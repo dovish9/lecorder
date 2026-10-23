@@ -1,6 +1,24 @@
 
 export function createShell(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    closeGuideButton: $("#closeGuideButton"),
+    closePipelineButton: $("#closePipelineButton"),
+    closeReviewButton: $("#closeReviewButton"),
+    confirmAccept: $("#confirmAccept"),
+    confirmDialog: $("#confirmDialog"),
+    confirmMessage: $("#confirmMessage"),
+    confirmTitle: $("#confirmTitle"),
+    dockCoursePicker: $("#dockCoursePicker"),
+    guideButton: $("#guideButton"),
+    guideDialog: $("#guideDialog"),
+    guideFrame: $("#guideFrame"),
+    pipelineDialog: $("#pipelineDialog"),
+    pipelineDialogBody: $("#pipelineDialogBody"),
+    reviewDialog: $("#reviewDialog"),
+    toastRegion: $("#toastRegion"),
+    uploadDialog: $("#uploadDialog"),
+  };
   listen(ui.closeReviewButton, "click", () => {
     actions.stopReviewAudio();
     app.reviewingRecordingId = null;

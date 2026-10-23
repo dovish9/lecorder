@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 import shutil
 import uuid
-from .atomic import write_text
+from web.backend.atomic import write_text
+from web.backend.files import clear_hidden_flag
 
 
 class Publication:
@@ -29,6 +30,7 @@ class Publication:
             target=Path(entry['path'])
             if entry['backup']:
                 shutil.copy2(self.folder/entry['backup'],target)
+                clear_hidden_flag(target)
             else:
                 target.unlink(missing_ok=True)
         self.complete()
@@ -49,6 +51,7 @@ def recover(store):
                 if entry['backup']:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(path.parent/entry['backup'], target)
+                    clear_hidden_flag(target)
                 else:
                     target.unlink(missing_ok=True)
         shutil.rmtree(path.parent)

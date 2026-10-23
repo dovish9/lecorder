@@ -4,5 +4,5 @@ export function pageNeedsReview(page, original = false) {
   const explanation = page.detail || page.analysis;
   const review = explanation?.validation;
   const flagged = page.analysis_error || review?.status === 'needs_review' || explanation?.uncertainties?.length;
-  return Boolean(flagged || (review?.version !== 'note-review-v2' && page.needs_review));
+  return Boolean(flagged);
 }

@@ -3,10 +3,10 @@ import io
 import json
 from pathlib import Path
 from unittest.mock import patch, Mock
-from web.backend.engine import Transcriber
-from web.backend.review_jobs import ReviewQueue
+from web.backend.speech.engine import Transcriber
+from web.backend.recordings.review_jobs import ReviewQueue
 from tests import support as fixtures
-from web.backend.pipeline import RecordingPipeline
+from web.backend.recordings.pipeline import RecordingPipeline
 from web.backend.state import JobState
 
 
@@ -19,7 +19,7 @@ class NoteDependenciesTests(NoteCase):
         audio = self.output / 'preserved.wav'
         audio.write_bytes(b'original')
         self.store.update_recording(row.id, audio_path=str(audio))
-        with patch('web.backend.pipeline.require_llm', side_effect=RuntimeError('offline')), patch('web.backend.review_jobs.require_llm', side_effect=RuntimeError('offline')), patch('web.backend.notes.require_llm', side_effect=RuntimeError('offline')), patch('web.backend.note_intake.require_llm', side_effect=RuntimeError('offline')):
+        with patch('web.backend.recordings.pipeline.require_llm', side_effect=RuntimeError('offline')), patch('web.backend.recordings.review_jobs.require_llm', side_effect=RuntimeError('offline')), patch('web.backend.notes.notes.require_llm', side_effect=RuntimeError('offline')), patch('web.backend.notes.note_intake.require_llm', side_effect=RuntimeError('offline')):
             pipeline.enqueue(row.id)
             self.assertTrue(pipeline._queue.empty())
             self.assertEqual(self.store.get_recording(row.id).status, 'failed')
@@ -30,7 +30,7 @@ class NoteDependenciesTests(NoteCase):
             self.assertEqual(result.review_status, 'failed')
             self.assertEqual(result.transcript_text, 'preserved')
             self.assertTrue(pipeline.reviews.queue.empty())
-            note = self.notes.register(self.store.active_course_id(), [('offline.pdf', io.BytesIO(b'%PDF-1.7 original'))])
+            note = self.notes.register(self.store.courses.active_course_id(), [('offline.pdf', io.BytesIO(b'%PDF-1.7 original'))])
             self.assertEqual(note['status'], 'failed')
             self.assertTrue(self.notes.extract_queue.empty())
 
@@ -38,8 +38,8 @@ class NoteDependenciesTests(NoteCase):
     def test_recording_course_change_preserves_chunks_and_updates_settings(self):
         note = self.ready()
         old = self.store.get()
-        target = self.store.create_course('통계학')
-        self.store.update_course(target.id, language='ko', llm_enabled=False)
+        target = self.store.courses.create_course('통계학')
+        self.store.courses.update_course(target.id, language='ko')
         pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
         recording = pipeline.begin_chunked(old, f'{old.course_name}-9월22일-화', '.webm', note['id'])
         pipeline.save_chunk(recording.id, 0, io.BytesIO(b'preserved audio'))
@@ -61,7 +61,7 @@ class NoteDependenciesTests(NoteCase):
 
 
     def test_recording_course_change_preserves_custom_title(self):
-        target = self.store.create_course('다른 강의')
+        target = self.store.courses.create_course('다른 강의')
         pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
         recording = pipeline.begin_chunked(self.store.get(), '직접 정한 제목', '.webm')
         self.assertEqual(pipeline.select_recording_course(recording.id, target.id).title, '직접 정한 제목')
@@ -69,8 +69,8 @@ class NoteDependenciesTests(NoteCase):
 
     def test_retranscription_changes_course_title_without_duplicating_audio(self):
         old = self.store.get()
-        target = self.store.create_course('물리학2')
-        self.store.update_course(target.id, language='en', llm_enabled=False)
+        target = self.store.courses.create_course('물리학2')
+        self.store.courses.update_course(target.id, language='en')
         note = self.ready()
         audio = self.output / 'old.wav'; audio.write_bytes(b'original audio')
         markdown = self.output / 'old.md'; markdown.write_text('[audio](old.wav) previous result')
@@ -106,13 +106,13 @@ class NoteDependenciesTests(NoteCase):
     def test_unassigned_recording_uses_raw_settings_and_can_change_courses(self):
         note = self.ready()
         old = self.store.get()
-        self.store.select_course(0)
+        self.store.courses.select_course(0)
         settings = self.store.get()
         self.assertIsNone(settings.course_id)
         self.assertEqual(settings.language, 'auto')
         self.assertTrue(settings.llm_enabled)
         self.assertTrue(settings.format_transcript)
-        self.assertEqual(self.store.active_course_id(), 0)
+        self.assertEqual(self.store.courses.active_course_id(), 0)
         pipeline = RecordingPipeline(self.store, JobState(), fixtures.FakeTranscriber(), self.root / 'work', False)
         with self.assertRaises(ValueError):
             pipeline.begin_chunked(settings, '녹음', '.webm', note['id'])
@@ -229,7 +229,7 @@ class NoteDependenciesTests(NoteCase):
         with self.assertRaises(ValueError):
             pipeline.select_recording_note(row.id, note["id"])
         self.notes._update(note["revision_id"], status="ready")
-        other = self.store.create_course("other")
+        other = self.store.courses.create_course("other")
         with self.store._connect() as db:
             db.execute("UPDATE lecture_notes SET course_id=? WHERE id=?", (other.id, note["id"]))
         with self.assertRaises(ValueError):
@@ -239,7 +239,7 @@ class NoteDependenciesTests(NoteCase):
 
     def test_review_failure_does_not_change_completed_transcript(self):
         from unittest.mock import create_autospec
-        from web.backend.transcription import ReviewStats
+        from web.backend.speech.transcription import ReviewStats
 
         engine = fixtures.FakeTranscriber()
         engine.review = create_autospec(
@@ -348,7 +348,7 @@ class NoteDependenciesTests(NoteCase):
         backup.write_bytes(original)
         note.write_text("uncommitted review output")
         self.store.update_recording(row.id, review_status="processing")
-        with patch("web.backend.review_jobs.threading.Thread"):
+        with patch("web.backend.recordings.review_jobs.threading.Thread"):
             ReviewQueue(self.store, pipeline.engine, pipeline._lock, True)
         self.assertEqual(note.read_bytes(), original)
         self.assertEqual(self.store.get_recording(row.id).review_status, "queued")
@@ -357,7 +357,7 @@ class NoteDependenciesTests(NoteCase):
 
     def test_review_success_uses_real_engine_signature_and_keeps_audio(self):
         from unittest.mock import create_autospec
-        from web.backend.transcription import ReviewStats
+        from web.backend.speech.transcription import ReviewStats
 
         engine = fixtures.FakeTranscriber()
         engine.review = create_autospec(

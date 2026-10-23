@@ -1,17 +1,17 @@
 import json
 from unittest.mock import patch, Mock
-from web.backend.note_extract import merge_text
-from web.backend.note_study import build_overview, overview_groups
-from web.backend.transcription import CancellationToken, Options
-from web.backend.engine import Transcriber
-from web.backend.review_jobs import relevant_context
+from web.backend.notes.note_extract import merge_text
+from web.backend.notes.note_study import build_overview, overview_groups
+from web.backend.speech.transcription import CancellationToken, Options
+from web.backend.speech.engine import Transcriber
+from web.backend.recordings.review_jobs import relevant_context
 
 
 from tests.note_support import NoteCase
 
 class NoteContentTests(NoteCase):
     def test_tesseract_literal_quote_does_not_swallow_tsv_rows(self):
-        from web.backend.note_extract import ocr
+        from web.backend.notes.note_extract import ocr
         import struct
         image = self.root / 'page.png'
         image.write_bytes(b'\x89PNG\r\n\x1a\n' + b'\0' * 8 + struct.pack('>II', 100, 100))
@@ -41,18 +41,18 @@ class NoteContentTests(NoteCase):
         def post(url, payload, **kwargs):
             return {"tokens": len(payload["text"].split(", ")) * 40}
 
-        with patch("web.backend.speech_processing.request_json", side_effect=post):
+        with patch("web.backend.speech.speech_processing.request_json", side_effect=post):
             options = Transcriber._with_note_hint(
                 Options(
                     language="en",
-                    note_keywords=("Coulomb", "potential", "charge", "field"),
+                    note_keywords=tuple({"term":word,"priority":i,"spoken_forms":[],"included":True} for i,word in enumerate(("Coulomb","potential","charge","field"))),
                 )
             )
         self.assertEqual(options.recognition_hint, "Coulomb, potential")
         from web.backend.ai_transport import ProviderError
 
         with patch(
-            "web.backend.speech_processing.request_json", side_effect=ProviderError("offline")
+            "web.backend.speech.speech_processing.request_json", side_effect=ProviderError("offline")
         ):
             self.assertEqual(Transcriber._with_note_hint(options).recognition_hint, "")
 
@@ -91,7 +91,7 @@ class NoteContentTests(NoteCase):
             self.notes.cancel(note["id"])
             self.notes.tokens[revision_id].check()
 
-        with patch("web.backend.notes.build_overview", side_effect=cancel):
+        with patch("web.backend.notes.notes.build_overview", side_effect=cancel):
             self.notes.study(revision_id)
         result = self.notes.get(note["id"])
         self.assertEqual(result["study_status"], "cancelled")
@@ -109,7 +109,7 @@ class NoteContentTests(NoteCase):
         pages = [{"number": i, "analysis": {"summary": str(i), "markdown": "body", "keywords": []}} for i in range(1, 15)]
         def generate(*args, **kwargs):
             return {"summary": "summary", "markdown": "overview", "uncertainties": []}
-        with patch("web.backend.note_study._generate", side_effect=generate) as call:
+        with patch("web.backend.notes.note_study._generate", side_effect=generate) as call:
             result = build_overview(pages, CancellationToken())
         self.assertEqual(result[0]["pages"], list(range(1, 15)))
         self.assertEqual(call.call_count, 5)
@@ -122,7 +122,7 @@ class NoteContentTests(NoteCase):
             return {"summary": "summary", "markdown": "긴 개요 " * 700, "uncertainties": [],
                     "validation": {"status": "passed"}}
 
-        with patch("web.backend.note_study._generate", side_effect=generate) as call:
+        with patch("web.backend.notes.note_study._generate", side_effect=generate) as call:
             result = build_overview(pages, CancellationToken())
         self.assertEqual(result[0]["pages"], list(range(1, 33)))
         self.assertLess(call.call_count, 30)
@@ -134,8 +134,8 @@ class NoteContentTests(NoteCase):
         def singleton_groups(entries, **kwargs):
             yield from ([entry] for entry in entries)
 
-        with patch("web.backend.note_study.overview_groups", side_effect=singleton_groups), \
-             patch("web.backend.note_study._generate", return_value={"summary": "summary", "markdown": "overview", "uncertainties": [], "validation": {"status": "passed"}}):
+        with patch("web.backend.notes.note_study.overview_groups", side_effect=singleton_groups), \
+             patch("web.backend.notes.note_study._generate", return_value={"summary": "summary", "markdown": "overview", "uncertainties": [], "validation": {"status": "passed"}}):
             with self.assertRaisesRegex(RuntimeError, "개요 압축이 진행되지"):
                 build_overview(pages, CancellationToken())
 

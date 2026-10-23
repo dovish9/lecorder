@@ -5,15 +5,15 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from web.backend.engine import Transcriber
+from web.backend.speech.engine import Transcriber
 from web.backend.markdown import render_note
-from web.backend.records import Recording
-from web.backend.review import (
+from web.backend.library.records import Recording
+from web.backend.speech.review import (
     combined_review_prompt,
     reviewer_prompt,
     validated_suggestions,
 )
-from web.backend.transcription import Options, TranscriptSegment, WhisperResult
+from web.backend.speech.transcription import Options, TranscriptSegment, WhisperResult
 
 
 from tests.support import RecorderCase
@@ -21,7 +21,7 @@ from tests.support import RecorderCase
 class TranscriptRulesTests(RecorderCase):
     def setUp(self):
         super().setUp()
-        runtime = patch('web.backend.speech_processing.runtime_for')
+        runtime = patch('web.backend.speech.speech_processing.runtime_for')
         runtime.start()
         self.addCleanup(runtime.stop)
 
@@ -50,7 +50,7 @@ class TranscriptRulesTests(RecorderCase):
             "break_after": ["s00001"],
         }, ensure_ascii=False)}}
         with patch(
-            "web.backend.review_engine.generate", return_value={"result": json.loads(review_response.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0}
+            "web.backend.speech.review_engine.generate", return_value={"result": json.loads(review_response.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0}
         ) as post:
             value, total, fallback, suggestions = Transcriber._review(
                 "이 표정을 이용합니다. 다음 설명입니다.", options, None
@@ -157,7 +157,7 @@ class TranscriptRulesTests(RecorderCase):
         response.raise_for_status.return_value = None
         response.json.return_value = {"message": {"content": json.dumps({"edits": []})}}
         with patch(
-            "web.backend.review_engine.generate", return_value={"result": json.loads(response.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0}
+            "web.backend.speech.review_engine.generate", return_value={"result": json.loads(response.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0}
         ) as post:
             Transcriber._review_items(
                 ["공주형 자료가 있어요."], options, None, {"s00001": -.8234}
@@ -176,7 +176,7 @@ class TranscriptRulesTests(RecorderCase):
             "message": {"content": json.dumps({"edits": [], "break_after": []})}
         }
         with patch(
-            "web.backend.review_engine.generate", return_value={"result": json.loads(response.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0}
+            "web.backend.speech.review_engine.generate", return_value={"result": json.loads(response.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0}
         ):
             value, _, fallback, _ = Transcriber._review(source, options, None)
         self.assertEqual(fallback, 0)
@@ -207,7 +207,7 @@ class TranscriptRulesTests(RecorderCase):
             "break_after": [],
         })}}
         with patch(
-            "web.backend.review_engine.generate", side_effect=[ValueError("truncated"), *[{"result": json.loads(r.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0} for r in (corrected, untouched)]]
+            "web.backend.speech.review_engine.generate", side_effect=[ValueError("truncated"), *[{"result": json.loads(r.json.return_value["message"]["content"]), "input_tokens": 0, "output_tokens": 0, "seconds": .1, "waiting_seconds": 0} for r in (corrected, untouched)]]
         ) as post:
             value, total, fallback, suggestions = Transcriber._review(
                 "이 표정을 이용합니다. 다음 설명입니다.", options, None
@@ -233,7 +233,7 @@ class TranscriptRulesTests(RecorderCase):
         with tempfile.TemporaryDirectory() as temporary:
             wav = Path(temporary) / "audio.wav"
             wav.write_bytes(b"wav")
-            with patch("web.backend.speech_processing.request_json", return_value=response.json.return_value) as post:
+            with patch("web.backend.speech.speech_processing.request_json", return_value=response.json.return_value) as post:
                 result = Transcriber._whisper(wav, Options(language="ko"), None)
         self.assertEqual(result.duration_seconds, 9.25)
         self.assertEqual(result.segments[1].start, 4.0)
@@ -246,7 +246,7 @@ class TranscriptRulesTests(RecorderCase):
         with tempfile.TemporaryDirectory() as temporary:
             wav = Path(temporary) / "audio.wav"
             wav.write_bytes(b"wav")
-            with patch("web.backend.speech_processing.request_json", return_value=response.json.return_value) as post:
+            with patch("web.backend.speech.speech_processing.request_json", return_value=response.json.return_value) as post:
                 Transcriber._whisper(wav, Options(language="en"), None)
         self.assertEqual(post.call_args.kwargs["multipart"]["no_context"], "true")
 
@@ -269,7 +269,7 @@ class TranscriptRulesTests(RecorderCase):
         with tempfile.TemporaryDirectory() as temporary:
             wav = Path(temporary) / "audio.wav"
             wav.write_bytes(b"wav")
-            with patch("web.backend.speech_processing.request_json", side_effect=[dropped.json.return_value, complete.json.return_value]) as post:
+            with patch("web.backend.speech.speech_processing.request_json", side_effect=[dropped.json.return_value, complete.json.return_value]) as post:
                 result = Transcriber._whisper(
                     wav, Options(language="ko"), None,
                     lambda stage, index, total: progress.append((stage, index, total)),
@@ -315,7 +315,7 @@ class TranscriptRulesTests(RecorderCase):
             wav = Path(temporary) / "audio.wav"
             wav.write_bytes(b"wav")
             with patch(
-                "web.backend.speech_processing.request_json", side_effect=[collapsed.json.return_value, recovered.json.return_value]
+                "web.backend.speech.speech_processing.request_json", side_effect=[collapsed.json.return_value, recovered.json.return_value]
             ) as post:
                 result = Transcriber._whisper(
                     wav, Options(language="en", recognition_hint="electric field"), None,
@@ -352,7 +352,7 @@ class TranscriptRulesTests(RecorderCase):
         with tempfile.TemporaryDirectory() as temporary:
             wav = Path(temporary) / "audio.wav"
             wav.write_bytes(b"wav")
-            with patch("web.backend.speech_processing.request_json", return_value=response.json.return_value):
+            with patch("web.backend.speech.speech_processing.request_json", return_value=response.json.return_value):
                 with self.assertRaisesRegex(RuntimeError, "동일 발화를 반복 생성"):
                     Transcriber._whisper(wav, Options(language="en"), None)
 
@@ -393,7 +393,7 @@ class TranscriptRulesTests(RecorderCase):
         )
         options = Options(language="en", recognition_hint="correct term")
         progress = []
-        with patch("web.backend.speech_quality.media_request"), patch.object(
+        with patch("web.backend.speech.speech_quality.media_request"), patch.object(
             Transcriber, "_whisper", return_value=better
         ):
             result = Transcriber._retry_low_confidence(
@@ -413,7 +413,7 @@ class TranscriptRulesTests(RecorderCase):
             "weak", 4.0, (TranscriptSegment(1, 0.0, 4.0, "weak", -.9, .01),)
         )
         with patch.dict("os.environ", {
-            "WHISPER_RETRY_MAX_GROUPS": "0", "WHISPER_LOW_CONFIDENCE": "not-a-number",
+            "LECORDER_SPEECH_RETRY_MAX_GROUPS": "0", "LECORDER_SPEECH_LOW_CONFIDENCE": "-0.65",
         }), patch.object(
             Transcriber, "_whisper"
         ) as whisper:
@@ -440,8 +440,6 @@ class TranscriptRulesTests(RecorderCase):
             title="통계학-9월9일-수",
             source_kind="upload",
             language="ko",
-            prompt="",
-            corrections="",
             format_transcript=True,
             llm_enabled=False,
             llm_model="",
@@ -470,7 +468,7 @@ class TranscriptRulesTests(RecorderCase):
     def test_markdown_adds_one_timestamp_per_paragraph(self) -> None:
         recording = Recording(
             id="paragraph-links", course_id=1, course_name="통계학", title="강의",
-            source_kind="upload", language="ko", prompt="", corrections="",
+            source_kind="upload", language="ko",
             format_transcript=True, llm_enabled=False, llm_model="", output_dir="/tmp",
             extension=".wav", status="completed", audio_path="/tmp/Lecture.wav",
         )

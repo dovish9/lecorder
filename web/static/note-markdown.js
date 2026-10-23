@@ -1,6 +1,6 @@
 import katex from "./vendor/katex/katex.mjs";
 
-// Repair legacy model output without decoding arbitrary escapes (\nu, \beta, etc.).
+// Repair malformed model output without decoding arbitrary escapes (\nu, \beta, etc.).
 export function normalizeMarkdown(text) {
   return String(text || "").replace(/(?:\\n){2,}/g, "\n\n").replace(
     /\$\$[\s\S]*?\$\$|\$[^$\n]+\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g,

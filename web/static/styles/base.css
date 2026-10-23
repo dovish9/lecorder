@@ -1,0 +1,24 @@
+/* base — owns the matching component or screen. */
+@keyframes pulse{50%{opacity:.45;transform:scale(.82)}
+}
+@container (max-width:600px){
+  .review-overview{align-items:flex-start;flex-direction:column;gap:12px}
+.review-progress{width:100%}
+.review-comparison{grid-template-columns:1fr;padding-bottom:10px}
+.review-arrow{height:18px;transform:rotate(90deg)}
+.review-term{min-height:72px}
+.review-item-footer{align-items:stretch;flex-direction:column}
+.review-listen{align-self:flex-start}
+.review-actions{width:100%;margin:0}
+.review-actions button{flex:1}
+}
+@keyframes meter-fallback{from{height:5px}to{height:20px}}
+@keyframes droplet-bridge{0%{opacity:.9;transform:scaleX(1)}65%{opacity:.55;transform:scaleX(.8)}100%{opacity:0;transform:scaleX(0)}}
+@keyframes pause-drop-arrive{
+  0%{opacity:0;transform:translateX(-16px) scale(.58)}
+  58%{opacity:1;transform:translateX(2px) scale(1.06)}
+  80%{opacity:1;transform:translateX(-1px) scale(.98)}
+  100%{opacity:1;transform:none}
+}
+@keyframes record-breathe{to{opacity:.5;transform:scale(.82)}}
+@keyframes spin{to{transform:rotate(360deg)}}

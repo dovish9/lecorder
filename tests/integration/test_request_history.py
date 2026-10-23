@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 from tests.support import RecorderCase
-from web.backend.store import LectureStore
+from web.backend.library.store import LectureStore
 from web.backend.request_history import RequestHistory
 from web.backend.processes import CancellationToken, TranscriptionCancelled
 from web.backend.execution_metrics import collect
@@ -69,3 +69,18 @@ class RequestHistoryTests(RecorderCase):
         self.assertEqual(len(calls),2)
         with self.store.transaction() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM ai_requests WHERE status='failed'").fetchone()[0],2)
+
+    def test_policy_changes_only_invalidate_the_affected_request_stage(self):
+        from web.backend.request_history import processing_policy
+        from web.backend.versions import POLICIES
+        from unittest.mock import patch
+        calls=[]
+        @processing_policy('overview')
+        def overview():
+            with collect(),self.history.scope('note','note:overview'):
+                return self.history.request(lambda token:(calls.append(1) or {'result':{'text':'개요'}}),self.config,'llm',['same-input'],CancellationToken())
+        overview()
+        with patch.dict(POLICIES,{'page':'different-page-policy'}):overview()
+        self.assertEqual(len(calls),1)
+        with patch.dict(POLICIES,{'overview':'different-overview-policy'}):overview()
+        self.assertEqual(len(calls),2)

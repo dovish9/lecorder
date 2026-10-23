@@ -2,7 +2,23 @@ import {requestJson} from "./api.js";
 import {formatFileSize} from "./selectors.js";
 
 export function createUpload(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    cancelUploadButton: $("#cancelUploadButton"),
+    closeUploadButton: $("#closeUploadButton"),
+    dockUploadButton: $("#dockUploadButton"),
+    dropDescription: $("#dropDescription"),
+    dropTitle: $("#dropTitle"),
+    dropZone: $("#dropZone"),
+    uploadButton: $("#uploadButton"),
+    uploadCoursePicker: $("#uploadCoursePicker"),
+    uploadCourseSelect: $("#uploadCourseSelect"),
+    uploadDialog: $("#uploadDialog"),
+    uploadFile: $("#uploadFile"),
+    uploadForm: $("#uploadForm"),
+    uploadMessage: $("#uploadMessage"),
+    uploadTitle: $("#uploadTitle"),
+  };
   const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
     ".3g2", ".3gp", ".aac", ".aif", ".aiff", ".alac", ".amr", ".caf", ".flac",
     ".m4a", ".mka", ".mov", ".mp3", ".mp4", ".ogg", ".opus", ".wav", ".webm", ".wma",
@@ -64,7 +80,7 @@ export function createUpload(context) {
         $("#uploadNoteLabel").textContent = chosen?.title || "사용 안 함";
         $("#uploadNoteLabel").title = chosen?.title || "사용 안 함";
         const pending = chosen && (["queued","extracting"].includes(chosen.status) || ["pending","analyzing"].includes(chosen.study_status));
-        $("#uploadNoteHint").textContent = !app.activeCourseId ? "강의를 선택하지 않아 인식 힌트 없이 전사합니다." : pending ? "분석 완료 후 전사합니다. 분석 실패·중단 시 전사를 시작하지 않습니다." : "선택한 노트의 키워드와 문맥을 전사에 활용합니다.";
+        $("#uploadNoteHint").textContent = !app.activeCourseId ? "강의를 선택하지 않아 인식 힌트 없이 음성 변환합니다." : pending ? "분석 완료 후 음성 변환합니다. 분석 실패·중단 시 음성 변환을 시작하지 않습니다." : "선택한 노트의 키워드와 문맥을 음성 변환에 활용합니다.";
         $("#uploadNoteMenu").replaceChildren();
         for (const note of options) {
           const button = document.createElement("button"); button.type="button"; button.className="upload-course-option";
@@ -134,10 +150,10 @@ export function createUpload(context) {
     $("#uploadNotePicker").open=false;
     ui.uploadCoursePicker.open=false;
     if (recording && recording.course_id !== app.activeCourseId) await actions.selectCourse(recording.course_id || 0);
-    $("#uploadDialogTitle").textContent = recording ? "다시 전사" : "파일 가져오기";
-    $("#uploadDialog header p").textContent = recording ? "기존 음성으로 다시 전사합니다. 이름과 강의, 강의노트를 변경할 수 있습니다." : "오디오나 동영상을 전사 대기열에 추가합니다.";
-    ui.uploadButton.textContent = recording ? "다시 전사" : "대기열에 추가";
-    ui.closeUploadButton.setAttribute("aria-label", recording ? "다시 전사 닫기" : "파일 가져오기 닫기");
+    $("#uploadDialogTitle").textContent = recording ? "다시 음성 변환" : "파일 가져오기";
+    $("#uploadDialog header p").textContent = recording ? "기존 음성으로 다시 음성 변환합니다. 이름과 강의, 강의노트를 변경할 수 있습니다." : "오디오나 동영상을 음성 변환 대기열에 추가합니다.";
+    ui.uploadButton.textContent = recording ? "다시 음성 변환" : "대기열에 추가";
+    ui.closeUploadButton.setAttribute("aria-label", recording ? "다시 음성 변환 닫기" : "파일 가져오기 닫기");
     ui.dropZone.disabled = Boolean(recording);
     if (recording) {
       app.uploadTitleAutomatic = false;
@@ -230,7 +246,7 @@ export function createUpload(context) {
       await actions.refreshStorage();
       setUploadBusy(false);
       ui.uploadDialog.close();
-      actions.showToast("전사 작업을 대기열에 추가했습니다.", "success", {
+      actions.showToast("음성 변환 작업을 대기열에 추가했습니다.", "success", {
         label: "보관함에서 보기",
         run: () => { window.location.hash = `#/recordings/job/${encodeURIComponent(result.recording.id)}`; },
       });
@@ -243,5 +259,5 @@ export function createUpload(context) {
   });
 
 
-  return {closeUploadDialog, loadUploadNotes, openUploadDialog, resetUploadSelection, selectUploadFile, setUploadBusy, setUploadTitlePreset, uploadExtension, uploadStem};
+  return {loadUploadNotes, openUploadDialog, setUploadTitlePreset};
 }

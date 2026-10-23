@@ -1,5 +1,12 @@
+let datasetId=null;
+export function bindDataset(id) {
+  if(datasetId&&datasetId!==id)throw new Error('데이터 환경이 변경됐습니다. 페이지를 새로고침하세요.');
+  datasetId=id;
+}
 export async function requestJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const headers=new Headers(options.headers);
+  if(datasetId && !['GET','HEAD'].includes((options.method||'GET').toUpperCase()))headers.set('X-Lecorder-Dataset',datasetId);
+  const response = await fetch(url, {...options,headers});
   const contentType = response.headers.get("content-type") || "";
   let data;
   if (contentType.includes("application/json")) {
@@ -10,10 +17,9 @@ export async function requestJson(url, options = {}) {
     data = {error: looksLikeHtml ? "" : text};
   }
   if (!response.ok) {
-    if (response.status === 405) {
-      throw new Error("현재 실행 중인 앱에 새 기능이 적용되지 않았습니다. Lecorder를 다시 시작한 뒤 다시 시도해 주세요.");
-    }
-    throw new Error(data.error || `요청을 처리하지 못했습니다. (${response.status})`);
+    const error=new Error(data.error || `요청을 처리하지 못했습니다. (${response.status})`);
+    error.code=data.code;
+    throw error;
   }
   return data;
 }

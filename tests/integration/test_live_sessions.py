@@ -7,8 +7,8 @@ from unittest.mock import patch, Mock
 
 from tests.support import RecorderCase
 from web.backend.routes import create_app
-from web.backend.store import LectureStore
-from web.backend.live_transcription import LiveSession
+from web.backend.library.store import LectureStore
+from web.backend.recordings.live_transcription import LiveSession
 
 
 class LiveSessionContractTests(RecorderCase):
@@ -26,7 +26,7 @@ class LiveSessionContractTests(RecorderCase):
         self.client = self.app.test_client()
 
     def test_live_failure_does_not_block_original_chunks_and_generations_are_checked(self):
-        with patch('web.backend.live_transcription.ModelRuntime', side_effect=RuntimeError('missing model')):
+        with patch('web.backend.recordings.live_transcription.ModelRuntime', side_effect=RuntimeError('missing model')):
             response = self.client.post(f'/api/recordings/{self.row.id}/live', json={})
             self.assertEqual(response.status_code, 200)
             session = self.services.live.active
@@ -100,7 +100,7 @@ class LiveSessionContractTests(RecorderCase):
     def test_live_settings_are_frozen_until_the_next_recording(self):
         settings=self.services.ai.snapshot()
         settings['speech'].update(live_model='selected-live',live_model_path='/test/live.bin',live_vad_path='/test/vad.bin')
-        with patch.object(self.services.ai,'snapshot',return_value=settings), patch('web.backend.live_transcription.start_thread',return_value=Mock()):
+        with patch.object(self.services.ai,'snapshot',return_value=settings), patch('web.backend.recordings.live_transcription.start_thread',return_value=Mock()):
             self.services.live.begin(self.row.id)
             session=self.services.live.active
             self.assertEqual(session.public()['model'],'selected-live')

@@ -3,9 +3,11 @@
 set -u
 
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SCRIPT_ROOT/.env" ]; then
+ENV_PATH="${LECORDER_ENV_FILE:-$SCRIPT_ROOT/.env}"
+[[ "$ENV_PATH" = /* ]] || ENV_PATH="$SCRIPT_ROOT/$ENV_PATH"
+if [ -f "$ENV_PATH" ]; then
     set -a
-    source "$SCRIPT_ROOT/.env"
+    source "$ENV_PATH"
     set +a
 fi
 ROOT="${LECORDER_DIR:-$SCRIPT_ROOT}"
@@ -16,7 +18,9 @@ if [ ! -f "$ROOT/app.py" ]; then
     ROOT="$SCRIPT_ROOT"
 fi
 APP_PORT="${LECORDER_PORT:-5055}"
-RUNTIME_FILE="$SCRIPT_ROOT/dependencies/python/runtime"
+DEPS="${LECORDER_DEPENDENCIES_DIR:-$SCRIPT_ROOT/dependencies}"
+[[ "$DEPS" = /* ]] || DEPS="$SCRIPT_ROOT/$DEPS"
+RUNTIME_FILE="$DEPS/python/runtime"
 if [[ -f "$RUNTIME_FILE" ]]; then
     { IFS= read -r PYTHON_BIN; IFS= read -r PACKAGE_PATH || true; } < "$RUNTIME_FILE"
     if [[ -n "$PACKAGE_PATH" ]]; then

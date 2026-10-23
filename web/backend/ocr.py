@@ -7,8 +7,8 @@ import shutil
 import struct
 from pathlib import Path
 from typing import Protocol
-from .config import SCRIPT_ROOT
-from .platforms import host
+from web.backend.config import DEPENDENCIES_DIR
+from web.backend.platforms import host
 
 
 class OCR(Protocol):
@@ -40,7 +40,7 @@ def recognize(image, token, engine=None, platform=None):
     if engine == "vision":
         if not platform.capabilities()["vision_ocr"]:
             raise ValueError("이 운영체제에서는 Vision OCR을 지원하지 않습니다. OCR 어댑터를 구성하세요.")
-        helper = SCRIPT_ROOT / "dependencies/vision/bin/vision-ocr"
+        helper = DEPENDENCIES_DIR / "vision/bin/vision-ocr"
         if not helper.is_file():
             raise ValueError(
                 "Vision OCR 도구가 없습니다. scripts/setup.sh를 실행하세요."

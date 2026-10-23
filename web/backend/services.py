@@ -1,18 +1,16 @@
 """Application-scoped infrastructure, also inherited by background workers."""
-from contextlib import contextmanager
-from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from pathlib import Path
-import threading
 
-from .platforms import HostPlatform, host
-from .processes import PythonWorker, Worker
-from .ai_runtime import RuntimeRegistry
-from .ai_settings import AISettings, Credentials
-from .ocr import OCR, NativeOCR
-from .ai_control import AIControl
+from web.backend.platforms import HostPlatform, host
+from web.backend.processes import PythonWorker, Worker
+from web.backend.ai_runtime import RuntimeRegistry
+from web.backend.ai_settings import AISettings, Credentials, SETTING_FILE
+from web.backend.config import DATA_DIR
+from web.backend.ocr import OCR, NativeOCR
+from web.backend.ai_control import AIControl
 
-_current = ContextVar("lecorder_services", default=None)
+from web.backend.execution_context import ExecutionResources
 
 
 @dataclass
@@ -34,16 +32,12 @@ class Services:
         platform = platform or host
         return cls(platform, worker or PythonWorker(),
                    RuntimeRegistry(log_dir=Path(data_dir), platform=platform),
-                   AISettings(Path(data_dir) / "ai-settings.json", Credentials(platform)),
+                   AISettings(SETTING_FILE if Path(data_dir).resolve()==DATA_DIR.resolve() else Path(data_dir) / "ai-settings.json", Credentials(platform)),
                    ocr or NativeOCR(platform))
 
-    @contextmanager
     def scope(self):
-        token = _current.set(self)
-        try:
-            yield self
-        finally:
-            _current.reset(token)
+        return ExecutionResources(self.platform, self.worker, self.runtimes,
+                                  self.ai, self.ocr, self.ai_control, self.history).scope()
 
     def start(self):
         if self.history:
@@ -67,14 +61,5 @@ class Services:
         if self.workflow:
             self.workflow.close()
         self.runtimes.close()
-
-
-def current_services():
-    return _current.get()
-
-
-def start_thread(target, name):
-    context = copy_context()
-    thread = threading.Thread(target=context.run, args=(target,), name=name, daemon=True)
-    thread.start()
-    return thread
+        if self.workflow:
+            self.workflow.store.close()

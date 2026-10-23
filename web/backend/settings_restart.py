@@ -3,8 +3,9 @@
 Published results, completed requests and historical execution rows are untouched.
 Requests whose model/input changed naturally miss their versioned checkpoint.
 """
+from web.backend.result_codec import dumps as result_dumps
 import json
-from .ai_settings import defaults
+from web.backend.ai_settings import defaults
 
 
 def rebind_pending(store, settings, areas=('speech', 'llm')):
@@ -25,7 +26,7 @@ def rebind_pending(store, settings, areas=('speech', 'llm')):
             previous = {**defaults(), **json.loads(row['ai_settings'] or '{}')}
             previous['llm'] = settings['llm']
             db.execute('UPDATE note_revisions SET ai_settings=? WHERE id=?', (json.dumps(previous), row['id']))
-        for row in db.execute("SELECT revision_id,number,payload FROM note_details WHERE json_extract(payload,'$.detail_status') IN ('pending','analyzing')").fetchall():
+        for row in db.execute("SELECT revision_id,number,payload FROM note_details WHERE json_extract(payload, '$.data.detail_status') IN ('pending','analyzing')").fetchall():
             payload = json.loads(row['payload'])
             payload['ai_settings'] = {**defaults(), **payload.get('ai_settings', {}), 'llm': settings['llm']}
-            db.execute('UPDATE note_details SET payload=? WHERE revision_id=? AND number=?', (json.dumps(payload), row['revision_id'], row['number']))
+            db.execute('UPDATE note_details SET payload=? WHERE revision_id=? AND number=?', (result_dumps(payload,"note-detail","page"), row['revision_id'], row['number']))

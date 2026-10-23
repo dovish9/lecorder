@@ -1,11 +1,12 @@
 """Settings API: capability probes are bound to the exact submitted configuration."""
+from web.backend.runtime_config import get as runtime
 import threading
 import time
 from uuid import UUID
-from .processes import CancellationToken
+from web.backend.processes import CancellationToken
 from urllib.parse import urlsplit
 from flask import Blueprint, jsonify, request
-from .ai_providers import check_connection
+from web.backend.ai_providers import check_connection
 
 
 def ai_routes(store):
@@ -63,9 +64,9 @@ def ai_routes(store):
     def check(area):
         try:
             config, key = config_and_key(area)
-            from .processes import CancellationToken, TranscriptionCancelled
+            from web.backend.processes import CancellationToken, TranscriptionCancelled
             token = check_token(area)
-            timer = threading.Timer(55, token.cancel)
+            timer = threading.Timer(runtime('LECORDER_SETTINGS_CHECK_SECONDS'), token.cancel)
             timer.daemon = True
             timer.start()
             try:
@@ -79,7 +80,7 @@ def ai_routes(store):
             return jsonify(ok=True, result=result)
         except Exception as error:
             # Provider errors are already sanitized; 보안 저장소/backend failures are not.
-            from .ai_transport import ProviderError
+            from web.backend.ai_transport import ProviderError
             message = str(error) if isinstance(error, (ValueError, ProviderError)) else '연결 확인 실패. 서버·모델·보안 저장소 접근을 확인하세요.'
             return jsonify(error=message), 400
 

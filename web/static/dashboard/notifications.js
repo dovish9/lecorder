@@ -5,20 +5,21 @@ export function createNotifications(context) {
   const {actions} = context;
   const browser = context.browser || window;
   const Notification = browser.Notification;
-  const COMPLETION_NOTIFICATION_STATES_KEY = "lecorder-completion-notification-states-v1";
+  let datasetId=null;
+  const stateKey=()=>`lecorder-completion-notification-states:${datasetId}`;
   function loadCompletionNotificationStates() {
     try {
-      return JSON.parse(browser.localStorage.getItem(COMPLETION_NOTIFICATION_STATES_KEY) || "{}");
+      return JSON.parse(browser.localStorage.getItem(stateKey()) || "{}");
     } catch (_) {
       return {};
     }
   }
 
-  let completionNotificationStates = loadCompletionNotificationStates();
+  let completionNotificationStates = {};
 
   function saveCompletionNotificationStates() {
     try {
-      browser.localStorage.setItem(COMPLETION_NOTIFICATION_STATES_KEY, JSON.stringify(completionNotificationStates));
+      browser.localStorage.setItem(stateKey(), JSON.stringify(completionNotificationStates));
     } catch (_) {
       // Notifications can still work for this open page if storage is unavailable.
     }
@@ -44,6 +45,7 @@ export function createNotifications(context) {
   }
 
   function detectCompletionNotifications(data) {
+    if(data.dataset_id!==datasetId){datasetId=data.dataset_id;completionNotificationStates=loadCompletionNotificationStates();}
     const next = {};
     for (const recording of data.recordings || []) {
       const key = `recording:${recording.id}`;
@@ -51,13 +53,13 @@ export function createNotifications(context) {
       const workflowStatus = recordingWorkflowStatus(recording);
       next[key] = workflowStatus;
       if (previous && previous !== "completed" && workflowStatus === "completed" && recording.review_status !== "cancelled") {
-        const completionTitle = {retranscribe: "강의 다시 전사 완료", review: "강의 다시 검수 완료"}[recording.last_operation] || "강의 전사 완료";
+        const completionTitle = {retranscribe: "강의 다시 음성 변환 완료", review: "강의 다시 검수 완료"}[recording.last_operation] || "강의 음성 변환 완료";
         notifyCompletion(completionTitle, `${recording.course_name} · ${recording.title}`, () => {
           browser.location.hash = `#/recordings/job/${encodeURIComponent(recording.id)}`;
         });
       }
       if (previous && previous !== "failed" && workflowStatus === "failed") {
-        notifyCompletion("강의 전사 실패", recording.error || `${recording.course_name} · ${recording.title}`, () => {
+        notifyCompletion("강의 음성 변환 실패", recording.error || `${recording.course_name} · ${recording.title}`, () => {
           browser.location.hash = `#/recordings/job/${encodeURIComponent(recording.id)}`;
         });
       }
@@ -86,5 +88,5 @@ export function createNotifications(context) {
   }
 
 
-  return {detectCompletionNotifications, loadCompletionNotificationStates, notificationPermission, notifyCompletion, saveCompletionNotificationStates};
+  return {detectCompletionNotifications};
 }

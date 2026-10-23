@@ -4,8 +4,9 @@ from pathlib import Path
 from tests.support import RecorderCase, FakeTranscriber
 from web.backend.platforms import PosixHost
 from web.backend.routes import create_app
-from web.backend.store import LectureStore
-from web.backend.services import Services, current_services, start_thread
+from web.backend.library.store import LectureStore
+from web.backend.services import Services
+from web.backend.execution_context import execution_resources, start_thread
 from web.backend.ai_settings import configured_settings
 
 
@@ -41,7 +42,7 @@ class ServiceTests(RecorderCase):
                     with second.scope():
                         thread=start_thread(lambda:observed.append(configured_settings()),'test-service-context')
                         thread.join(2)
-                    self.assertIs(current_services(),first)
-                self.assertIsNone(current_services())
+                    self.assertIs(execution_resources().worker,first.worker)
+                self.assertIsNone(execution_resources())
                 self.assertEqual(observed,[second.ai])
             finally: first.close();second.close()

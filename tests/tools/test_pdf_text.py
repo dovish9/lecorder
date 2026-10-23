@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import patch
 
 from PIL import Image, ImageChops
-from web.backend.note_extract import document_request
-from web.backend.transcription import CancellationToken
+from web.backend.notes.note_extract import document_request
+from web.backend.speech.transcription import CancellationToken
 
 
 def sample_pdf(path, rotation=0, crop=False):

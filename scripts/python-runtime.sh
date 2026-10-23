@@ -1,20 +1,22 @@
 # Shared Python selection. Source only; select_python plan never installs.
 select_python() {
-  local mode="${1:-plan}" version root candidate name
+  local mode="${1:-plan}" version root candidate name target
   PYTHON=""; PYTHON_SOURCE=""
+  target="${LECORDER_PYTHON_VERSION:-3.13}"
+  [[ "$target" =~ ^3\.(1[1-9]|[2-9][0-9])$ ]] || { echo "LECORDER_PYTHON_VERSION: 3.11 이상의 minor 버전이 필요합니다." >&2; return 1; }
   if command -v pyenv >/dev/null 2>&1; then
     PYTHON_SOURCE=pyenv
     root="$(pyenv root)" || return 1
-    version="$(pyenv versions --bare | awk '/^3\.13\.[0-9]+$/' | sort -t . -k3,3n | tail -1)"
+    version="$(pyenv versions --bare | awk -v target="$target" 'index($0,target ".")==1 && /^[0-9]+\.[0-9]+\.[0-9]+$/' | sort -t . -k3,3n | tail -1)"
     if [[ -z "$version" && "$mode" == install ]]; then
-      pyenv install -s 3.13 >&2 || return 1
-      version="$(pyenv versions --bare | awk '/^3\.13\.[0-9]+$/' | sort -t . -k3,3n | tail -1)"
+      pyenv install -s "$target" >&2 || return 1
+      version="$(pyenv versions --bare | awk -v target="$target" 'index($0,target ".")==1 && /^[0-9]+\.[0-9]+\.[0-9]+$/' | sort -t . -k3,3n | tail -1)"
     fi
     if [[ -n "$version" ]]; then
       PYTHON="$root/versions/$version/bin/python3"
       [[ -x "$PYTHON" ]] || { echo "pyenv 실행 파일 누락: $PYTHON" >&2; return 1; }
     elif [[ "$mode" == install ]]; then
-      echo 'pyenv Python 3.13 설치를 확인하세요.' >&2; return 1
+      echo "pyenv Python $target 설치를 확인하세요." >&2; return 1
     fi
     return 0
   fi

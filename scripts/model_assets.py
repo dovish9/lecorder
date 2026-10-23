@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 from pathlib import Path
 import tempfile
@@ -13,7 +14,14 @@ MODULES = ('flask', 'requests', 'keyring', 'jsonschema', 'tiktoken', 'av',
 
 
 def dependencies():
-    return Path(os.environ.get('LECORDER_DEPENDENCIES_DIR', ROOT / 'dependencies'))
+    value = os.environ.get('LECORDER_DEPENDENCIES_DIR')
+    if value is None and (ROOT / '.env').exists():
+        for line in (ROOT / '.env').read_text(encoding='utf-8').splitlines():
+            if line.strip().startswith('LECORDER_DEPENDENCIES_DIR='):
+                parts = shlex.split(line.split('=',1)[1], comments=True)
+                value = parts[0] if parts else None
+    path = Path(value or ROOT / 'dependencies').expanduser()
+    return path if path.is_absolute() else ROOT / path
 
 
 def assets(group=None):

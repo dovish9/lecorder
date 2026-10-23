@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from web.backend.media import request
-from web.backend.note_extract import document_request, prepare_pages
-from web.backend.transcription import CancellationToken, TranscriptionCancelled
+from web.backend.notes.note_extract import document_request, prepare_pages
+from web.backend.speech.transcription import CancellationToken, TranscriptionCancelled
 
 
 class PortableMediaTests(unittest.TestCase):

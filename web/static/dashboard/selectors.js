@@ -1,4 +1,4 @@
-const phaseLabels = {idle: "대기 중", queued: "대기열 등록", processing: "Whisper 전사 중", refining: "Whisper 정밀 확인 중", polishing: "LLM 검수 중", saving: "파일 정리 중", cancelling: "중단 처리 중", cancelled: "중단", complete: "완료", warning: "확인 필요", error: "오류"};
+const phaseLabels = {idle: "대기 중", queued: "대기열 등록", processing: "Whisper 음성 변환 중", refining: "Whisper 정밀 확인 중", polishing: "LLM 검수 중", saving: "파일 정리 중", cancelling: "중단 처리 중", cancelled: "중단", complete: "완료", warning: "확인 필요", error: "오류"};
 
 const recordingStatusLabels = {recording: "녹음 중", recoverable: "복구 가능", queued: "대기 중", processing: "처리 중", cancelling: "중단 중", cancelled: "중단", completed: "완료", failed: "실패"};
 
@@ -54,7 +54,7 @@ export function noteQueueProgress(note) {
 export function statusCardActivity(job, notes, recordings = []) {
   const review = recordings.find(item => pendingReview(item) && item.review_status === "processing") || recordings.find(pendingReview);
   if (review && !["processing", "refining", "polishing", "saving", "cancelling"].includes(job.phase)) {
-    return {phase:review.review_status === "queued" ? "queued" : "polishing", label:review.review_status === "queued" ? "검수 대기" : "LLM 검수 중", title:review.title, message:"전사 원문은 저장되었습니다. 검수 결과를 기다리고 있습니다."};
+    return {phase:review.review_status === "queued" ? "queued" : "polishing", label:review.review_status === "queued" ? "검수 대기" : "LLM 검수 중", title:review.title, message:"음성 변환 원문은 저장되었습니다. 검수 결과를 기다리고 있습니다."};
   }
   const phase = job.phase || "idle";
   const activeSpeech = ["processing", "refining", "polishing", "saving", "cancelling"].includes(phase);
@@ -219,26 +219,7 @@ export function runSeconds(run) {
   return Number.isFinite(started) && Number.isFinite(completed) ? Math.max(0, (completed - started) / 1000) : 0;
 }
 
-export function legacyStages(recording) {
-  const quality = recording.quality || {};
-  if (Array.isArray(quality.stages)) return quality.stages;
-  return recording.status === "failed" ? [
-    ["처리 실패", quality.total_seconds || recording.processing_seconds,
-      `${phaseLabels[quality.failed_stage] || quality.failed_stage || "처리 중"} · ${recording.error || "원인 기록 없음"}`],
-  ] : quality.cancelled ? [
-    ["전사 중단", quality.total_seconds, `${phaseLabels[quality.cancelled_stage] || quality.cancelled_stage || "처리 중"}에 요청`],
-    ["파일 정리", 0, "전사 결과·임시 파일 삭제 · 원본 음성만 보존"],
-  ] : [
-    ["오디오 변환", quality.conversion_seconds, "16 kHz · mono WAV"],
-    ["Whisper", quality.whisper_primary_seconds, `VAD 우선 · ${quality.segment_count || 0}개 발화`],
-    ["VAD 보호", quality.vad_fallback_seconds, quality.vad_fallback ? "누락 감지 · 전체 음성 재전사" : "실행 안 함"],
-    ["반복 보호", quality.repetition_fallback_seconds, quality.repetition_detected
-      ? `붕괴 감지 · 반복률 ${(Number(quality.repetition_ratio || 0) * 100).toFixed(1)}% · 안전 재전사`
-      : "실행 안 함"],
-    ["저신뢰 확인", quality.retry_processing_seconds, `${quality.low_confidence_segments || 0}구간 · ${quality.retry_attempted_groups || 0}묶음 시도 · ${quality.retry_accepted_groups || 0}묶음 교체`],
-    ["파일 저장", quality.saving_seconds, `문단 ${quality.paragraph_break_count || 0}개 · 오디오 + Markdown`],
-  ];
-}
+
 
 export function playerTime(seconds) {
   const total = Math.max(0, Math.floor(Number(seconds) || 0));

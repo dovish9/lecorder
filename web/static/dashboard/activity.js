@@ -1,14 +1,21 @@
 import {openNote} from "../notes.js";
 import {deleteRecordingRecovery, recordingSessions} from "../recording-store.js";
 import {requestJson} from "./api.js";
-import {recordingWorkflowStatus, pendingReview, noteQueueProgress, noteQueueSummary, shortDate, stageTime, hasPipelineLog, runSeconds, legacyStages, phaseLabels, recordingStatusLabels} from "./selectors.js?v=20261021-note-stages";
+import {recordingWorkflowStatus, pendingReview, noteQueueProgress, noteQueueSummary, shortDate, stageTime, hasPipelineLog, runSeconds, phaseLabels, recordingStatusLabels} from "./selectors.js";
 
 export function createActivity(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    pipelineDialog: $("#pipelineDialog"),
+    pipelineDialogBody: $("#pipelineDialogBody"),
+    pipelineDialogSubtitle: $("#pipelineDialogSubtitle"),
+    queueList: $("#queueList"),
+    queueSummary: $("#queueSummary"),
+  };
   async function cancelTranscription(recording, button) {
     const confirmed = await actions.confirmAction(
-      `‘${recording.title}’ 전사 작업을 중단할까요? 전사 결과와 임시 작업 파일은 삭제하고, 원본 음성은 현재 제목을 그대로 사용해 저장합니다.`,
-      "전사 중단",
+      `‘${recording.title}’ 음성 변환 작업을 중단할까요? 음성 변환 결과와 임시 작업 파일은 삭제하고, 원본 음성은 현재 제목을 그대로 사용해 저장합니다.`,
+      "음성 변환 중단",
     );
     if (!confirmed) return;
     button.disabled = true;
@@ -22,7 +29,7 @@ export function createActivity(context) {
       ]);
       actions.showToast(
         result.recording.status === "cancelled"
-          ? "전사를 중단하고 원본 음성만 저장했습니다."
+          ? "음성 변환을 중단하고 원본 음성만 저장했습니다."
           : "중단 요청을 보냈습니다.",
         "success",
       );
@@ -115,18 +122,18 @@ export function createActivity(context) {
     }
     const runs = [...(history.runs || []), ...(history.review_runs || [])]
       .sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
-    if (!runs.length) runs.push({kind: "transcription", started_at: recording.started_at, completed_at: recording.completed_at, status: recording.status, metrics: {...(recording.quality || {}), stages: legacyStages(recording)}, settings: {llm_model: recording.llm_model}});
+    if (!runs.length) section.append(Object.assign(document.createElement("p"),{textContent:"처리 기록이 없습니다."}));
     let aggregate = 0;
     for (const run of runs) {
       const isReview = (history.review_runs || []).includes(run);
       const metrics = run.metrics || {};
-      const stages = Array.isArray(metrics.stages) ? metrics.stages : (isReview ? [{name: "LLM 검수", seconds: runSeconds(run), detail: `제안 ${metrics.suggestion_count || 0}개`}] : legacyStages(recording).map(([name, seconds, detail]) => ({name, seconds, detail})));
+      const stages = Array.isArray(metrics.stages) ? metrics.stages : (isReview ? [{name: "LLM 검수", seconds: runSeconds(run), detail: `제안 ${metrics.suggestion_count || 0}개`}] : [{name:run.status==='cancelled'?'음성 변환 중단':run.status==='failed'?'처리 실패':'음성 변환',seconds:runSeconds(run),detail:run.error||''}]);
       const runTotal = runSeconds(run) || stages.reduce((sum, stage) => sum + (Number(stage.seconds) || 0), 0);
       aggregate += runTotal;
       const block = document.createElement("section");
       block.className = "pipeline-run";
       const head = document.createElement("header");
-      head.append(Object.assign(document.createElement("strong"), {textContent: isReview ? "LLM 검수 실행" : "전사 실행"}), Object.assign(document.createElement("span"), {textContent: `${shortDate(run.started_at)} → ${shortDate(run.completed_at) || "진행 중"}`}));
+      head.append(Object.assign(document.createElement("strong"), {textContent: isReview ? "LLM 검수 실행" : "음성 변환 실행"}), Object.assign(document.createElement("span"), {textContent: `${shortDate(run.started_at)} → ${shortDate(run.completed_at) || "진행 중"}`}));
       block.append(head);
       const list = document.createElement("div");
       list.className = "pipeline-stages";
@@ -167,7 +174,7 @@ export function createActivity(context) {
     }
     const total = document.createElement("div");
     total.className = "pipeline-stage pipeline-total";
-    total.append(Object.assign(document.createElement("span"), {textContent: "총 걸린 시간"}), Object.assign(document.createElement("strong"), {textContent: stageTime(aggregate)}), Object.assign(document.createElement("small"), {textContent: "대기열 시간 제외 · 전사·저장·LLM 검수 합계"}));
+    total.append(Object.assign(document.createElement("span"), {textContent: "총 걸린 시간"}), Object.assign(document.createElement("strong"), {textContent: stageTime(aggregate)}), Object.assign(document.createElement("small"), {textContent: "대기열 시간 제외 · 음성 변환·저장·LLM 검수 합계"}));
     section.append(total);
     return section;
   }
@@ -210,7 +217,7 @@ export function createActivity(context) {
       const title = document.createElement("strong");
       title.textContent = recording.title;
       const meta = document.createElement("small");
-      const position = recording.reviewPending ? (isQueued ? "검수 대기" : "검수 중") : isQueued ? (recording.waiting_for_note ? "강의노트 분석 완료 대기" : "전사 대기") : recordingStatusLabels[recording.status] || "처리 중";
+      const position = recording.reviewPending ? (isQueued ? "검수 대기" : "검수 중") : isQueued ? (recording.waiting_for_note ? "강의노트 분석 완료 대기" : "음성 변환 대기") : recordingStatusLabels[recording.status] || "처리 중";
       meta.textContent = isNote
         ? `${recording.course_name || "강의노트"} · ${noteQueueSummary(recording)}`
         : `${recording.course_name} · ${position}`;
@@ -227,7 +234,7 @@ export function createActivity(context) {
         link.append(createNoteQueuePipeline(recording));
       } else if (!isNote && recording.reviewPending) {
         link.classList.add("has-pipeline");
-        link.append(createQueuePipeline(recording, {phase:"polishing", message:isQueued ? "검수 대기 · 전사 원문은 저장되었습니다." : "LLM 검수 및 결과 저장 중"}));
+        link.append(createQueuePipeline(recording, {phase:"polishing", message:isQueued ? "검수 대기 · 음성 변환 원문은 저장되었습니다." : "LLM 검수 및 결과 저장 중"}));
       } else if (!isNote && recording.status === "processing" && app.job?.job_id === recording.id) {
         link.classList.add("has-pipeline");
         link.append(createQueuePipeline(recording, app.job));
@@ -239,7 +246,7 @@ export function createActivity(context) {
   function createQueuePipeline(recording, job) {
     const phase = job.phase || "processing";
     const stages = [
-      {phase: "processing", label: "변환·전사"},
+      {phase: "processing", label: "음성 변환"},
       {phase: "refining", label: "품질 확인"},
       ...(recording.llm_enabled ? [{phase: "polishing", label: "검수"}] : []),
       {phase: "saving", label: "저장"},
@@ -297,5 +304,5 @@ export function createActivity(context) {
   }
 
 
-  return {cancelTranscription, createNoteQueuePipeline, createPipelineDetail, createQueuePipeline, createStagePipeline, deleteRecordingHistory, openPipelineLog, renderQueue, renderRecordings, retryRecording};
+  return {cancelTranscription, deleteRecordingHistory, openPipelineLog, renderRecordings, retryRecording};
 }

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from web.backend.inference import InferenceCoordinator
-from web.backend.live_transcription import LiveSession, RATE
+from web.backend.recordings.live_transcription import LiveSession, RATE
 from web.backend.processes import CancellationToken, TranscriptionCancelled
 
 
@@ -88,7 +88,7 @@ class LiveTests(unittest.TestCase):
     def test_failure_closes_only_session_owned_runtime(self):
         s = self.session()
         runtime = Mock(); runtime.session.side_effect = RuntimeError('model missing')
-        with patch('web.backend.live_transcription.ModelRuntime', return_value=runtime):
+        with patch('web.backend.recordings.live_transcription.ModelRuntime', return_value=runtime):
             s.run()
         self.assertEqual(s.state, 'failed')
         runtime.close.assert_called_once()
@@ -103,7 +103,7 @@ class LiveTests(unittest.TestCase):
         s.service.vad_factory = Mock(return_value=Mock())
         entered = threading.Event(); finish = threading.Event()
         s._consume = lambda: (entered.set(), finish.wait(2))
-        with patch('web.backend.live_transcription.ModelRuntime', return_value=runtime) as factory:
+        with patch('web.backend.recordings.live_transcription.ModelRuntime', return_value=runtime) as factory:
             with inference.lease():
                 worker = threading.Thread(target=s.run); worker.start()
                 try:
@@ -147,13 +147,13 @@ class LiveTests(unittest.TestCase):
         self.assertTrue(second.args[3])
 
     def test_late_inference_response_cannot_publish_after_stop(self):
-        from web.backend.transcription import Options
+        from web.backend.speech.transcription import Options
         s = self.session(); s.config={'base_url':'http://127.0.0.1:1'}
         s._options=Mock(return_value=Options(language='en'))
         def response(*args, **kwargs):
             s.stop()
             return {'text':'too late','segments':[]}
-        with patch('web.backend.live_transcription.request_json', side_effect=response):
+        with patch('web.backend.recordings.live_transcription.request_json', side_effect=response):
             with self.assertRaises(TranscriptionCancelled):
                 s._decode(b'\0'*32000,0,time.monotonic(),False)
         self.assertEqual(s.segments,[])

@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 import threading
 import time
-from .execution_metrics import add_wait
+from web.backend.execution_metrics import add_wait
 
 
 class InferenceCoordinator:
@@ -16,7 +16,7 @@ class InferenceCoordinator:
     def reserve(self, owner):
         with self._condition:
             if self._reservation not in (None, owner):
-                raise ValueError('다른 녹음에서 실시간 전사를 사용 중입니다.')
+                raise ValueError('다른 녹음에서 실시간 음성 변환을 사용 중입니다.')
             self._reservation = owner
             self._condition.notify_all()
 

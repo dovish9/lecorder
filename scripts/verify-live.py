@@ -17,7 +17,7 @@ from web.backend.config import EnvironmentStore, ROOT
 from web.backend.inference import inference
 from web.backend.routes import create_app
 from web.backend.services import Services
-from web.backend.store import LectureStore
+from web.backend.library.store import LectureStore
 
 
 def main():
@@ -38,12 +38,12 @@ def main():
         env.update(project_dir=str(ROOT), output_dir=str(root/'output'))
         config = defaults()
         config['speech']['base_url'] = f'http://127.0.0.1:{args.port}'
+        config['speech']['live_base_url'] = f'http://127.0.0.1:{args.port+2}'
         config['llm']['base_url'] = f'http://127.0.0.1:{args.port+1}'
         (root/'ai-settings.json').write_text(json.dumps({'settings': config}))
         services = Services.create(root)
         store = LectureStore(root/'test.db', env)
         create_app(store=store, services=services)
-        services.live.config['base_url'] = config['speech']['base_url']
         try:
             with services.scope():
                 row = services.workflow.begin_chunked(replace(store.get(), language=args.language), 'Live verification', '.wav')
@@ -68,6 +68,7 @@ def main():
                 assert session.runtime._process.pid == pid, 'Live model was reloaded during recording'
                 report = session.public()
                 services.live.end(row.id)
+                assert services.live.draft(row.id)['state'] not in {'preparing','streaming'}, 'Persisted live draft could not be reopened'
                 report['events'] = services.live.log(row.id)
                 latencies = sorted(e['speech_end_latency_seconds'] for e in report['events'] if e['event']=='segment' and not e['forced_cut'])
                 report['server_result_latency_p95_seconds'] = latencies[math.ceil(.95*len(latencies))-1] if latencies else None

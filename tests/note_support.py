@@ -4,14 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from web.backend.notes import NoteLibrary
+from web.backend.notes.notes import NoteLibrary
 from tests import support as fixtures
-from web.backend.store import LectureStore
+from web.backend.library.store import LectureStore
 
 
 class NoteCase(unittest.TestCase):
     def setUp(self):
-        for module in ('pipeline', 'review_jobs', 'notes', 'note_study', 'note_intake'):
+        for module in ('recordings.pipeline', 'recordings.review_jobs', 'notes.notes', 'notes.note_study', 'notes.note_intake'):
             availability = patch(f"web.backend.{module}.require_llm", return_value=None)
             availability.start()
             self.addCleanup(availability.stop)
@@ -19,17 +19,19 @@ class NoteCase(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.env, self.output = fixtures.RecorderCase.environment(self.root)
         self.store = LectureStore(self.root / "test.db", self.env)
+        self.store.courses.create_course('새 강의')
         self.notes = NoteLibrary(self.store, self.root / "notes", False)
 
 
     def tearDown(self):
         self.notes.close()
+        self.store.close()
         self.temporary.cleanup()
 
 
     def register(self):
         return self.notes.register(
-            self.store.active_course_id(),
+            self.store.courses.active_course_id(),
             [("slides.pdf", io.BytesIO(b"%PDF-1.7\nfixture"))],
         )
 

@@ -1,5 +1,6 @@
 """Common lifecycle for owned model servers, independent of provider and OS."""
 from __future__ import annotations
+from web.backend.runtime_config import get as runtime
 
 import atexit
 import subprocess
@@ -34,7 +35,7 @@ class ManagedRuntime:
             if process.poll() is None:
                 process.terminate()
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=runtime('LECORDER_MODEL_STOP_SECONDS'))
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()

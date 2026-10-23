@@ -3,6 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/load-env.sh"
+DEPS="${LECORDER_DEPENDENCIES_DIR:-$ROOT/dependencies}"
+[[ "$DEPS" = /* ]] || DEPS="$ROOT/$DEPS"
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1
 printf '설치 미리보기: 변경을 실행하지 않습니다.\n\n[1/5] 필수 도구\n'
 for tool in xcode-select xcrun git brew; do
@@ -20,7 +23,7 @@ select_python plan
 printf '\n[2/5] Homebrew 설치 계획\n'
 while IFS= read -r -u 3 formula; do
   if [[ "$formula" == python && "$PYTHON_SOURCE" != homebrew ]]; then
-    echo "Python 선택: $PYTHON_SOURCE ${PYTHON:-— 3.13 설치 예정}"
+    echo "Python 선택: $PYTHON_SOURCE ${PYTHON:-— ${LECORDER_PYTHON_VERSION:-3.13} 설치 예정}"
   elif command -v brew >/dev/null 2>&1 && brew list --versions "$formula" </dev/null 3<&- >/dev/null 2>&1; then
     echo "재사용: $formula"
   else
@@ -32,18 +35,18 @@ if [[ -n "$PYTHON" ]]; then
   if check_python_version; then
     echo "Python 재사용: $PYTHON"
     if ! "$PYTHON" -B -c 'import pathlib, sys, sysconfig; sys.exit(1 if sys.prefix == sys.base_prefix and (pathlib.Path(sysconfig.get_path("stdlib")) / "EXTERNALLY-MANAGED").exists() else 0)'; then
-      echo "패키지 설치 예정 위치: $ROOT/dependencies/python/site-packages"
+      echo "패키지 설치 예정 위치: $DEPS/python/site-packages"
     fi
   else
     echo '호환되지 않는 Python: 실제 설치는 중단됩니다.'
   fi
 else
   if [[ "$PYTHON_SOURCE" == pyenv ]]; then
-    echo "Python 신규 설치 예정: pyenv 3.13"
+    echo "Python 신규 설치 예정: pyenv ${LECORDER_PYTHON_VERSION:-3.13}"
   else
     echo "Python 신규 설치 예정: Homebrew 최신 안정 버전 (python)"
   fi
-  if [[ "$PYTHON_SOURCE" == homebrew ]]; then echo "패키지 설치 예정 위치: $ROOT/dependencies/python/site-packages"; fi
+  if [[ "$PYTHON_SOURCE" == homebrew ]]; then echo "패키지 설치 예정 위치: $DEPS/python/site-packages"; fi
 fi
 echo "설치·검사 대상: $ROOT/requirements.txt (현재 충족 여부와 다운로드는 실행하지 않음)"
 printf '\n[4/5] 네이티브 빌드\n'

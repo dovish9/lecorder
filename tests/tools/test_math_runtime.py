@@ -5,8 +5,8 @@ import threading
 import unittest
 from unittest.mock import patch
 from py_mini_racer import MiniRacer, JSTimeoutException
-from web.backend.note_validation import code_issues
-from web.backend.transcription import CancellationToken, TranscriptionCancelled
+from web.backend.notes.note_validation import code_issues
+from web.backend.speech.transcription import CancellationToken, TranscriptionCancelled
 
 
 class MathRuntimeTests(unittest.TestCase):

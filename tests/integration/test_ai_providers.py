@@ -10,8 +10,8 @@ from web.backend.ai_settings import AISettings, defaults, current, using
 from web.backend.ai_routes import ai_routes
 from web.backend.ai_providers import generate
 from web.backend.ai_transport import request_json, ProviderError
-from web.backend.engine import Transcriber
-from web.backend.transcription import Options, CancellationToken, TranscriptionCancelled
+from web.backend.speech.engine import Transcriber
+from web.backend.speech.transcription import Options, CancellationToken, TranscriptionCancelled
 
 
 class Keys:
@@ -28,17 +28,17 @@ class AIProviderTests(unittest.TestCase):
         config = defaults()
         config['speech'].update(managed=False, base_url='http://example.test:8080')
         token = CancellationToken()
-        with using(config), patch('web.backend.speech_processing.configured_settings') as settings, patch('web.backend.speech_processing.request_json', return_value={'tokens': 3}) as request:
+        with using(config), patch('web.backend.speech.speech_processing.configured_settings') as settings, patch('web.backend.speech.speech_processing.request_json', return_value={'tokens': 3}) as request:
             settings.return_value.credentials.get.return_value = 'test-only-key'
-            result = Transcriber._with_note_hint(Options(language='en', note_keywords=('electric field',)), token)
+            result = Transcriber._with_note_hint(Options(language='en', note_keywords=({'term':'electric field','spoken_forms':[],'priority':1,'included':True},)), token)
             self.assertEqual(result.recognition_hint_tokens, 3)
             self.assertIs(request.call_args.kwargs['cancellation'], token)
             self.assertEqual(request.call_args.kwargs['headers'], {'Authorization': 'Bearer test-only-key'})
 
     def test_tokenizer_cancellation_is_not_downgraded_to_missing_hint(self):
-        with patch('web.backend.speech_processing.request_json', side_effect=TranscriptionCancelled('cancel')):
+        with patch('web.backend.speech.speech_processing.request_json', side_effect=TranscriptionCancelled('cancel')):
             with self.assertRaises(TranscriptionCancelled):
-                Transcriber._with_note_hint(Options(language='en', note_keywords=('electric field',)), CancellationToken())
+                Transcriber._with_note_hint(Options(language='en', note_keywords=({'term':'electric field','spoken_forms':[],'priority':1,'included':True},)), CancellationToken())
 
     def test_provider_wire_formats_and_missing_usage(self):
         bodies = {
@@ -148,13 +148,13 @@ class AIProviderTests(unittest.TestCase):
 
     def test_openai_speech_requires_real_segment_timestamps(self):
         config=defaults();config['speech']={'provider':'openai','model':'whisper-1','base_url':'https://example.invalid','managed':False}
-        with using(config),patch('web.backend.ai_settings.Credentials.get',return_value='secret'),patch('web.backend.speech_processing.request_json',return_value={'text':'hello','duration':2}):
+        with using(config),patch('web.backend.ai_settings.Credentials.get',return_value='secret'),patch('web.backend.speech.speech_processing.request_json',return_value={'text':'hello','duration':2}):
             with self.assertRaisesRegex(ValueError,'타임스탬프'):
                 Transcriber._openai_speech(Path('/tmp/not-uploaded.wav'),Options(language="en"),None)
 
     def test_openai_speech_does_not_fabricate_confidence(self):
         config=defaults();config['speech']={'provider':'openai','model':'whisper-1','base_url':'https://example.invalid','managed':False}
-        with using(config),patch('web.backend.ai_settings.Credentials.get',return_value='secret'),patch('web.backend.speech_processing.request_json',return_value={'text':'hello','duration':2,'segments':[{'text':'hello','start':.2,'end':1.8}]}):
+        with using(config),patch('web.backend.ai_settings.Credentials.get',return_value='secret'),patch('web.backend.speech.speech_processing.request_json',return_value={'text':'hello','duration':2,'segments':[{'text':'hello','start':.2,'end':1.8}]}):
             result=Transcriber._openai_speech(Path('/tmp/not-uploaded.wav'),Options(language="en"),None)
             self.assertIsNone(result.segments[0].avg_logprob)
             self.assertEqual(result.segments[0].start,.2)

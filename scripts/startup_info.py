@@ -11,7 +11,7 @@ def describe(configs):
     names = {'whisper_cpp': 'whisper.cpp', 'llama_cpp': 'llama.cpp',
              'openai': 'OpenAI', 'claude': 'Claude', 'gemini': 'Gemini'}
     lines = []
-    for area, label in [('speech', '음성 전사'), ('llm', 'LLM 검수·강의노트 분석')]:
+    for area, label in [('speech', '음성 변환'), ('llm', 'LLM 검수·강의노트 분석')]:
         config = configs[area]
         provider = config['provider']
         managed = config.get('managed', False)
@@ -28,7 +28,7 @@ def describe(configs):
             lines.append('  서버는 직접 실행해야 합니다. Lecorder가 시작·종료하지 않습니다.')
         else:
             lines.append('  작업 자료가 선택한 제공자로 전송되며 API 사용 요금이 발생할 수 있습니다.')
-    lines.append('ℹ️ 연결 상태는 환경설정의 연결 확인으로 검사하세요. 시작 안내는 연결 성공을 의미하지 않습니다.')
+    lines.append('ℹ️ 연결은 설정 저장 시 검증합니다. 시작 안내는 연결 성공을 의미하지 않습니다.')
     return lines
 
 

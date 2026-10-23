@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only dependency checks; never starts or stops a model server."""
+from model_assets import dependencies
 import importlib.util
 import json
 import shutil
@@ -15,21 +16,22 @@ import requests
 
 def checks():
     root = Path(__file__).resolve().parents[1]
-    output = {
-        name: shutil.which(name)
+    from web.backend.versions import public_versions
+    output = {name: shutil.which(name)
         for name in (
             "tesseract",
         )
     }
+    output["versions"] = public_versions()
     output["capabilities"] = host.capabilities()
     output["vision"] = (
-        str(root / "dependencies/vision/bin/vision-ocr")
-        if (root / "dependencies/vision/bin/vision-ocr").is_file()
+        str(dependencies() / "vision/bin/vision-ocr")
+        if (dependencies() / "vision/bin/vision-ocr").is_file()
         else None
     )
     output["kiwi"] = {
-        "helper": host.executable(root / "dependencies/kiwi/bin", "kiwi-helper").is_file(),
-        "model": (root / "dependencies/kiwi/models/cong/base/cong.mdl").is_file(),
+        "helper": host.executable(dependencies() / "kiwi/bin", "kiwi-helper").is_file(),
+        "model": (dependencies() / "kiwi/models/cong/base/cong.mdl").is_file(),
     }
     output["python"] = {
         name: bool(importlib.util.find_spec(name)) for name in ("flask", "requests", "keyring", "jsonschema", "tiktoken", "av", "pypdfium2", "PIL", "pillow_heif", "py_mini_racer", "pdfplumber")

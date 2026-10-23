@@ -19,7 +19,7 @@ export function setupAISettings() {
   const models = {openai:['gpt-4.1-mini','gpt-4.1'], claude:['claude-sonnet-4-5'], gemini:['gemini-2.5-flash','gemini-2.5-pro']};
   const element = (tag, cls, text) => {const e=document.createElement(tag); if(cls)e.className=cls; if(text!==undefined)e.textContent=text; return e;};
   async function api(url, method='GET', body, signal) {
-    const result = await fetch(url, {signal: AbortSignal.any([AbortSignal.timeout(url.endsWith('/check')?60000:15000),...(signal?[signal]:[])]), method, headers: {'Content-Type':'application/json'}, body: body===undefined ? undefined : JSON.stringify(body)});
+    const result = await fetch(url, {signal: AbortSignal.any([AbortSignal.timeout(url.endsWith('/check')?(Number(capabilities.settings_check_seconds||55)+5)*1000:15000),...(signal?[signal]:[])]), method, headers: {'Content-Type':'application/json'}, body: body===undefined ? undefined : JSON.stringify(body)});
     const data = await result.json(); if(!result.ok) throw new Error(data.error || '요청 실패'); return data;
   }
   function invalidate(){ saves.delete(area); ++generation; checking=false; save.disabled=busy; message.textContent='설정 저장을 누르면 연결을 검증한 뒤 저장합니다.'; }
@@ -39,9 +39,9 @@ export function setupAISettings() {
     input.addEventListener('input',()=>{if(prop==='api_key')key=input.value;else {draft[prop]=input.value;if(prop==='binary')panels.querySelectorAll('input[name="lecorder-ai-binary"]').forEach(other=>{if(other!==input)other.value=input.value;});}invalidate();});wrap.append(title,input);return wrap;
   }
   const sectionCopy = {
-    paths: ['경로', '프로젝트와 전사 결과를 저장할 위치를 관리합니다.'],
-    speech: ['음성 변환', '녹음을 마친 뒤 전체 음성을 전사할 모델을 설정합니다.'],
-    llm: ['LLM', '전사 검수와 강의노트 분석에 사용할 모델을 설정합니다.'],
+    paths: ['경로', '프로젝트와 음성 변환 결과를 저장할 위치를 관리합니다.'],
+    speech: ['음성 변환', '녹음을 마친 뒤 전체 음성을 텍스트로 바꿀 모델을 설정합니다.'],
+    llm: ['LLM', '음성 변환 검수와 강의노트 분석에 사용할 모델을 설정합니다.'],
     history: ['승인한 검토', '승인한 수정의 전후 문맥과 발화 구간을 자료로 보관합니다.'],
   };
   function render() {
@@ -73,7 +73,7 @@ export function setupAISettings() {
       const keyline=element('div','ai-key-line');keyline.append(element('span','',draft.key_present?'보안 저장소에 키가 저장되어 있습니다.':`키는 ${capabilities.credential_store || '운영체제 보안 저장소'}에 보관됩니다.`));
       const del=element('button','ai-text-button','저장된 키 삭제');del.disabled=busy;del.type='button';del.addEventListener('click',async()=>{if(!confirm('이 서버에 저장된 API 키를 삭제할까요?'))return;try{await api('/api/ai-settings/'+area+'/key','DELETE',{config:draft});draft.key_present=false;key='';invalidate();render();message.textContent='API 키를 삭제했습니다.';}catch(e){message.textContent=e.message;}});keyline.append(del);panels.append(keyline);
     }
-    panels.append(element('p','ai-privacy',local&&draft.managed?'음성과 강의노트가 이 컴퓨터 안에서 처리됩니다.':`선택한 서버로 ${area==='speech'?'음성을':'전사문과 강의노트 텍스트·이미지를'} 전송합니다. 외부 API 요금이 발생할 수 있으며, 요청 후 취소해도 이미 처리된 요청은 과금될 수 있습니다.`));
+    panels.append(element('p','ai-privacy',local&&draft.managed?'음성과 강의노트가 이 컴퓨터 안에서 처리됩니다.':`선택한 서버로 ${area==='speech'?'음성을':'변환 텍스트과 강의노트 텍스트·이미지를'} 전송합니다. 외부 API 요금이 발생할 수 있으며, 요청 후 취소해도 이미 처리된 요청은 과금될 수 있습니다.`));
     const actions=element('div','ai-settings-actions'), reset=element('button','','기본값으로 초기화');reset.type='button';
     reset.disabled=busy;
     reset.addEventListener('click',()=>{draft=structuredClone(response.defaults[area]);key='';invalidate();render();message.textContent='로컬 기본값으로 되돌렸습니다. 저장 후 재시작하면 적용됩니다.';});
@@ -93,7 +93,7 @@ export function setupAISettings() {
     if(fileRows.childElementCount){files.append(fileRows);connection.append(files);}
     if(area==='speech') {
       const liveSection=element('section','settings-live-section');
-      liveSection.append(element('h3','','실시간 전사'),element('p','ai-privacy','녹음 중 초안에 사용하는 로컬 모델입니다. 변경한 설정은 서버를 재시작하면 적용됩니다.'));
+      liveSection.append(element('h3','','실시간 음성 변환'),element('p','ai-privacy','녹음 중 초안에 사용하는 로컬 모델입니다. 변경한 설정은 서버를 재시작하면 적용됩니다.'));
       const liveRows=element('div','settings-row-group');
       for(const prop of ['binary','live_base_url','live_model','live_model_path','live_vad_path']) draft[prop]??=response.defaults.speech[prop];
       const provider=picker('제공자',[['whisper_cpp','로컬 · whisper.cpp']],'whisper_cpp',()=>{});provider.querySelector('summary').setAttribute('aria-disabled','true');provider.querySelector('summary').tabIndex=-1;for(const event of ['click','keydown'])provider.addEventListener(event,e=>{e.preventDefault();e.stopImmediatePropagation();},true);

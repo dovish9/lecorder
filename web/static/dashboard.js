@@ -13,7 +13,11 @@ import {createActivity} from "./dashboard/activity.js";
 import {createReview} from "./dashboard/review.js";
 import {createNotifications} from "./dashboard/notifications.js";
 import {createStatus} from "./dashboard/status.js";
-import {createInsights} from "./dashboard/insights.js";
+import {createSearch} from "./dashboard/search.js";
+import {createUsagePanel} from "./dashboard/usage-panel.js";
+import {createRecovery} from "./dashboard/recovery.js";
+import {createTransfers} from "./dashboard/transfers.js";
+import {setupMenus} from "./dashboard/components.js";
 
 const controller = new AbortController();
 const timers = new Set();
@@ -46,7 +50,11 @@ Object.assign(context.actions, createActivity(context));
 Object.assign(context.actions, createReview(context));
 Object.assign(context.actions, createNotifications(context));
 Object.assign(context.actions, createStatus(context));
-Object.assign(context.actions, createInsights(context));
+setupMenus(context);
+createSearch(context);
+const usage = createUsagePanel(context);
+const recovery = createRecovery(context);
+createTransfers(context, () => {void usage.refresh();void recovery.refresh();});
 
 window.addEventListener("pagehide", event => {
   if (event.persisted) return;

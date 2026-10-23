@@ -10,11 +10,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from web.backend.config import DEFAULT_LLM_MODEL
-from web.backend.pipeline import RecordingPipeline
+from web.backend.recordings.pipeline import RecordingPipeline
 from web.backend.routes import create_app
 from web.backend.state import JobState
-from web.backend.store import LectureStore
-from web.backend.transcription import CancellationToken, Result, TranscriptSegment, TranscriptionCancelled
+from web.backend.library.store import LectureStore
+from web.backend.speech.transcription import CancellationToken, Result, TranscriptSegment, TranscriptionCancelled
 
 
 from tests.support import RecorderCase, FakeTranscriber
@@ -84,7 +84,7 @@ class RecordingLifecycleTests(RecorderCase):
             self.assertEqual(response.status_code, 200)
             cancelled = store.get_recording(recording.id)
             self.assertEqual(cancelled.status, "cancelled")
-            self.assertEqual(cancelled.error, "사용자가 전사 작업을 중단했습니다.")
+            self.assertEqual(cancelled.error, "사용자가 음성 변환 작업을 중단했습니다.")
             self.assertEqual(cancelled.source_path, "")
             self.assertEqual(cancelled.note_path, "")
             self.assertEqual(
@@ -227,8 +227,8 @@ class RecordingLifecycleTests(RecorderCase):
                 note.write_text("Previous transcript")
                 old = store.create_recording("original", store.get(), "original", "upload", ".wav", "", "completed")
                 store.update_recording(old.id, audio_path=str(audio), note_path=str(note), transcript_text="Previous transcript")
-                store.replace_suggestions(old.id, [{"sentence_id":"s00001", "original":"old", "replacement":"new", "confidence":.9}])
-                suggestions = store.list_suggestions(old.id)
+                store.approvals.replace_suggestions(old.id, [{"sentence_id":"s00001", "original":"old", "replacement":"new", "confidence":.9}])
+                suggestions = store.approvals.list_suggestions(old.id)
                 pipeline.retranscribe(old.id)
                 if mode == "queued_cancel":
                     pipeline.cancel(old.id)
@@ -251,7 +251,7 @@ class RecordingLifecycleTests(RecorderCase):
                 self.assertEqual(saved.status, "cancelled" if mode in {"cancel", "queued_cancel"} else "failed")
                 self.assertEqual(saved.note_path, str(note))
                 self.assertEqual(saved.transcript_text, "Previous transcript")
-                self.assertEqual(store.list_suggestions(old.id), suggestions)
+                self.assertEqual(store.approvals.list_suggestions(old.id), suggestions)
                 self.assertEqual(note.read_text(), "Previous transcript")
                 self.assertEqual(audio.read_bytes(), b"original audio")
                 self.assertEqual(set(item.name for item in output.iterdir()), {"original.wav", "original.md"})
@@ -289,22 +289,22 @@ class RecordingLifecycleTests(RecorderCase):
                     engine = FakeTranscriber()
                     pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
                     old_language = "en" if language == "ko" else "ko"
-                    course = store.update_course(store.active_course_id(), language=old_language)
+                    course = store.courses.update_course(store.courses.active_course_id(), language=old_language)
                     audio = output / "original.wav"
                     audio.write_bytes(b"audio")
                     row = store.create_recording("original", store.get(), "original", "upload", ".wav", "", status)
                     store.update_recording(row.id, audio_path=str(audio), llm_model="legacy-model")
-                    store.update_course(course.id, name="updated course", language=language,
+                    store.courses.update_course(course.id, name="updated course", language=language,
                                         prompt="new hint", corrections="old -> new",
                                         format_transcript=False, llm_enabled=False)
-                    store.create_course("unrelated selected course")
+                    store.courses.create_course("unrelated selected course")
                     self.assertEqual(store.get_recording(row.id).language, old_language)
                     client = create_app(store, JobState(), engine, environment, pipeline).test_client()
                     response = client.post(f"/api/recordings/{row.id}/retranscribe")
                     self.assertEqual(response.status_code, 202)
                     self.assertEqual(response.get_json()["recording"]["language"], language)
                     # Later edits must not change an already queued attempt.
-                    store.update_course(course.id, language=old_language)
+                    store.courses.update_course(course.id, language=old_language)
                     pipeline.process_next()
                     options = engine.calls[-1]
                     self.assertEqual(options.language, language)
@@ -327,13 +327,13 @@ class RecordingLifecycleTests(RecorderCase):
             store = LectureStore(root / "test.db", environment)
             engine = FakeTranscriber()
             pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
-            course = store.update_course(store.active_course_id(), language="en", prompt="original hint")
+            course = store.courses.update_course(store.courses.active_course_id(), language="en")
             audio = output / "original.wav"
             audio.write_bytes(b"audio")
             row = store.create_recording("original", store.get(), "original", "upload", ".wav", "", "failed")
             store.update_recording(row.id, audio_path=str(audio))
-            store.create_course("other")
-            store.delete_course(course.id)
+            store.courses.create_course("other")
+            store.courses.delete_course(course.id)
             pipeline.retry(row.id)
             pipeline.process_next()
             self.assertEqual(engine.calls[-1].language, "en")
@@ -364,7 +364,7 @@ class RecordingLifecycleTests(RecorderCase):
         class FailingTranscriber(FakeTranscriber):
             def transcribe(self, source, options, incoming=None, progress=None,
                            cancellation=None) -> Result:
-                raise RuntimeError("반복 붕괴 안전 재전사도 실패했습니다.")
+                raise RuntimeError("반복 붕괴 안전 재변환도 실패했습니다.")
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -381,14 +381,14 @@ class RecordingLifecycleTests(RecorderCase):
             pipeline.process_next()
             failed = store.get_recording(recording.id)
             self.assertEqual(failed.status, "failed")
-            self.assertEqual(failed.error, "반복 붕괴 안전 재전사도 실패했습니다.")
+            self.assertEqual(failed.error, "반복 붕괴 안전 재변환도 실패했습니다.")
             failed_details = json.loads(failed.quality_json)
             self.assertEqual(failed_details["pipeline_version"], 1)
             self.assertTrue(failed_details["failed"])
             self.assertEqual(len(failed_details["attempts"]), 1)
             self.assertEqual(
                 failed_details["attempts"][0]["error"],
-                "반복 붕괴 안전 재전사도 실패했습니다.",
+                "반복 붕괴 안전 재변환도 실패했습니다.",
             )
             self.assertTrue(failed_details["audio_preserved"])
             self.assertEqual(Path(failed.audio_path).read_bytes(), b"original audio")

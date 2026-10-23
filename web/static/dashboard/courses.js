@@ -2,7 +2,29 @@ import {showCourseNotes} from "../notes.js";
 import {requestJson} from "./api.js";
 
 export function createCourses(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    courseCount: $("#courseCount"),
+    courseList: $("#courseList"),
+    courseName: $("#courseName"),
+    courseSearch: $("#courseSearch"),
+    dockCourseButton: $("#dockCourseButton"),
+    dockCourseLabel: $("#dockCourseLabel"),
+    dockCourseMenu: $("#dockCourseMenu"),
+    dockCoursePicker: $("#dockCoursePicker"),
+    dockCourseSelect: $("#dockCourseSelect"),
+    dockRecordButton: $("#dockRecordButton"),
+    dockUploadButton: $("#dockUploadButton"),
+    newCourseForm: $("#newCourseForm"),
+    newCourseName: $("#newCourseName"),
+    saveState: $("#saveState"),
+    uploadCourseButton: $("#uploadCourseButton"),
+    uploadCourseLabel: $("#uploadCourseLabel"),
+    uploadCourseMenu: $("#uploadCourseMenu"),
+    uploadCoursePicker: $("#uploadCoursePicker"),
+    uploadCourseSelect: $("#uploadCourseSelect"),
+    uploadTitle: $("#uploadTitle"),
+  };
   const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
   function dateSuffix() {
     const now = new Date();
@@ -38,7 +60,7 @@ export function createCourses(context) {
       const button=document.createElement("button"); button.type="button"; button.className="course-item";
       button.setAttribute("aria-current", String(!app.activeCourseId));
       const label=document.createElement("span");label.textContent="선택 안 함";
-      const detail=document.createElement("small");detail.textContent="인식 힌트 없이 전사";
+      const detail=document.createElement("small");detail.textContent="인식 힌트 없이 음성 변환";
       button.append(label,detail);
       button.addEventListener("click",()=>void selectCourse(0,{updateRoute:true}));
       entry.append(button);ui.courseList.append(entry);
@@ -306,7 +328,7 @@ export function createCourses(context) {
       ui.courseName.value = "선택 안 함";
       void showCourseNotes(null);
       $('input[name="language"][value="auto"]').checked = true;
-      setSaveState("", "인식 힌트 없이 전사");
+      setSaveState("", "인식 힌트 없이 음성 변환");
       app.hydrating = false;
       return;
     }
@@ -443,5 +465,5 @@ export function createCourses(context) {
     ui.uploadTitle.setCustomValidity("");
   });
 
-  return {automaticTitle, beginCourseRename, coursePayload, dateSuffix, deleteCourseById, flushCourseSave, renderCaptureControls, renderCourse, renderCourseList, saveCourseNow, scheduleCourseSave, selectCourse, selectUploadCourse, setSaveState};
+  return {automaticTitle, flushCourseSave, renderCaptureControls, renderCourse, renderCourseList, selectCourse, selectUploadCourse, setSaveState};
 }

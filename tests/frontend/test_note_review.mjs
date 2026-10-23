@@ -11,8 +11,8 @@ test('new explanation review does not inherit OCR flags',()=>{
  page.needs_review=false;
  assert.equal(pageNeedsReview(page,true),false);
 });
-test('legacy flags, actual errors and detail warnings remain visible',()=>{
- assert.equal(pageNeedsReview({needs_review:true}),true);
+test('source flags stay separate; explanation errors and detail warnings remain visible',()=>{
+ assert.equal(pageNeedsReview({needs_review:true}),false);
  assert.equal(pageNeedsReview({analysis_error:'실패'}),true);
  assert.equal(pageNeedsReview({detail:{uncertainties:['확인'],validation:{version:'note-review-v2',status:'passed'}}}),true);
 });

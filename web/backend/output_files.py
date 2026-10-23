@@ -5,10 +5,11 @@ import shutil
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from web.backend.atomic import publish_file, write_text
 
-from .markdown import markdown_target
-from .media import request as media_request
-from .transcription import SUPPORTED_MEDIA
+from web.backend.markdown import markdown_target
+from web.backend.media import request as media_request
+from web.backend.speech.transcription import SUPPORTED_MEDIA
 
 
 def rename_output_files(
@@ -40,15 +41,15 @@ def rename_output_files(
     def rollback() -> None:
         for target, destination in reversed(moved):
             if target != destination and destination.exists():
-                destination.rename(target)
+                publish_file(destination, target)
         for target, source in markdown_sources.items():
             if target.exists():
-                target.write_text(source, encoding="utf-8")
+                write_text(target, source)
 
     try:
         for target, destination in zip(targets, destinations, strict=True):
             if target != destination:
-                target.rename(destination)
+                publish_file(target, destination)
                 moved.append((target, destination))
         if audio_names:
             old_audio, new_audio = audio_names
@@ -64,10 +65,9 @@ def rename_output_files(
                 if destination.suffix.lower() != ".md":
                     continue
                 source = markdown_sources[target]
-                destination.write_text(
-                    pattern.sub(lambda match: new_target if match.group("link") else new_audio, source),
-                    encoding="utf-8",
-                )
+                write_text(destination, pattern.sub(
+                    lambda match: new_target if match.group("link") else new_audio, source
+                ))
     except (OSError, UnicodeError):
         rollback()
         raise
@@ -91,7 +91,7 @@ def prepare_webm_playback(target: Path) -> tuple[bool, float | None]:
         if optimized_duration <= 0 or temporary.stat().st_size == 0:
             raise ValueError("오디오의 재생 정보를 복구하지 못했습니다.")
         shutil.copystat(target, temporary)
-        temporary.replace(target)
+        publish_file(temporary, target)
         return True, optimized_duration
     finally:
         temporary.unlink(missing_ok=True)

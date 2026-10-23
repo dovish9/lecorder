@@ -8,7 +8,10 @@ function skipIcon(forward = false) {
 }
 
 export function createPlayer(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+
+  };
   function createAudioPlayer(source, label = "녹음", expectedDuration = 0, storageName = "") {
     const audio = document.createElement("audio");
     audio.preload = "auto";
@@ -337,5 +340,5 @@ export function createPlayer(context) {
     }
   }
 
-  return {appendMarkdownInline, createAudioPlayer, renderMarkdownInto, seekPreviewAudio};
+  return {createAudioPlayer, renderMarkdownInto};
 }

@@ -1,8 +1,8 @@
 """Owned model processes; external endpoints are never started or killed."""
+from web.backend.runtime_config import get as setting
 import atexit
 import hashlib
 import json
-import os
 import socket
 import subprocess
 import time
@@ -10,16 +10,16 @@ import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 import requests
-from .config import ROOT
-from .managed_runtime import ManagedRuntime
-from .platforms import host
+from web.backend.config import DATA_DIR
+from web.backend.managed_runtime import ManagedRuntime
+from web.backend.platforms import host
 
 
 class ModelRuntime(ManagedRuntime):
     def __init__(self, config, *, log_dir=None, peers=None, platform=None):
         self.config = dict(config)
         super().__init__(url=config['base_url'], idle_seconds=config.get('idle_seconds', 60), external=not config.get('managed', False))
-        self.log_dir = Path(log_dir) if log_dir else ROOT / 'web/data'
+        self.log_dir = Path(log_dir) if log_dir else DATA_DIR
         self.peers = peers or (lambda: [])
         self.platform = platform or host
 
@@ -56,11 +56,13 @@ class ModelRuntime(ManagedRuntime):
             if not Path(config.get(field, '')).is_file():
                 raise RuntimeError(f'{field} 파일이 없습니다. 로컬 모델 설치를 확인하세요.')
         command = [config['binary'], '-m', config['model_path'], '--host', '127.0.0.1', '--port', str(port)]
+        threads = setting('LECORDER_SPEECH_THREADS' if speech else 'LECORDER_LLM_THREADS')
+        if threads:command += ['-t', str(threads)]
         if speech:
             command += ['-vm', config['vad_path']]
         else:
             command += ['--mmproj', config['projector_path'], '--alias', config['model'],
-                        '-c', '16384', '-ngl', '99', '--parallel', '1', '--jinja', '-b', '512', '-ub', '128']
+                        '-c', str(setting('LECORDER_LLM_CONTEXT_TOKENS')), '-ngl', str(setting('LECORDER_LLM_GPU_LAYERS')), '--parallel', '1', '--jinja', '-b', str(setting('LECORDER_LLM_BATCH_SIZE')), '-ub', str(setting('LECORDER_LLM_UBATCH_SIZE'))]
         log = self.log_dir / ('whisper-server.log' if speech else 'llama-server.log')
         log.parent.mkdir(parents=True, exist_ok=True)
         self._state = 'loading'
@@ -72,7 +74,7 @@ class ModelRuntime(ManagedRuntime):
                     env=self.platform.library_environment([binary_dir, binary_dir.parent / 'lib']),
                     **self.platform.process_options(),
                 )
-            deadline = time.monotonic() + 180
+            deadline = time.monotonic() + setting('LECORDER_MODEL_LOAD_SECONDS')
             while time.monotonic() < deadline:
                 if cancellation:
                     cancellation.check()
@@ -86,7 +88,7 @@ class ModelRuntime(ManagedRuntime):
                 except requests.RequestException:
                     pass
                 time.sleep(.1)
-            raise RuntimeError('로컬 모델 로드 제한 시간(180초)을 초과했습니다.')
+            raise RuntimeError('로컬 모델 로드 제한 시간을 초과했습니다.')
         except BaseException:
             self._stop()
             raise
@@ -122,8 +124,8 @@ registry = RuntimeRegistry()
 
 
 def runtime_for(config):
-    from .services import current_services
-    services = current_services()
+    from web.backend.execution_context import execution_resources
+    services = execution_resources()
     return (services.runtimes if services else registry).get(config)
 
 

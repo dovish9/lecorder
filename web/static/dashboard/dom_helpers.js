@@ -42,7 +42,7 @@ export function markdownDisclosureSummary(hasAudio) {
   icon.textContent = "›";
   const copy = document.createElement("span");
   const title = document.createElement("strong");
-  title.textContent = "전사 내용 미리보기";
+  title.textContent = "음성 변환 내용 미리보기";
   const description = document.createElement("small");
   description.textContent = hasAudio
     ? "타임스탬프를 눌러 해당 위치부터 재생할 수 있습니다."

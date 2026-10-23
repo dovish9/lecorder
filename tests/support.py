@@ -7,8 +7,8 @@ from unittest.mock import patch
 from web.backend.config import EnvironmentStore
 from web.backend.platforms import host
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-from web.backend.engine import Transcriber
-from web.backend.transcription import Options, Result, TranscriptSegment
+from web.backend.speech.engine import Transcriber
+from web.backend.speech.transcription import Options, Result, TranscriptSegment
 
 
 class FakeTranscriber:
@@ -29,7 +29,15 @@ class FakeTranscriber:
 
 class RecorderCase(unittest.TestCase):
     def setUp(self):
-        for module in ('pipeline', 'review_jobs', 'notes', 'note_study', 'note_intake'):
+        from web.backend.library.store import LectureStore
+        original = LectureStore.__init__
+        def fixture_store(store, *args, **kwargs):
+            original(store,*args,**kwargs)
+            self.addCleanup(store.close)
+            if not store.courses.list_courses(): store.courses.create_course('새 강의')
+        fixture = patch.object(LectureStore,'__init__',fixture_store)
+        fixture.start(); self.addCleanup(fixture.stop)
+        for module in ('recordings.pipeline', 'recordings.review_jobs', 'notes.notes', 'notes.note_study', 'notes.note_intake'):
             availability = patch(f"web.backend.{module}.require_llm", return_value=None)
             availability.start()
             self.addCleanup(availability.stop)

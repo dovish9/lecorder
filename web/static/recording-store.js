@@ -1,10 +1,16 @@
-const DATABASE_NAME = "lecorder-browser-recovery";
+let datasetId = null;
+export function configureDataset(id) {
+  if(!/^[a-f0-9]{32}$/.test(id))throw new Error('데이터 환경 ID가 올바르지 않습니다.');
+  if(datasetId && datasetId!==id)throw new Error('데이터 환경이 변경됐습니다. 페이지를 새로고침하세요.');
+  datasetId=id;
+}
+export function recoveryDatabaseName(id) {return `lecorder-browser-recovery-${id}`;}
 const DATABASE_VERSION = 1;
 let databasePromise = null;
 
 function openDatabase() {
   return new Promise((resolve, reject) => {
-    const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+    const request = window.indexedDB.open(recoveryDatabaseName(datasetId), DATABASE_VERSION);
     request.addEventListener("upgradeneeded", () => {
       const database = request.result;
       if (!database.objectStoreNames.contains("chunks")) {
@@ -21,6 +27,7 @@ function openDatabase() {
 }
 
 function database() {
+  if(!datasetId)return Promise.reject(new Error("데이터 환경을 먼저 확인해야 합니다."));
   if (!window.indexedDB) return Promise.reject(new Error("이 브라우저는 녹음 복구 저장소를 지원하지 않습니다."));
   if (!databasePromise) {
     databasePromise = openDatabase();

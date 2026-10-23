@@ -1,7 +1,8 @@
 """Provider HTTP policy; transport is a cancellable Python worker, never curl."""
+from web.backend.runtime_config import get as runtime
 import subprocess
 import time
-from .processes import worker, CancellationToken
+from web.backend.processes import worker, CancellationToken
 
 
 class ProviderError(RuntimeError):
@@ -10,14 +11,15 @@ class ProviderError(RuntimeError):
         self.retryable = retryable
 
 
-def request_json(url, payload=None, *, headers=None, cancellation=None, timeout=600, method='POST', multipart=None):
-    from .request_history import tracking_request
+def request_json(url, payload=None, *, headers=None, cancellation=None, timeout=None, method='POST', multipart=None):
+    timeout = runtime('LECORDER_AI_REQUEST_SECONDS') if timeout is None else timeout
+    from web.backend.request_history import tracking_request
     headers = dict(headers or {})
     if any('\n' in str(v) or '\r' in str(v) for pair in headers.items() for v in pair):
         raise ProviderError('잘못된 인증정보입니다.')
     token = cancellation or CancellationToken()
     spec = dict(url=url, payload=payload, headers=headers, timeout=timeout, method=method, multipart=multipart)
-    for attempt in range(2):
+    for attempt in range(runtime('LECORDER_AI_RETRIES')+1):
         token.check()
         try:
             result = worker.call('http', spec, cancellation=token, timeout=timeout + 10)
@@ -30,10 +32,10 @@ def request_json(url, payload=None, *, headers=None, cancellation=None, timeout=
                         'timeout': 'AI 서버 응답 시간이 초과되었습니다.'}
             raise ProviderError(messages.get(error, 'AI 서버에 연결할 수 없습니다.'), retryable=error!='json')
         status = result.get('status', 0)
-        if status in {429, 502, 503, 504} and attempt == 0:
+        if status in {429, 502, 503, 504} and attempt < runtime('LECORDER_AI_RETRIES'):
             if tracking_request():
                 raise ProviderError(f'일시적인 AI 서버 오류 (HTTP {status}).', retryable=True)
-            until = time.monotonic() + 1
+            until = time.monotonic() + runtime('LECORDER_AI_RETRY_DELAY_SECONDS')
             while time.monotonic() < until:
                 token.check()
                 time.sleep(.05)

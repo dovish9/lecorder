@@ -15,7 +15,19 @@
   const results = document.querySelector("#guideSearchResults");
   const sidebar = document.querySelector("#topicSidebar");
   const topicToggle = document.querySelector("#topicToggle");
-  const links = [...document.querySelectorAll('.topic-sidebar a[href^="#"]')];
+  const navigation = sidebar.querySelector('nav');
+  const topics = [...document.querySelectorAll('article > section[data-topic]')];
+  let group = '';
+  const links = topics.map(section => {
+    if (section.dataset.group !== group) {
+      group = section.dataset.group;
+      const heading = document.createElement('p'); heading.textContent = group;
+      navigation.append(heading);
+    }
+    const link = document.createElement('a');
+    link.href = `#${section.id}`; link.textContent = section.querySelector("h2").textContent.trim();
+    navigation.append(link); return link;
+  });
   const hero = document.querySelector(".hero");
   const notice = document.querySelector(".notice");
   const previous = document.querySelector("#guidePrevious");
@@ -39,8 +51,8 @@
   }
 
   function activeId() {
-    const requested = decodeURIComponent((window.location.hash || "#overview").slice(1));
-    return sections.some((item) => item.id === requested) ? requested : "overview";
+    const requested = decodeURIComponent((window.location.hash || "#install").slice(1));
+    return sections.some((item) => item.id === requested) ? requested : "install";
   }
 
   function showTopic(id, {focus = false} = {}) {
@@ -53,10 +65,10 @@
       if (selected) item.link.setAttribute("aria-current", "page");
       else item.link.removeAttribute("aria-current");
     });
-    hero.hidden = active.id !== "overview";
-    notice.hidden = active.id !== "overview";
+    hero.hidden = active.id !== "install";
+    notice.hidden = active.id !== "install";
     previous.hidden = index === 0;
-    previous.href = index > 0 ? `#${sections[index - 1].id}` : "#overview";
+    previous.href = index > 0 ? `#${sections[index - 1].id}` : "#install";
     previous.textContent = index > 0 ? `‹ ${sections[index - 1].title}` : "";
     next.hidden = index === sections.length - 1;
     next.href = index < sections.length - 1 ? `#${sections[index + 1].id}` : `#${active.id}`;
@@ -130,7 +142,7 @@
   });
 
   if (!sections.some((item) => `#${item.id}` === window.location.hash) && window.location.hash) {
-    history.replaceState(null, "", "#overview");
+    history.replaceState(null, "", "#install");
   }
   showTopic(activeId());
   searchGuide();

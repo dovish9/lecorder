@@ -1,13 +1,15 @@
 """Host contracts run on every OS without invoking another OS's tools."""
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from web.backend.atomic import write_text
 from web.backend.config import _read_env
-from web.backend.files import safe_name
+from web.backend.files import clear_hidden_flag, safe_name
 from web.backend.platforms import MacHost, WindowsHost, PosixHost, select_host
 from web.backend.ocr import NativeOCR
 from web.backend.processes import CancellationToken
@@ -54,6 +56,33 @@ class PlatformTests(unittest.TestCase):
                 write_text(path, text)
                 self.assertEqual(path.read_text(encoding='utf-8'), text)
             self.assertEqual(list(Path(tmp).iterdir()), [path])
+
+    def test_published_file_clears_only_macos_hidden_flag(self):
+        path = Path("published.mp4")
+        visible_flags = stat.UF_HIDDEN | 0x20
+        with patch.object(Path, "stat", return_value=SimpleNamespace(st_flags=visible_flags)), \
+             patch("web.backend.atomic.os.chflags", create=True) as change_flags:
+            clear_hidden_flag(path)
+        change_flags.assert_called_once_with(path, 0x20)
+
+    @unittest.skipUnless(hasattr(os, "chflags"), "macOS file flags")
+    def test_real_hidden_output_rename_and_atomic_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            staged = Path(tmp) / ".stage.mp4"
+            staged.write_bytes(b"original audio bytes")
+            os.chflags(staged, stat.UF_HIDDEN | stat.UF_NODUMP)
+            final = Path(tmp) / "recording.mp4"
+            staged.replace(final)
+            clear_hidden_flag(final)
+            self.assertEqual(final.read_bytes(), b"original audio bytes")
+            self.assertFalse(final.stat().st_flags & stat.UF_HIDDEN)
+            self.assertTrue(final.stat().st_flags & stat.UF_NODUMP)
+            note = Path(tmp) / "recording.md"
+            note.write_text("old")
+            os.chflags(note, stat.UF_HIDDEN)
+            write_text(note, "approved transcript")
+            self.assertFalse(note.stat().st_flags & stat.UF_HIDDEN)
+            self.assertEqual(note.read_text(), "approved transcript")
 
     def test_reveal_uses_argv_not_shell(self):
         path = Path('한글 폴더')/'a & b.wav'

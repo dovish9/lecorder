@@ -6,7 +6,7 @@ const note = {status:'processing', title:'통계학_4장', stage:'study', page_c
 
 test('active note replaces idle or stale finished speech status', () => {
   for (const phase of ['idle', 'complete', 'error', 'queued']) {
-    const card = activity({phase,title:'이전 전사'}, [note]);
+    const card = activity({phase,title:'이전 음성 변환'}, [note]);
     assert.equal(card.phase, 'processing');
     assert.equal(card.title, note.title);
     assert.equal(card.label, '강의노트 분석 중');
@@ -14,7 +14,7 @@ test('active note replaces idle or stale finished speech status', () => {
   }
 });
 test('running transcription retains priority; finished notes restore the speech card', () => {
-  assert.equal(activity({phase:'polishing',title:'현재 전사'},[note]).title,'현재 전사');
+  assert.equal(activity({phase:'polishing',title:'현재 음성 변환'},[note]).title,'현재 음성 변환');
   assert.equal(activity({phase:'idle'},[]).label,'대기 중');
 });
 test('queued notes and extraction/detail progress are distinguished', () => {
@@ -26,7 +26,7 @@ test('queued notes and extraction/detail progress are distinguished', () => {
 
 test('saved transcript stays active through independent review', () => {
  for (const review_status of ['queued','processing']) {
- const card=activity({phase:'complete',title:'전사'},[],[{status:'completed',review_status,title:'검수할 녹음'}]);
+ const card=activity({phase:'complete',title:'음성 변환'},[],[{status:'completed',review_status,title:'검수할 녹음'}]);
  assert.equal(card.title,'검수할 녹음'); assert.notEqual(card.phase,'complete');
  }
 });

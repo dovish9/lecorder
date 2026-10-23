@@ -7,11 +7,11 @@ import threading
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from web.backend.pipeline import RecordingPipeline
-from web.backend.records import Recording
+from web.backend.recordings.pipeline import RecordingPipeline
+from web.backend.library.records import Recording
 from web.backend.routes import create_app, schedule_managed_restart
 from web.backend.state import JobState
-from web.backend.store import LectureStore
+from web.backend.library.store import LectureStore
 
 
 from tests.support import RecorderCase, FakeTranscriber
@@ -40,7 +40,7 @@ class RecordingIntakeTests(RecorderCase):
             environment, _ = self.environment(root)
             store = LectureStore(root / "test.db", environment)
             store.create_recording("interrupted", store.get(), "test", "upload", ".wav", "", "processing")
-            with patch("web.backend.pipeline.threading.Thread") as worker:
+            with patch("web.backend.recordings.pipeline.threading.Thread") as worker:
                 RecordingPipeline(store, JobState(), FakeTranscriber(), root / "work")
                 self.assertEqual(worker.return_value.start.call_count, 4)
             self.assertEqual(store.get_recording("interrupted").status, "queued")
@@ -53,21 +53,21 @@ class RecordingIntakeTests(RecorderCase):
             store = LectureStore(root / "test.db", environment)
             for name in ("one", "two", "empty"):
                 store.create_recording(name, store.get(), name, "upload", ".wav", "", "completed")
-            store.replace_suggestions("one", [
+            store.approvals.replace_suggestions("one", [
                 {"sentence_id": f"s{i:05d}", "original": "before", "replacement": "after", "confidence": .9}
                 for i in range(1, 4)
             ])
-            items = store.list_suggestions("one")
-            store.decide_suggestion(items[0].id, "accepted")
-            store.decide_suggestion(items[1].id, "rejected")
-            store.replace_suggestions("two", [
+            items = store.approvals.list_suggestions("one")
+            store.approvals.decide_suggestion(items[0].id, "accepted")
+            store.approvals.decide_suggestion(items[1].id, "rejected")
+            store.approvals.replace_suggestions("two", [
                 {"sentence_id": "s00001", "original": "before", "replacement": "after", "confidence": .9}
             ])
-            self.assertEqual(store.suggestion_counts(["one", "empty"]), {
+            self.assertEqual(store.approvals.suggestion_counts(["one", "empty"]), {
                 "one": {"pending": 1, "accepted": 1, "rejected": 1},
                 "empty": {"pending": 0, "accepted": 0, "rejected": 0},
             })
-            self.assertEqual(store.suggestion_counts([]), {})
+            self.assertEqual(store.approvals.suggestion_counts([]), {})
 
 
     def test_managed_restart_is_only_scheduled_under_start_command(self) -> None:
@@ -95,8 +95,6 @@ class RecordingIntakeTests(RecorderCase):
                 extension=".webm",
                 status="completed",
                 language="ko",
-                prompt="",
-                corrections="",
                 format_transcript=True,
                 llm_enabled=False,
                 llm_model="",
@@ -110,7 +108,7 @@ class RecordingIntakeTests(RecorderCase):
                 self.assertIs(token, cancellation)
                 destination.write_bytes(b"normalized")
 
-            with patch("web.backend.recording_output.media_request", side_effect=encode):
+            with patch("web.backend.recordings.recording_output.media_request", side_effect=encode):
                 RecordingPipeline._store_playable_audio(recording, source, destination, cancellation)
             self.assertEqual(destination.read_bytes(), b"normalized")
 
@@ -165,7 +163,7 @@ class RecordingIntakeTests(RecorderCase):
             root = Path(temporary)
             environment, output = self.environment(root)
             store = LectureStore(root / "web/data/lecorder.db", environment)
-            store.update_course(store.active_course_id(), name="Physics", language="en", prompt="Coulomb law")
+            store.courses.update_course(store.courses.active_course_id(), name="Physics", language="en")
             engine = FakeTranscriber()
             state = JobState()
             pipeline = RecordingPipeline(store, state, engine, root / "work", start_worker=False)

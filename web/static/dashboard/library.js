@@ -4,7 +4,22 @@ import {libraryAlertCounts, visibleStorageItems, storageFileUrl, fileName, stora
 import {markdownDisclosureSummary} from "./dom_helpers.js";
 
 export function createLibrary(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    dashboardAttention: $("#dashboardAttention"),
+    dashboardAttentionMore: $("#dashboardAttentionMore"),
+    dashboardDate: $("#dashboardDate"),
+    dockCourseLabel: $("#dockCourseLabel"),
+    dockCourseMenu: $("#dockCourseMenu"),
+    libraryBadge: $("#libraryBadge"),
+    libraryDetail: $("#libraryDetail"),
+    libraryFilter: $("#libraryFilter"),
+    libraryList: $("#libraryList"),
+    librarySearch: $("#librarySearch"),
+    librarySort: $("#librarySort"),
+    reviewDialog: $("#reviewDialog"),
+    workspacePanels: $$('[data-view-panel]'),
+  };
   function renderStorage(data) {
     const items = visibleStorageItems(data.items);
     const fingerprint = JSON.stringify({exists: data.exists, items});
@@ -325,7 +340,7 @@ export function createLibrary(context) {
       panel.append(detailMenuButton("처리 중단", (button) => actions.cancelTranscription(recording, button)));
     }
     if (final) {
-      panel.append(detailMenuButton("다시 전사", (button) => actions.retryRecording(recording, button)));
+      panel.append(detailMenuButton("다시 음성 변환", (button) => actions.retryRecording(recording, button)));
     } else if (interrupted) {
       panel.append(detailMenuButton("녹음 복구", (button) => actions.retryRecording(recording, button)));
     }
@@ -341,7 +356,7 @@ export function createLibrary(context) {
         try {
           await requestJson(`/api/recordings/${encodeURIComponent(recording.id)}/review/cancel`, {method: "POST"});
           await actions.refreshStatus();
-          actions.showToast("검수를 중단했습니다. 기존 전사 결과는 유지됩니다.", "success");
+          actions.showToast("검수를 중단했습니다. 기존 음성 변환 결과는 유지됩니다.", "success");
         } catch (error) {
           actions.showToast(error.message, "error");
         } finally {
@@ -537,16 +552,6 @@ export function createLibrary(context) {
         const priority = (entry) => entry.recording?.status === "failed" ? 0 : entry.recording?.status === "recoverable" ? 1 : entry.category === "review" ? 2 : 3;
         return priority(left) - priority(right);
       });
-    const today = new Date();
-    const completedToday = entries.filter((entry) => {
-      if (entry.category !== "completed") return false;
-      const value = new Date(entry.recording?.completed_at || entry.timestamp);
-      return !Number.isNaN(value.getTime()) && value.toDateString() === today.toDateString();
-    });
-    const processingSeconds = completedToday.reduce((sum, entry) => sum + Number(entry.recording?.total_processing_seconds || entry.recording?.processing_seconds || 0), 0);
-    ui.dashboardCompletedCount.textContent = String(completedToday.length);
-    ui.dashboardWorkTime.textContent = processingSeconds ? durationText(processingSeconds) : "—";
-    ui.dashboardAttentionMetric.textContent = String(attention.length);
     ui.dashboardAttentionMore.textContent = attention.length > 4 ? `검토함 ${attention.length}개 모두 보기` : "검토함 열기";
     $("#dashboardAttentionCount").textContent = attention.length;
     const fill = (container, items, emptyText) => {
@@ -564,5 +569,5 @@ export function createLibrary(context) {
   listen(ui.librarySort, "change", renderLibrary);
 
 
-  return {beginEntryTitleEdit, createDetailMenu, dashboardRow, deleteEntryWithFiles, deriveLibraryEntries, detailMenuButton, detailSection, notificationBadge, refreshStorage, renderCourseAlertBadges, renderDashboard, renderLibrary, renderLibraryDetail, renderLibraryEmpty, renderStorage, revealStorageFile, storageFileRow};
+  return {refreshStorage, renderCourseAlertBadges, renderDashboard, renderLibrary, renderLibraryDetail};
 }

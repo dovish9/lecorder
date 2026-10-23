@@ -28,8 +28,8 @@ export function usageChart(data,kind) {
   svg.setAttribute('aria-label',`일별 ${unit} 막대와 기간 내 누적 ${unit} 점선 그래프. 미제공 사용량은 제외됩니다.`);
   const add=(tag,attrs,text)=>{const e=document.createElementNS(svg.namespaceURI,tag);for(const [k,v] of Object.entries(attrs))e.setAttribute(k,v);if(text)e.textContent=text;svg.append(e);return e;};
   if(!points.length){
-    svg.setAttribute('aria-label','일별 그래프는 서버를 다시 시작한 후 제공됩니다.');
-    add('text',{x:220,y:100,'text-anchor':'middle'},'일별 그래프는 서버를 다시 시작한 후 제공됩니다.');
+    svg.setAttribute('aria-label','일별 사용량 데이터가 없습니다.');
+    add('text',{x:220,y:100,'text-anchor':'middle'},'일별 사용량 데이터가 없습니다.');
     return svg;
   }
   const top=28,bottom=170,left=48,width=344;
@@ -43,4 +43,24 @@ export function usageChart(data,kind) {
   if(points.length===1)add('circle',{cx:x(0),cy:bottom-points[0].cumulative/divisor/totalMax*(bottom-top),r:3,class:'usage-dot'});
   [...new Set([0,Math.floor((points.length-1)/2),points.length-1])].filter(i=>i>=0).forEach(i=>add('text',{x:x(i),y:195,'text-anchor':'middle'},points[i].date.slice(5).replace('-','/')));
   return svg;
+}
+
+// Each detail column owns its period and discards superseded or closed requests.
+export function createUsagePeriod(load, render) {
+  let generation=0, controller=null, closed=false;
+  return {
+    async select(days) {
+      if(closed)return;
+      const version=++generation;
+      controller?.abort();controller=new AbortController();
+      render({days,loading:true});
+      try {
+        const data=await load(days,controller.signal);
+        if(!closed&&version===generation)render({days,loading:false,data});
+      } catch(error) {
+        if(!closed&&version===generation)render({days,loading:false,error});
+      }
+    },
+    close() {closed=true;generation++;controller?.abort();}
+  };
 }

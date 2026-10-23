@@ -1,14 +1,14 @@
 import json
 import unittest
 from unittest.mock import patch
-from web.backend.note_study import parse_overview, parse_response, normalize_markdown, _generate
-from web.backend.transcription import CancellationToken
+from web.backend.notes.note_study import parse_overview, parse_response, normalize_markdown, _generate
+from web.backend.speech.transcription import CancellationToken
 
 
 class StudyValidationTests(unittest.TestCase):
     def setUp(self):
-        availability = patch("web.backend.note_study.require_llm", return_value=(True, True))
-        semantic = patch("web.backend.note_study._semantic_issues", return_value={'findings': [], 'checks': []})
+        availability = patch("web.backend.notes.note_study.require_llm", return_value=(True, True))
+        semantic = patch("web.backend.notes.note_study._semantic_issues", return_value={'findings': [], 'checks': []})
         semantic.start()
         self.addCleanup(semantic.stop)
         availability.start()
@@ -34,7 +34,7 @@ class StudyValidationTests(unittest.TestCase):
         good = {"summary": "요약", "markdown": "본문", "uncertainties": []}
         responses = [Mock(json=lambda: {"message": {}, "done_reason": "length"}),
                      Mock(json=lambda: {"message": {"content": json.dumps(good)}})]
-        with patch("web.backend.note_study._request", side_effect=[r.json() for r in responses]) as post:
+        with patch("web.backend.notes.note_study._request", side_effect=[r.json() for r in responses]) as post:
             _generate("지시", "원문", CancellationToken())
         self.assertEqual([c.args[0]['options']['num_predict'] for c in post.call_args_list], [2048, 4096])
 

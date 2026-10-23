@@ -1,8 +1,8 @@
 """Application-scoped pause gate. A paused request is retried, never a cancelled job."""
 import threading
 import time
-from .processes import CancellationToken, TranscriptionCancelled
-from .execution_metrics import add_wait, current_trace
+from web.backend.processes import CancellationToken, TranscriptionCancelled
+from web.backend.execution_metrics import add_wait, current_trace
 
 
 class RequestToken(CancellationToken):
@@ -120,7 +120,7 @@ class AIControl:
 
     def clean_up(self, operation):
         """Keep the transition visible until owned idle processes have exited."""
-        from .services import start_thread
+        from web.backend.execution_context import start_thread
         marker = RequestToken(None)
         with self.condition:
             if self.enabled or self.closed:
@@ -144,8 +144,8 @@ class AIControl:
 
 
 def run(operation, cancellation=None, **kwargs):
-    from .services import current_services
-    services = current_services()
+    from web.backend.execution_context import execution_resources
+    services = execution_resources()
     if services:
         return services.ai_control.run(operation, cancellation, **kwargs)
     return operation(cancellation or CancellationToken())

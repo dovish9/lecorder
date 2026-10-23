@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
-from .platforms import host
+from web.backend.platforms import host
 
 
 class TranscriptionCancelled(RuntimeError):
@@ -46,8 +46,8 @@ class CancellationToken:
 
     def run(self, args, *, input_data=None, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, timeout=None, env=None):
-        from .services import current_services
-        services = current_services()
+        from web.backend.execution_context import execution_resources
+        services = execution_resources()
         platform = services.platform if services else host
         self.check()
         process = subprocess.Popen(
@@ -111,8 +111,8 @@ class WorkerRouter:
         self.fallback = PythonWorker()
 
     def call(self, *args, **kwargs):
-        from .services import current_services
-        services = current_services()
+        from web.backend.execution_context import execution_resources
+        services = execution_resources()
         return (services.worker if services else self.fallback).call(*args, **kwargs)
 
 

@@ -1,5 +1,5 @@
 """Portable audio adapter; callers do not depend on executable locations."""
-from .processes import worker
+from web.backend.processes import worker
 
 
 def request(operation, cancellation=None, **arguments):

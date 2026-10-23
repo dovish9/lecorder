@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .transcription import SUPPORTED_MEDIA
+from web.backend.atomic import clear_hidden_flag
+from web.backend.speech.transcription import SUPPORTED_MEDIA
 
 
 def safe_name(value: str) -> str:

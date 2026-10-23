@@ -2,14 +2,14 @@ import io
 import json
 from pathlib import Path
 from unittest.mock import patch, Mock
-from web.backend.note_analysis import (
+from web.backend.notes.note_analysis import (
     candidates,
     hint_terms,
 )
-from web.backend.note_study import analyze_visual_page, parse_response
-from web.backend.transcription import CancellationToken
+from web.backend.notes.note_study import analyze_visual_page, parse_response
+from web.backend.speech.transcription import CancellationToken
 from tests import support as fixtures
-from web.backend.pipeline import RecordingPipeline
+from web.backend.recordings.pipeline import RecordingPipeline
 from web.backend.state import JobState
 
 
@@ -21,15 +21,15 @@ class NoteLifecycleTests(NoteCase):
         with self.assertRaisesRegex(ValueError, "PDF"):
             self.notes.register(self.store.get().course_id, [("slides.PPTX", io.BytesIO(b"PK-test"))])
         self.assertEqual(set(self.notes.folder.iterdir()), before)
-        from web.backend.note_extract import prepare_pages
+        from web.backend.notes.note_extract import prepare_pages
         with self.assertRaisesRegex(ValueError, "지원하지 않는"):
             prepare_pages([self.root / "slides.pptx"], self.root, CancellationToken())
 
 
-    def test_postprocessing_cannot_be_disabled(self):
-        course = self.store.update_course(self.store.active_course_id(), llm_enabled=False, format_transcript=False)
-        self.assertTrue(course.llm_enabled)
-        self.assertTrue(course.format_transcript)
+    def test_course_contract_contains_only_course_settings(self):
+        course = self.store.courses.get_course(self.store.courses.active_course_id())
+        self.assertEqual(set(course.public()), {'id', 'name', 'language', 'updated_at'})
+        self.assertTrue(self.store.get().llm_enabled)
 
 
     def test_extracting_note_wait_does_not_block_other_jobs_and_can_cancel(self):
@@ -61,7 +61,7 @@ class NoteLifecycleTests(NoteCase):
         self.assertEqual(items[0]["revision_id"], note["revision_id"])
         self.assertEqual(items[0]["status"], "ready")
         self.assertEqual(items[0]["study_status"], "completed")
-        self.assertEqual(items[0]["course_id"], self.store.active_course_id())
+        self.assertEqual(items[0]["course_id"], self.store.courses.active_course_id())
         self.assertEqual(items[0]["error"], "")
 
 
@@ -113,9 +113,9 @@ class NoteLifecycleTests(NoteCase):
     def test_invalid_files_do_not_leave_records(self):
         with self.assertRaises(ValueError):
             self.notes.register(
-                self.store.active_course_id(), [("bad.pdf", io.BytesIO(b"not a pdf"))]
+                self.store.courses.active_course_id(), [("bad.pdf", io.BytesIO(b"not a pdf"))]
             )
-        self.assertEqual(self.notes.list(self.store.active_course_id()), [])
+        self.assertEqual(self.notes.list(self.store.courses.active_course_id()), [])
         self.assertEqual(list(self.notes.folder.iterdir()), [])
 
 
@@ -163,7 +163,7 @@ class NoteLifecycleTests(NoteCase):
         with self.assertRaises(ValueError):
             self.notes.bind(note["id"], note["course_id"])
         self.notes._update(note["revision_id"], status="ready")
-        other = self.store.create_course("other")
+        other = self.store.courses.create_course("other")
         with self.assertRaises(ValueError):
             self.notes.bind(note["id"], other.id)
         self.assertEqual(
@@ -199,9 +199,9 @@ class NoteLifecycleTests(NoteCase):
             }
 
         with patch(
-            "web.backend.notes.prepare_pages",
+            "web.backend.notes.notes.prepare_pages",
             return_value=[(Path("a"), 1), (Path("a"), 2)],
-        ), patch("web.backend.notes.extract_page", side_effect=extract):
+        ), patch("web.backend.notes.notes.extract_page", side_effect=extract):
             self.notes.extract(note["revision_id"])
         result = self.notes.get(note["id"])
         self.assertEqual(result["status"], "partial")
@@ -253,7 +253,7 @@ class NoteLifecycleTests(NoteCase):
 
     def test_conditional_note_response_changes_after_keyword_revision(self):
         from flask import Flask
-        from web.backend.note_routes import note_routes
+        from web.backend.notes.note_routes import note_routes
 
         note = self.ready()
         app = Flask(__name__)
@@ -274,7 +274,7 @@ class NoteLifecycleTests(NoteCase):
         invalid = {"summary": "summary", "markdown": "body", "uncertainties": "not an array"}
         response = Mock()
         response.json.return_value = {"message": {"content": json.dumps(invalid)}}
-        with patch("web.backend.note_study._request", return_value=response.json.return_value) as post:
+        with patch("web.backend.notes.note_study._request", return_value=response.json.return_value) as post:
             result = analyze_visual_page({"number": 1, "text": "source"}, [], CancellationToken(), image_path=image)
         self.assertEqual(result["validation"]["status"], "needs_review")
         self.assertEqual(post.call_count, 2)
@@ -292,7 +292,7 @@ class NoteLifecycleTests(NoteCase):
         self.notes.request_detail(note["id"], 1)
         self.assertEqual(self.notes.study_queue.qsize(), 1)
         answer = {"summary": "해설", "points": [], "keywords": [], "formulas": []}
-        with patch("web.backend.notes.analyze_page", return_value=answer):
+        with patch("web.backend.notes.notes.analyze_page", return_value=answer):
             self.notes.study(note["revision_id"], 1)
         self.assertEqual(self.notes.pages(note["revision_id"])[0]["detail"], answer)
         with self.store._connect() as db:

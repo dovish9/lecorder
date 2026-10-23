@@ -1,7 +1,13 @@
 import {libraryRoute} from "./selectors.js";
 
 export function createRouting(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    workspaceDescription: $("#workspaceDescription"),
+    workspacePanels: $$('[data-view-panel]'),
+    workspaceTabs: $$("[data-view]"),
+    workspaceTitle: $("#workspaceTitle"),
+  };
   const VIEW_STORAGE_KEY = "lecorder-view";
   function activeCourse() {
     return app.courses.find((course) => course.id === app.activeCourseId);
@@ -9,7 +15,7 @@ export function createRouting(context) {
 
   const viewCopy = {
     settings: ["설정", "저장 위치와 AI 연결, 수정 이력을 관리합니다."],
-    dashboard: ["대시보드", "녹음과 전사 작업의 현재 상태를 확인합니다."],
+    dashboard: ["대시보드", "녹음과 음성 변환 작업의 현재 상태를 확인합니다."],
     courses: ["강의", "강의별 음성 인식 설정과 강의노트를 관리합니다."],
     recordings: ["보관함", "원음, 결과 파일, 수정 검토와 처리 기록을 함께 봅니다."],
   };
@@ -104,5 +110,5 @@ export function createRouting(context) {
   listen(window, "hashchange", () => void applyRoute());
 
 
-  return {activeCourse, applyRoute, courseRoute, parseRoute, switchWorkspace};
+  return {activeCourse, applyRoute, courseRoute};
 }

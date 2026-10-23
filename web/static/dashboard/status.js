@@ -1,8 +1,21 @@
-import {requestJson} from "./api.js";
+import {configureDataset} from "../recording-store.js";
+import {requestJson,bindDataset} from "./api.js";
 import {statusCardActivity} from "./selectors.js";
 
 export function createStatus(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    courseList: $("#courseList"),
+    progressCard: $("#progressCard"),
+    progressKicker: $("#progressKicker"),
+    progressMessage: $("#progressMessage"),
+    progressTitle: $("#progressTitle"),
+    serverPill: $("#serverPill"),
+    serverText: $("#serverText"),
+    suggestionList: $("#suggestionList"),
+    suggestionPanel: $("#suggestionPanel"),
+    suggestionSummary: $("#suggestionSummary"),
+  };
   listen($('#aiControlSwitch'), 'change', async event => {
     const toggle = event.target;
     toggle.disabled = true;
@@ -17,6 +30,9 @@ export function createStatus(context) {
   });
   const VIEW_STORAGE_KEY = "lecorder-view";
   function renderStatus(data) {
+    bindDataset(data.dataset_id);
+    configureDataset(data.dataset_id);
+    app.datasetId=data.dataset_id;
     actions.detectCompletionNotifications(data);
     const control = data.ai_control || {enabled: true, state: 'enabled', generation: 0};
     if (!app.aiControl || control.generation >= app.aiControl.generation) app.aiControl = control;
@@ -29,7 +45,7 @@ export function createStatus(context) {
     const missing = !speech.ready || !llm.ready;
     const loading = speech.state === 'loading' || llm.state === 'loading';
     ui.serverPill.className = 'server-status has-tooltip ' + (missing || loading ? 'warning' : 'ready');
-    ui.serverText.textContent = missing ? 'AI 연결 확인 필요' : loading ? '로컬 모델 로드 중' : '음성 전사 · LLM 준비됨';
+    ui.serverText.textContent = missing ? 'AI 연결 확인 필요' : loading ? '로컬 모델 로드 중' : '음성 변환 · LLM 준비됨';
     if (!app.aiControl.enabled) { ui.serverText.textContent = app.aiControl.state === 'pausing' ? 'AI 처리 멈추는 중' : 'AI 처리 일시정지'; ui.serverPill.className = 'server-status has-tooltip warning'; }
     app.job = data.job || {};
     app.noteJobs = data.note_jobs || [];
@@ -67,9 +83,10 @@ export function createStatus(context) {
       const data = await requestJson("/api/status", {cache: "no-store"});
       renderStatus(data);
       void actions.recoverRecordingSessions(data.recordings || []);
-    } catch (_) {
+    } catch (error) {
       ui.serverPill.className = "server-status has-tooltip offline";
-      ui.serverText.textContent = "Lecorder 연결 안 됨";
+      ui.serverText.textContent = error.code==='result_format_unsupported'?"자료 형식 확인 필요":"Lecorder 연결 안 됨";
+      if(error.code==='result_format_unsupported')ui.progressMessage.textContent=error.message;
     }
   }
 
@@ -100,5 +117,5 @@ export function createStatus(context) {
     }
   }
 
-  return {initialize, refreshStatus, renderStatus, renderSuggestions};
+  return {initialize, refreshStatus};
 }

@@ -7,8 +7,8 @@
   <meta name="color-scheme" content="light dark" />
   <title>Lecorder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect rx=%2214%22 width=%2264%22 height=%2264%22 fill=%22%230078ff%22/><path d=%22M8 34h8l4-17 7 31 7-41 7 33 5-18 5 12h6%22 fill=%22none%22 stroke=%22%23fff%22 stroke-width=%224%22/></svg>" />
-<link rel="stylesheet" href="/static/dashboard.css?v=20261016-glossary" />
-<link rel="stylesheet" href="/static/notes.css?v=20261021-viewer" />
+<link rel="stylesheet" href="/static/dashboard.css" />
+<link rel="stylesheet" href="/static/notes.css" />
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
   <aside class="source-sidebar">
     <a class="identity" href="#/dashboard" aria-label="Lecorder 대시보드">
       <svg class="identity-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M3 19h5l3-10 4 19 4-25 4 20 3-11 3 7h4" /></svg>
-      <span><strong>Lecorder</strong><small>이 컴퓨터의 전사 작업실</small></span>
+      <span><strong>Lecorder</strong><small>이 컴퓨터의 강의 녹음실</small></span>
     </a>
     <nav class="source-nav" aria-label="주요 화면">
       <a class="source-item active" href="#/dashboard" data-view="dashboard" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg><span>대시보드</span></a>
@@ -35,7 +35,7 @@
 
   <section class="app-workspace">
     <header class="app-toolbar">
-      <div class="toolbar-title"><h1 id="workspaceTitle">대시보드</h1><p id="workspaceDescription">녹음과 전사 작업의 현재 상태를 확인합니다.</p></div>
+      <div class="toolbar-title"><h1 id="workspaceTitle">대시보드</h1><p id="workspaceDescription">녹음과 음성 변환 작업의 현재 상태를 확인합니다.</p></div>
       <div class="toolbar-actions">
         <div class="server-status has-tooltip" id="serverPill" tabindex="0" role="status" aria-live="polite" data-tooltip="Whisper와 LLM의 실제 연결 상태입니다."><i></i><span id="serverText">서버 확인 중</span></div>
         <a class="toolbar-icon has-tooltip" id="guideButton" href="/guide" aria-label="사용 안내 열기" data-tooltip="사용 안내"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.75 3.75h7.5l3 3v13.5H6.75zM14.25 3.75v3h3M9.5 11h5M9.5 14.5h5"/></svg></a>
@@ -48,25 +48,20 @@
           <div><p id="dashboardDate"></p><h2>내 강의 자료</h2></div>
           <section class="ai-processing-control" aria-label="AI 처리 제어">
             <label><span id="aiControlLabel">AI 처리 켜짐</span><input id="aiControlSwitch" type="checkbox" role="switch" aria-label="AI 처리" aria-describedby="aiControlHint" checked></label>
-            <p id="aiControlHint">음성 전사·실시간 받아쓰기·LLM 작업에 적용됩니다. 원음 녹음은 계속됩니다.</p>
+            <p id="aiControlHint">음성 변환·실시간 받아쓰기·LLM 작업에 적용됩니다. 원음 녹음은 계속됩니다.</p>
             <small>외부 API는 취소 후에도 과금될 수 있습니다.</small>
             <span id="aiControlError" role="alert"></span>
           </section>
         </header>
         <div class="dashboard-search" id="globalSearchBox">
-          <label class="global-search-input"><span aria-hidden="true">⌕</span><input id="globalSearch" type="search" placeholder="녹음, 전사문, 강의노트에서 검색" aria-label="전체 자료 검색" autocomplete="off" aria-controls="globalSearchResults" /></label>
-          <div class="search-results-panel" id="globalSearchResults" hidden>
-            <div class="search-filters" id="searchFilters"></div><p id="searchSummary" role="status"></p><div id="searchMatches"></div><button id="searchMore" type="button" hidden>더 보기</button>
+          <label class="global-search-input"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4 4"/></svg><input id="globalSearch" type="search" placeholder="녹음, 변환 텍스트, 강의노트에서 검색" aria-label="전체 자료 검색" autocomplete="off" aria-controls="globalSearchResults" /></label>
+          <div class="search-results-panel" id="globalSearchResults" role="region" aria-label="검색 결과" hidden>
+            <div class="search-toolbar"><div class="search-filters" id="searchFilters"></div><p id="searchSummary" role="status"></p></div><div class="search-results-body"><div id="searchEmpty" class="search-empty" hidden><strong>검색 결과가 없습니다</strong><p>다른 검색어를 입력하거나 검색 범위를 바꿔보세요.</p></div><div id="searchMatches"></div><button id="searchMore" type="button" hidden>더 보기</button></div>
           </div>
         </div>
-        <nav class="dashboard-summary" aria-label="작업 요약" hidden>
-          <a href="#/recordings" class="dashboard-metric"><span>오늘 완료</span><strong id="dashboardCompletedCount">0</strong><small>저장된 전사</small></a>
-          <a href="#/recordings" class="dashboard-metric"><span>오늘 처리 시간</span><strong id="dashboardWorkTime">—</strong><small>대기 시간 제외</small></a>
-          <a href="#/recordings" class="dashboard-metric attention"><span>확인 필요</span><strong id="dashboardAttentionMetric">0</strong><small>검토와 오류</small></a>
-        </nav>
         <div class="dashboard-grid">
           <section class="dashboard-section dashboard-usage"><header><h3>AI 사용량</h3><div id="usagePeriod"></div></header><div id="usageGroups"></div><p class="insight-caption" id="usageError" role="status" hidden></p></section>
-          <section class="dashboard-section dashboard-queue"><header><h3>복구 <span class="dashboard-count" id="recoveryCount">0</span></h3><a href="#/recordings">보관함 열기</a></header><div id="recoveryNotices"></div></section>
+          <section class="dashboard-section dashboard-queue"><header><h3>복구 <span class="dashboard-count" id="recoveryCount">0</span></h3><a href="#/recordings">보관함 열기</a></header><div id="recoveryNotices"></div><p class="insight-caption" id="recoveryError" role="status" hidden></p></section>
           <section class="dashboard-section dashboard-attention"><header><div><h3>검토함 <span class="dashboard-count" id="dashboardAttentionCount">0</span></h3><p>먼저 확인할 결과</p></div></header><div class="dashboard-list" id="dashboardAttention"></div><a href="#/recordings" class="dashboard-section-footer" id="dashboardAttentionMore">검토함 열기</a></section>
           <section class="dashboard-section dashboard-backup"><header><h3>백업 및 이동</h3></header><p>강의 자료와 작업 기록을 한 파일로 보관하세요.</p><div class="transfer-actions"><button type="button" id="backupCreate">백업 만들기</button><button type="button" id="backupImport">가져오기</button></div><input type="file" id="backupFile" accept=".zip" hidden /><p class="insight-caption">모델과 API 키는 제외됩니다. 브라우저에만 남은 녹음 조각은 먼저 업로드해야 합니다.</p><div id="backupProgress" role="status"></div></section>
         </div>
@@ -104,14 +99,14 @@
       <button type="button" role="tab" data-ai-tab="history" aria-selected="false" tabindex="-1"><span class="settings-category-icon history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z M9 11l2 2 4-4 M9 17h6"/></svg></span><span>승인한 검토</span></button>
     </nav>
     <div class="settings-content">
-    <header class="system-settings-header"><h2 id="systemDialogTitle">경로</h2><p id="settingsDescription">프로젝트와 전사 결과를 저장할 위치를 관리합니다.</p></header>
+    <header class="system-settings-header"><h2 id="systemDialogTitle">경로</h2><p id="settingsDescription">프로젝트와 음성 변환 결과를 저장할 위치를 관리합니다.</p></header>
     <div class="system-settings-body" id="pathSettingsPanel">
       <section class="system-path-group" aria-labelledby="projectDirLabel">
         <div class="system-path-heading"><label id="projectDirLabel" for="projectDir">Lecorder 프로젝트</label><small id="projectCheck">확인 중</small></div>
         <textarea id="projectDir" name="lecorder-project-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
       </section>
       <section class="system-path-group" aria-labelledby="outputDirLabel">
-        <div class="system-path-heading"><label id="outputDirLabel" for="outputDir">전사 결과 저장 폴더</label><small id="outputCheck">확인 중</small></div>
+        <div class="system-path-heading"><label id="outputDirLabel" for="outputDir">음성 변환 결과 저장 폴더</label><small id="outputCheck">확인 중</small></div>
         <textarea id="outputDir" name="lecorder-output-location" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-describedby="outputDirHint"></textarea>
         <p id="outputDirHint">원본 오디오와 Markdown 결과를 이 폴더에 저장합니다.</p>
       </section>
@@ -158,9 +153,9 @@
 
 <dialog class="upload-dialog" id="uploadDialog" aria-labelledby="uploadDialogTitle">
   <form class="upload-sheet" id="uploadForm">
-    <header><div><h2 id="uploadDialogTitle">파일 가져오기</h2><p>오디오나 동영상을 전사 대기열에 추가합니다.</p></div><button class="dialog-close" id="closeUploadButton" type="button" aria-label="파일 가져오기 닫기">×</button></header>
+    <header><div><h2 id="uploadDialogTitle">파일 가져오기</h2><p>오디오나 동영상을 음성 변환 대기열에 추가합니다.</p></div><button class="dialog-close" id="closeUploadButton" type="button" aria-label="파일 가져오기 닫기">×</button></header>
     <div class="upload-field upload-course-field"><span id="uploadCourseFieldLabel">강의</span><details class="upload-course-picker" id="uploadCoursePicker"><summary id="uploadCourseButton" aria-labelledby="uploadCourseFieldLabel uploadCourseLabel" aria-haspopup="listbox" aria-expanded="false"><span class="upload-course-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5.5h14v13H5zM8.5 3.5v4M15.5 3.5v4M8 11h8M8 14.5h5"/></svg></span><strong id="uploadCourseLabel">강의를 선택하세요</strong><svg class="upload-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="upload-course-menu" id="uploadCourseMenu" role="listbox" aria-label="업로드할 강의"></div></details><select id="uploadCourseSelect" aria-label="업로드할 강의" hidden tabindex="-1"></select></div>
-    <div class="upload-field"><span id="uploadNoteFieldLabel">강의노트</span><details class="upload-course-picker" id="uploadNotePicker"><summary id="uploadNoteButton" aria-labelledby="uploadNoteFieldLabel uploadNoteLabel" aria-haspopup="listbox" aria-expanded="false"><span class="upload-course-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg></span><strong id="uploadNoteLabel">사용 안 함</strong><svg class="upload-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="upload-course-menu" id="uploadNoteMenu" role="listbox" aria-label="전사에 사용할 강의노트"></div></details><small id="uploadNoteHint">강의노트 없이도 전사할 수 있습니다.</small></div>
+    <div class="upload-field"><span id="uploadNoteFieldLabel">강의노트</span><details class="upload-course-picker" id="uploadNotePicker"><summary id="uploadNoteButton" aria-labelledby="uploadNoteFieldLabel uploadNoteLabel" aria-haspopup="listbox" aria-expanded="false"><span class="upload-course-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 10h6M9 14h6M9 18h4"/></svg></span><strong id="uploadNoteLabel">사용 안 함</strong><svg class="upload-course-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></summary><div class="upload-course-menu" id="uploadNoteMenu" role="listbox" aria-label="음성 변환에 사용할 강의노트"></div></details><small id="uploadNoteHint">강의노트 없이도 음성 변환할 수 있습니다.</small></div>
     <label class="upload-field" for="uploadTitle"><span>저장 이름</span><input id="uploadTitle" type="text" maxlength="160" autocomplete="off" placeholder="파일 이름" /></label>
     <input id="uploadFile" type="file" accept="audio/*,video/*,.3g2,.3gp,.aac,.aif,.aiff,.alac,.amr,.caf,.flac,.m4a,.mka,.mov,.mp3,.mp4,.ogg,.opus,.wav,.webm,.wma" hidden />
     <button class="upload-drop-zone" id="dropZone" type="button"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 21V7m0 0-6 6m6-6 6 6M6 20v6h20v-6" /></svg><span><strong id="dropTitle">파일을 선택하거나 끌어놓으세요</strong><small id="dropDescription">오디오·동영상 파일</small></span></button>
@@ -174,6 +169,6 @@
 <dialog class="pipeline-dialog" id="pipelineDialog" aria-labelledby="pipelineDialogTitle"><section class="pipeline-dialog-frame"><header><div><h2 id="pipelineDialogTitle">작업 로그</h2><p id="pipelineDialogSubtitle"></p></div><button class="dialog-close" id="closePipelineButton" type="button" aria-label="작업 로그 닫기">×</button></header><div class="pipeline-dialog-body" id="pipelineDialogBody"></div></section></dialog>
 <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle"><form method="dialog"><h2 id="confirmTitle">확인</h2><p id="confirmMessage"></p><div><button id="confirmCancel" value="cancel">취소</button><button id="confirmAccept" class="danger" value="confirm">확인</button></div></form></dialog>
 <div class="toast-region" id="toastRegion" role="status" aria-live="polite"></div>
-<script type="module" src="/static/dashboard.js?v=20261016-glossary"></script>
+<script type="module" src="/static/dashboard.js"></script>
 </body>
 </html>

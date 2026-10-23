@@ -8,11 +8,11 @@ from unittest.mock import patch
 from web.backend.files import OutputFiles
 from web.backend.markdown import markdown_target
 from web.backend.output_files import rename_output_files
-from web.backend.pipeline import RecordingPipeline
+from web.backend.recordings.pipeline import RecordingPipeline
 from web.backend.routes import create_app
 from web.backend.state import JobState
-from web.backend.store import LectureStore
-from web.backend.transcription import Result, Suggestion, TranscriptSegment
+from web.backend.library.store import LectureStore
+from web.backend.speech.transcription import Result, Suggestion, TranscriptSegment
 
 
 from tests.support import RecorderCase, FakeTranscriber
@@ -42,13 +42,13 @@ class OutputsTests(RecorderCase):
             audio, note = root / "old.wav", root / "old.md"
             audio.write_bytes(b"original audio")
             note.write_text("original note")
-            original_rename = Path.rename
+            original_rename = Path.replace
             def fail_second(source, destination):
                 if source == note:
                     destination.write_text("unrelated concurrent file")
                     raise OSError("simulated rename failure")
                 return original_rename(source, destination)
-            with patch.object(Path, "rename", fail_second), self.assertRaises(OSError):
+            with patch.object(Path, "replace", fail_second), self.assertRaises(OSError):
                 rename_output_files([audio, note], "new")
             self.assertEqual(audio.read_bytes(), b"original audio")
             self.assertEqual(note.read_text(), "original note")
@@ -299,13 +299,13 @@ class OutputsTests(RecorderCase):
             root = Path(temporary)
             environment, output = self.environment(root)
             store = LectureStore(root / "web/data/lecorder.db", environment)
-            store.update_course(store.active_course_id(), name="통계학")
+            store.courses.update_course(store.courses.active_course_id(), name="통계학")
             engine = SuggestedTranscriber()
             pipeline = RecordingPipeline(store, JobState(), engine, root / "work", start_worker=False)
             recording = pipeline.create_upload(store.get(), "검토", ".wav", io.BytesIO(b"audio"))
             pipeline.process_next()
             store.update_recording(recording.id, review_status="completed")
-            suggestion = store.list_suggestions(recording.id)[0]
+            suggestion = store.approvals.list_suggestions(recording.id)[0]
             self.assertEqual(suggestion.status, "pending")
             app = create_app(store, JobState(), engine, environment, pipeline)
             client = app.test_client()
@@ -317,6 +317,5 @@ class OutputsTests(RecorderCase):
             self.assertEqual(audio_response.get_data(), b"audio")
             audio_response.close()
             pipeline.decide_suggestion(suggestion.id, "accept")
-            self.assertEqual(store.get_course(store.active_course_id()).corrections, "")
             self.assertIn("표본을 사용합니다", (output / "검토.md").read_text(encoding="utf-8"))
-            self.assertEqual(store.get_suggestion(suggestion.id).status, "accepted")
+            self.assertEqual(store.approvals.get_suggestion(suggestion.id).status, "accepted")

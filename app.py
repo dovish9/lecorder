@@ -5,6 +5,7 @@ import signal
 
 os.environ.setdefault("FLASK_SKIP_DOTENV", "1")
 
+from web.backend.versions import APP_VERSION
 from web.backend.config import APP_PORT
 from web.backend.routes import create_app
 from web.backend.ai_runtime import close_all
@@ -20,7 +21,7 @@ if __name__ == "__main__":
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    print(f"🎛️ Lecorder: http://127.0.0.1:{APP_PORT}")
+    print(f"🎛️ Lecorder {APP_VERSION}: http://127.0.0.1:{APP_PORT}")
     app.extensions["lecorder_services"].start()
     try:
         app.run(host="127.0.0.1", port=APP_PORT, threaded=True, use_reloader=False)

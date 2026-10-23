@@ -1,7 +1,17 @@
 import {requestJson} from "./api.js";
 
 export function createSettings(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    outputCheck: $("#outputCheck"),
+    outputDir: $("#outputDir"),
+    projectCheck: $("#projectCheck"),
+    projectDir: $("#projectDir"),
+    saveSystemButton: $("#saveSystemButton"),
+    systemDialog: $("#systemDialog"),
+    systemForm: $("#systemForm"),
+    systemMessage: $("#systemMessage"),
+  };
   function renderEnvironment(environment) {
     app.environment = environment;
     ui.projectDir.value = environment.project_dir;
@@ -84,5 +94,5 @@ export function createSettings(context) {
     }
   });
 
-  return {renderEnvironment, waitForServerRestart};
+  return {renderEnvironment};
 }

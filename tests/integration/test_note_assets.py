@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from web.backend.note_extract import extract_page
-from web.backend.transcription import CancellationToken
+from web.backend.notes.note_extract import extract_page
+from web.backend.speech.transcription import CancellationToken
 
 compact = runpy.run_path(str(PROJECT_ROOT / 'scripts/compact-note-images.py'))['compact']
 
@@ -43,7 +43,7 @@ class NoteAssetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             folder = Path(work)
             (folder/'page-1.png').write_bytes(b'existing')
-            with patch('web.backend.note_extract.document_request') as run, patch('web.backend.note_extract.ocr',return_value=[]) as ocr:
+            with patch('web.backend.notes.note_extract.document_request') as run, patch('web.backend.notes.note_extract.ocr',return_value=[]) as ocr:
                 for _ in range(2):
                     extract_page(folder/'source.png',None,folder,1,CancellationToken())
             run.assert_not_called()

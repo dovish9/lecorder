@@ -2,14 +2,22 @@ import {requestJson} from "./api.js";
 import {durationText} from "./selectors.js";
 
 export function createReview(context) {
-  const {app, ui, $, $$, actions, listen, every} = context;
+  const {app, $, $$, actions, listen, every} = context;
+  const ui = context.ui || {
+    closeReviewButton: $("#closeReviewButton"),
+    reviewDialog: $("#reviewDialog"),
+    reviewDialogTitle: $("#reviewDialogTitle"),
+    reviewList: $("#reviewList"),
+    reviewRecordingName: $("#reviewRecordingName"),
+    reviewSubtitle: $("#reviewSubtitle"),
+  };
   async function openReview(recordingId, {focus = true} = {}) {
     try {
       const data = await requestJson(`/api/recordings/${recordingId}`, {cache: "no-store"});
       app.reviewingRecordingId = recordingId;
       ui.reviewRecordingName.textContent = data.recording.title;
       ui.reviewDialogTitle.textContent = "수정 제안";
-      ui.reviewSubtitle.textContent = "승인하면 현재 전사문과 Markdown에 반영됩니다.";
+      ui.reviewSubtitle.textContent = "승인하면 현재 변환 텍스트과 Markdown에 반영됩니다.";
       ui.closeReviewButton.hidden = false;
       renderReviewItems(data.suggestions);
       if (focus) ui.closeReviewButton.focus({preventScroll: true});
@@ -246,5 +254,5 @@ export function createReview(context) {
   }
 
 
-  return {appendHighlightedReviewContext, openReview, playAudioExcerpt, renderReviewItems, resetReviewAudioButton, setReviewListenLabel, stopReviewAudio};
+  return {openReview, stopReviewAudio};
 }

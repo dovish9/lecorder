@@ -1,11 +1,11 @@
 import { pageNeedsReview } from "./note-review.js";
 import { attachPageZoom } from "./note-zoom.js";
-import { markdown } from "./note-markdown.js?v=20260921-math2";
+import { markdown } from "./note-markdown.js";
 /* Lecture-note UI. All model/document text is rendered as text, never HTML. */
 const statuses = {
   queued: "대기 중",
   extracting: "원문 추출 중",
-  ready: "전사에 사용 가능",
+  ready: "음성 변환에 사용 가능",
   partial: "일부 페이지 확인 필요",
   failed: "분석 실패",
   cancelled: "중단됨",
@@ -423,7 +423,7 @@ export async function openNote(id, initial = {}) {
           regenerate.disabled = true;
           check.checked ? excluded.delete(k.id) : excluded.add(k.id);
           const count = footer.querySelector("span");
-          if (count) count.textContent = `${note.keywords.length - excluded.size}개 선택 · 전사 인식에 활용합니다.`;
+          if (count) count.textContent = `${note.keywords.length - excluded.size}개 선택 · 음성 변환 인식에 활용합니다.`;
         };
         label.append(check, node("span", k.term));
         const row = node("div", null, "note-keyword-card");
@@ -442,7 +442,7 @@ export async function openNote(id, initial = {}) {
       }
       body.append(list);
       footer.append(
-        node("span", `${note.keywords.length - excluded.size}개 선택 · 전사 인식에 활용합니다.`, "note-muted"),
+        node("span", `${note.keywords.length - excluded.size}개 선택 · 음성 변환 인식에 활용합니다.`, "note-muted"),
         button("용어집 선택 저장", async () => {
           await api(`/api/notes/${id}/keywords`, {
             method: "PATCH",

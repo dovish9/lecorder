@@ -6,12 +6,12 @@ import time
 from pathlib import Path
 import requests
 from jsonschema import Draft202012Validator
-from .ai_settings import current, settings, configured_settings
-from .ai_runtime import runtime_for
-from .ai_transport import request_json, ProviderError
-from .inference import inference
-from .execution_metrics import current_trace
-from .transcription import TranscriptionCancelled
+from web.backend.ai_settings import current, configured_settings
+from web.backend.ai_runtime import runtime_for
+from web.backend.ai_transport import request_json, ProviderError
+from web.backend.inference import inference
+from web.backend.execution_metrics import current_trace
+from web.backend.speech.transcription import TranscriptionCancelled
 
 
 def require_llm(config=None):
@@ -58,9 +58,9 @@ def generate(messages, schema, **kwargs):
     started = time.monotonic()
     event = {'provider': config['provider'], 'model': config['model'], 'status': 'failed'}
     try:
-        from .ai_control import run
+        from web.backend.ai_control import run
         parent = kwargs.get('cancellation')
-        from .request_history import request as tracked
+        from web.backend.request_history import request as tracked
         identity = [messages, schema, {k: v for k, v in kwargs.items() if k not in {'cancellation', 'api_key', 'config'}}]
         result = run(lambda token: tracked(
             lambda child: _generate(messages, schema, **{**kwargs, 'cancellation': child}),
@@ -198,13 +198,13 @@ def check_connection(area, config, key=None, cancellation=None):
         return {k: response[k] for k in ('model', 'provider', 'seconds')}
     if config['provider'] == 'whisper_cpp':
         key = configured_settings().credentials.get(config) if key is None else key
-        from .ai_control import run
+        from web.backend.ai_control import run
         def probe(token):
             with inference.lease(speech=True, local=config.get('managed', False), cancellation=token), runtime_for(config).session(token):
                 result = request_json(config['base_url'] + '/health', method='GET', cancellation=token,
                                       headers={'Authorization': 'Bearer ' + key} if key else None)
                 if result.get('status') != 'ok':
-                    raise ProviderError('전사 서버 상태 확인 실패')
+                    raise ProviderError('음성 변환 서버 상태 확인 실패')
         run(probe, cancellation, kind='speech_check')
         return {'model': config['model'], 'provider': config['provider']}
     key = configured_settings().credentials.get(config) if key is None else key

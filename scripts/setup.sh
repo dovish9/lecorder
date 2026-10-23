@@ -2,6 +2,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/load-env.sh"
+DEPS="${LECORDER_DEPENDENCIES_DIR:-$ROOT/dependencies}"
+[[ "$DEPS" = /* ]] || DEPS="$ROOT/$DEPS"
 case "${1:-}" in
   --dry-run) [[ $# -eq 1 ]] || { echo '사용법: bash scripts/setup.sh [--dry-run]' >&2; exit 2; }; exec bash "$ROOT/scripts/setup-plan.sh" ;;
   '') ;;
@@ -52,7 +55,7 @@ check_python_version
 echo "패키지 설치에 사용할 Python: $PYTHON ($PYTHON_SOURCE)"
 PACKAGE_PATH=""
 if ! "$PYTHON" -B -c 'import pathlib, sys, sysconfig; sys.exit(1 if sys.prefix == sys.base_prefix and (pathlib.Path(sysconfig.get_path("stdlib")) / "EXTERNALLY-MANAGED").exists() else 0)'; then
-  PACKAGE_PATH="$ROOT/dependencies/python/site-packages"
+  PACKAGE_PATH="$DEPS/python/site-packages"
   echo "관리되는 Python: 패키지는 $PACKAGE_PATH 에 설치합니다."
   mkdir -p "$PACKAGE_PATH"
   "$PYTHON" -m pip install --upgrade --target "$PACKAGE_PATH" -r requirements.txt
@@ -70,7 +73,7 @@ bash scripts/build-vision.sh
 step 5 '모델 · 데이터 다운로드 및 설치 확인'
 "$PYTHON" scripts/download-models.py
 "$PYTHON" scripts/check-install.py
-mkdir -p "$ROOT/dependencies/python"
-printf '%s\n%s\n' "$PYTHON" "$PACKAGE_PATH" > "$ROOT/dependencies/python/runtime.tmp"
-mv "$ROOT/dependencies/python/runtime.tmp" "$ROOT/dependencies/python/runtime"
+mkdir -p "$DEPS/python"
+printf '%s\n%s\n' "$PYTHON" "$PACKAGE_PATH" > "$DEPS/python/runtime.tmp"
+mv "$DEPS/python/runtime.tmp" "$DEPS/python/runtime"
 printf '\n설치 완료: 5단계 검증을 통과했습니다. 저장 위치를 설정한 뒤 ./start.command를 실행하세요.\n'

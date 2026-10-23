@@ -10,41 +10,43 @@ from typing import Any
 
 from flask import Flask, jsonify, request, send_file, g
 
-from .config import ROOT, EnvironmentStore, flag
-from .engine import Transcriber
-from .ai_providers import provider_status
-from .ai_settings import using
-from .ai_runtime import close_all
-from .ai_routes import ai_routes
-from .pipeline import RecordingPipeline
-from .note_routes import note_routes
-from .records import Recording
-from .state import JobState
-from .services import Services, current_services
-from .storage import resolve_storage_file
-from .store import LectureStore
+from web.backend.result_codec import ResultFormatError
+from web.backend.versions import public_versions
+from web.backend.config import ROOT, EnvironmentStore, flag
+from web.backend.runtime_config import get as runtime
+from web.backend.speech.engine import Transcriber
+from web.backend.ai_providers import provider_status
+from web.backend.ai_settings import using
+from web.backend.ai_runtime import close_all
+from web.backend.ai_routes import ai_routes
+from web.backend.recordings.pipeline import RecordingPipeline
+from web.backend.notes.note_routes import note_routes
+from web.backend.library.records import Recording
+from web.backend.state import JobState
+from web.backend.services import Services
+from web.backend.library.storage import resolve_storage_file
+from web.backend.library.store import LectureStore
 
 
-from .course_http import register as register_course_http
-from .intake_http import register as register_intake_http
-from .storage_http import register as register_storage_http
-from .recording_http import register as register_recording_http
+from web.backend.library.course_http import register as register_course_http
+from web.backend.recordings.intake_http import register as register_intake_http
+from web.backend.library.storage_http import register as register_storage_http
+from web.backend.recordings.recording_http import register as register_recording_http
 
 RESTART_EXIT_CODE = 75
 
 
-def schedule_managed_restart(delay: float = 0.8) -> bool:
+def schedule_managed_restart(services=None, delay: float = 0.8) -> bool:
     """Ask start.command to restart the app and its managed Whisper process."""
     if not flag(os.getenv("LECORDER_MANAGED_RESTART")):
         return False
-    services = current_services()
     def restart():
         if services:
             saved = services.ai.saved_snapshot()
             active = services.ai.snapshot()
             changed = [area for area in saved if saved[area] != active[area]]
             services.close()
-            from .settings_restart import rebind_pending
+            from web.backend.settings_restart import rebind_pending
             rebind_pending(services.workflow.store, saved, changed)
         close_all()
         os._exit(RESTART_EXIT_CODE)
@@ -74,22 +76,44 @@ def create_app(
     restart_lock = threading.Lock()
     lectures.ai = services.ai
     with services.scope():
-        workflow = pipeline or RecordingPipeline(lectures, state, engine,
-            work_root=lectures.path.parent / "recordings", start_worker=False)
+        if pipeline is None:
+            from web.backend.notes.notes import NoteLibrary
+            from web.backend.recordings.review_jobs import ReviewQueue
+            lock = threading.RLock()
+            notes = NoteLibrary(lectures, lectures.path.parent / 'notes', False)
+            reviews = ReviewQueue(lectures, engine, lock, False)
+            workflow = RecordingPipeline(lectures, state, engine,
+                work_root=lectures.path.parent / 'recordings', start_worker=False,
+                notes=notes, reviews=reviews, lock=lock)
+        else:
+            workflow = pipeline
     services.workflow = workflow
-    from .request_history import RequestHistory
+    from web.backend.request_history import RequestHistory
     services.history = RequestHistory(lectures)
-    from .insights import Insights
+    from web.backend.library.insights import Insights
     services.insights = Insights(lectures)
-    from .backup import Backups
-    services.backups = Backups(services, lectures)
-    from .live_transcription import LiveTranscription
-    from .live_http import register as register_live_http
-    from .ai_settings import live_configuration
+    from web.backend.library.backup import Backups
+    services.backups = Backups(lectures, workflow=workflow, notes=workflow.notes,
+        reviews=workflow.reviews, ai=services.ai, ai_control=services.ai_control)
+    from web.backend.recordings.live_transcription import LiveTranscription
+    from web.backend.recordings.live_http import register as register_live_http
+    from web.backend.ai_settings import live_configuration
     services.live = LiveTranscription(workflow, services.platform, ai_control=services.ai_control,
         config_provider=lambda: live_configuration(services.ai.snapshot()["speech"]))
     workflow.live = services.live
+    workflow.reviews.on_completed = services.live.has_draft
     app = Flask(__name__, static_folder=str(ROOT / "web" / "static"))
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+    @app.after_request
+    def revalidate_application_assets(response):
+        # HTML and imported modules must come from the same installed app.
+        if request.path in {'/', '/guide'} or request.path.startswith('/static/'):
+            response.cache_control.no_cache = True
+            response.cache_control.max_age = 0
+            response.cache_control.must_revalidate = True
+        return response
+
     register_live_http(app, services.live)
     app.extensions["recording_pipeline"] = workflow
     app.extensions["lecorder_services"] = services
@@ -101,6 +125,9 @@ def create_app(
         if restarting.is_set() and request.method not in {'GET','HEAD','OPTIONS'}:
             return jsonify(error='서버 재시작 중입니다. 잠시 후 다시 시도하세요.'), 503
         if request.method not in {'GET','HEAD','OPTIONS'}:
+            dataset = request.headers.get('X-Lecorder-Dataset')
+            if dataset and dataset != lectures.dataset_id:
+                return jsonify(error='다른 데이터 환경입니다. 페이지를 새로고침하세요.'),409
             origin=request.headers.get('Origin')
             if origin and origin.rstrip('/')!=request.host_url.rstrip('/'):
                 return jsonify(error='다른 사이트에서 보낸 변경 요청은 허용하지 않습니다.'),403
@@ -119,7 +146,7 @@ def create_app(
 
     @app.get("/api/capabilities")
     def capabilities():
-        return jsonify(services.platform.capabilities())
+        return jsonify(**services.platform.capabilities(), settings_check_seconds=runtime('LECORDER_SETTINGS_CHECK_SECONDS'))
 
     @app.get('/api/search')
     def search():
@@ -217,6 +244,10 @@ def create_app(
                 return handler(*args, **kwargs)
         return run
 
+    @app.errorhandler(ResultFormatError)
+    def unsupported_result(error):
+        return jsonify(error=str(error),code='result_format_unsupported'),409
+
     @app.errorhandler(405)
     def api_method_not_allowed(error):
         if request.path.startswith("/api/"):
@@ -231,7 +262,7 @@ def create_app(
 
         data["lecture_note_id"] = workflow.notes.revision(recording.note_revision_id)["note_id"] if recording.note_revision_id else None
         data["suggestion_counts"] = (
-            counts if counts is not None else lectures.suggestion_counts([recording.id])[recording.id]
+            counts if counts is not None else lectures.approvals.suggestion_counts([recording.id])[recording.id]
         )
         return data
 
@@ -241,7 +272,7 @@ def create_app(
         except (json.JSONDecodeError, TypeError):
             segments = []
         output: list[dict[str, Any]] = []
-        for suggestion in lectures.list_suggestions(recording.id):
+        for suggestion in lectures.approvals.list_suggestions(recording.id):
             data = suggestion.public()
             try:
                 index = int(suggestion.sentence_id.removeprefix("s")) - 1
@@ -273,11 +304,11 @@ def create_app(
             speech_status = provider_status("speech")
             llm_status = provider_status("llm")
         recordings = lectures.list_recordings(30)
-        counts = lectures.suggestion_counts([item.id for item in recordings])
+        counts = lectures.approvals.suggestion_counts([item.id for item in recordings])
         note_jobs = workflow.notes.queue_items()
         for item in note_jobs:
             item['waiting_for_ai'] = not services.ai_control.public()['enabled'] and item.get('stage') != 'extracting'
-        return {
+        return {"dataset_id": lectures.dataset_id, "versions": public_versions(),
             'ai_control': services.ai_control.public(),
             "live_recording_id": services.live.active.recording_id if services.live.active and not services.live.active.stopped.is_set() else None,
             "speech": speech_status,
@@ -292,10 +323,12 @@ def create_app(
     def bootstrap_payload() -> dict[str, Any]:
         payload = runtime_payload()
         payload.update({
-            "courses": [course.public() for course in lectures.list_courses()],
+            "courses": [course.public() for course in lectures.courses.list_courses()],
             "active_course_id": payload["settings"]["course_id"],
             "environment": paths.saved().public(),
             "instance_id": instance_id,
+            "dataset_id": lectures.dataset_id,
+            "versions": public_versions(),
             "restart_required": paths.saved() != paths.get() or services.ai.saved_snapshot() != services.ai.snapshot(),
         })
         return payload
@@ -330,7 +363,7 @@ def create_app(
             if not flag(os.getenv('LECORDER_MANAGED_RESTART')):
                 return jsonify(error='자동 재시작은 start.command로 실행했을 때 사용할 수 있습니다. 저장된 설정은 앱을 다시 실행하면 적용됩니다.'), 409
             restarting.set()
-            if not schedule_managed_restart():
+            if not schedule_managed_restart(services):
                 restarting.clear()
                 return jsonify(error='재시작을 예약하지 못했습니다.'), 409
             return jsonify(ok=True, instance_id=instance_id, restart_scheduled=True), 202
@@ -345,8 +378,8 @@ def create_app(
             return jsonify(proxy="ready", speech=provider_status("speech"), llm=provider_status("llm")), 200
 
 
-    register_course_http(app, lectures=lectures, paths=paths, schedule_managed_restart=schedule_managed_restart)
-    register_intake_http(app, lectures=lectures, recording_payload=recording_payload, serialize_outputs=serialize_outputs, workflow=workflow)
+    register_course_http(app, lectures=lectures, paths=paths, schedule_managed_restart=lambda: schedule_managed_restart(services))
+    register_intake_http(app, lectures=lectures, recording_payload=recording_payload, serialize_outputs=serialize_outputs, workflow=workflow, history=services.history)
     register_storage_http(app, paths=paths, services=services, storage_file=storage_file)
     register_recording_http(app, lectures=lectures, recording_payload=recording_payload, serialize_outputs=serialize_outputs, suggestions_payload=suggestions_payload, workflow=workflow)
 

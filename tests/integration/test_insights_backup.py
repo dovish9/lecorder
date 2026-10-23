@@ -5,13 +5,21 @@ import io
 from unittest.mock import patch
 from pathlib import Path
 from tests.support import RecorderCase
-from web.backend.store import LectureStore
+from web.backend.library.store import LectureStore
 from web.backend.routes import create_app
 from web.backend.processes import CancellationToken
 from web.backend.execution_metrics import collect
 
 
 class InsightsBackupTests(RecorderCase):
+    def test_application_assets_revalidate_after_an_upgrade(self):
+        for path in ('/', '/guide', '/static/dashboard.js', '/static/guide.js'):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.cache_control.no_cache)
+            self.assertTrue(response.cache_control.must_revalidate)
+            self.assertEqual(response.cache_control.max_age, 0)
+
     def setUp(self):
         super().setUp()
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
@@ -68,8 +76,8 @@ class InsightsBackupTests(RecorderCase):
 
     def test_note_graph_and_selected_revision_survive_merge(self):
         notes=self.services.workflow.notes
-        with patch('web.backend.note_intake.require_llm',return_value=None):
-            note=notes.register(self.store.active_course_id(), [('slides.pdf',io.BytesIO(b'%PDF-1.7 fixture'))])
+        with patch('web.backend.notes.note_intake.require_llm',return_value=None):
+            note=notes.register(self.store.courses.active_course_id(), [('slides.pdf',io.BytesIO(b'%PDF-1.7 fixture'))])
         revision=note['revision_id']
         notes._page(revision,{'number':1,'text':'Electric field','image':'page-1.png','error':'','analysis':{'summary':'설명'}})
         notes._update(revision,status='ready',study_status='completed',page_count=1,
@@ -89,24 +97,6 @@ class InsightsBackupTests(RecorderCase):
             self.assertEqual(db.execute('SELECT COUNT(*) FROM note_pages WHERE revision_id=?',(linked['id'],)).fetchone()[0],1)
             self.assertTrue((notes.folder/linked['note_id']).is_dir())
 
-    def test_legacy_backup_without_glossary_column_still_restores(self):
-        notes=self.services.workflow.notes
-        with patch('web.backend.note_intake.require_llm',return_value=None):
-            notes.register(self.store.active_course_id(), [('old.pdf',io.BytesIO(b'%PDF-1.7 fixture'))])
-        original=self.archive()
-        with zipfile.ZipFile(original) as archive:
-            entries={name:archive.read(name) for name in archive.namelist()}
-        manifest=json.loads(entries['manifest.json'])
-        for row in manifest['tables']['note_revisions']: row.pop('glossary_data')
-        entries['manifest.json']=json.dumps(manifest).encode()
-        path=self.root/'legacy.zip'
-        with zipfile.ZipFile(path,'w') as archive:
-            for name,content in entries.items(): archive.writestr(name,content)
-        inspected={'cancelled':False}
-        self.services.backups.inspect(inspected,path);inspected['state']='ready'
-        with self.services.scope(): self.services.backups.restore({'cancelled':False},inspected)
-        with self.store.transaction() as db:
-            self.assertTrue(all(row[0]=='{}' for row in db.execute('SELECT glossary_data FROM note_revisions')))
 
     def test_cancelled_inspection_cannot_restore_and_cross_origin_is_rejected(self):
         backup=self.services.backups
@@ -128,7 +118,7 @@ class InsightsBackupTests(RecorderCase):
         with self.store.transaction() as db:
             for index,started in enumerate(('2026-10-15T14:59:59+00:00','2026-10-15T15:00:00+00:00')):
                 db.execute("INSERT INTO ai_requests(id,source_id,owner,kind,provider,model,location,started_at,status) VALUES (?,?,?,?,?,?,?,?,?)",(str(index),str(index),'source','speech','whisper_cpp','test','local',started,'interrupted'))
-        with patch('web.backend.insights.datetime',Clock):
+        with patch('web.backend.library.insights.datetime',Clock):
             response=self.services.insights.usage(1,540,'Asia/Seoul')
             group=response['groups'][0]
             self.assertEqual(response['daily'][0]['date'], '2026-10-16')
@@ -187,7 +177,7 @@ class InsightsBackupTests(RecorderCase):
         from collections import namedtuple
         usage=namedtuple('Disk','total used free')(10,10,0)
         path=self.archive()
-        with patch('web.backend.backup.shutil.disk_usage',return_value=usage),self.assertRaisesRegex(ValueError,'공간'):
+        with patch('web.backend.library.backup.shutil.disk_usage',return_value=usage),self.assertRaisesRegex(ValueError,'공간'):
             backup.inspect({'cancelled':False},path)
 
     def test_chunk_receipts_are_durable_and_conflicts_preserve_original(self):
@@ -215,3 +205,41 @@ class InsightsBackupTests(RecorderCase):
         self.store.update_recording('source',transcript_text='new')
         recover(self.store)
         self.assertEqual(self.note.read_text(),'new file')
+
+    def test_v2_manifest_is_explicit_and_old_or_future_formats_are_rejected(self):
+        source=self.archive()
+        with zipfile.ZipFile(source) as archive:
+            entries={name:archive.read(name) for name in archive.namelist()}
+        manifest=json.loads(entries['manifest.json'])
+        self.assertEqual(manifest['version'],2)
+        self.assertEqual(manifest['dataset_id'],self.store.dataset_id)
+        self.assertEqual(manifest['versions']['app'],'0.3.0')
+        self.assertEqual(manifest['tables']['recordings'][0]['segments_json'][:1],'{')
+        for version in (1,99):
+            changed=dict(manifest,version=version)
+            path=self.root/f'version-{version}.zip'
+            with zipfile.ZipFile(path,'w') as archive:
+                for name,data in entries.items():archive.writestr(name,json.dumps(changed) if name=='manifest.json' else data)
+            with self.assertRaisesRegex(ValueError,'백업 형식'):
+                self.services.backups.inspect({'cancelled':False},path)
+
+    def test_dataset_header_blocks_old_browser_requests(self):
+        data=self.client.get('/api/bootstrap').json
+        self.assertEqual(data['dataset_id'],self.store.dataset_id)
+        from web.backend.versions import SCHEMA_VERSION
+        self.assertEqual(self.client.get('/api/status').json['versions']['schema'],SCHEMA_VERSION)
+        response=self.client.post('/api/ai/control',json={'enabled':False},headers={'X-Lecorder-Dataset':'b'*32})
+        self.assertEqual(response.status_code,409)
+        self.assertTrue(self.services.ai_control.public()['enabled'])
+
+    def test_unknown_result_format_is_reported_without_rewriting_it(self):
+        with self.store.transaction(raw=True) as db:
+            value=json.loads(db.execute("SELECT quality_json FROM recordings WHERE id='source'").fetchone()[0])
+            value['format_version']=999
+            encoded=json.dumps(value)
+            db.execute("UPDATE recordings SET quality_json=? WHERE id='source'",(encoded,))
+        response=self.client.get('/api/status')
+        self.assertEqual(response.status_code,409)
+        self.assertEqual(response.json['code'],'result_format_unsupported')
+        with self.store.transaction(raw=True) as db:
+            self.assertEqual(db.execute("SELECT quality_json FROM recordings WHERE id='source'").fetchone()[0],encoded)

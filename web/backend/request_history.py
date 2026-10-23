@@ -1,19 +1,33 @@
 """Durable request results and usage. Credentials and request bodies are never stored."""
-from contextlib import contextmanager, nullcontext, closing
+from contextlib import contextmanager, nullcontext
+from web.backend.runtime_config import get as runtime
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import hashlib
 import json
 import time
 import uuid
-import sqlite3
 from pathlib import Path
 
-from .execution_metrics import current_trace
+from web.backend.execution_metrics import current_trace
 
 _scope = ContextVar('request_history_scope', default=None)
 _tracking = ContextVar('tracking_request', default=False)
-VERSION = 1
+_policy = ContextVar('request_policy', default=None)
+
+def processing_policy(name):
+    from functools import wraps
+    def decorate(function):
+        @wraps(function)
+        def call(*args,**kwargs):
+            marker=_policy.set(name)
+            try:return function(*args,**kwargs)
+            finally:_policy.reset(marker)
+        return call
+    return decorate
+
+from web.backend.versions import FORMAT_VERSIONS, POLICIES
+from web.backend.result_codec import dumps as result_dumps
 
 
 def tracking_request():
@@ -28,58 +42,6 @@ def fingerprint(value):
 class RequestHistory:
     def __init__(self, store):
         self.store = store
-        with store.transaction() as db:
-            exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='request_checkpoints'").fetchone()
-            if not exists and db.execute('SELECT 1 FROM recordings LIMIT 1').fetchone():
-                path = store.path.with_name(store.path.stem+'-before-recovery.db')
-                if not path.exists():
-                    with closing(sqlite3.connect(path)) as target:
-                        db.backup(target)
-        with store.transaction() as db:
-            db.executescript('''
-                CREATE TABLE IF NOT EXISTS recovery_sessions (
-                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL,
-                    status TEXT NOT NULL, created_at TEXT NOT NULL, message TEXT NOT NULL DEFAULT '',
-                    acknowledged INTEGER NOT NULL DEFAULT 0);
-                CREATE TABLE IF NOT EXISTS request_checkpoints (
-                    session_id TEXT NOT NULL REFERENCES recovery_sessions(id) ON DELETE CASCADE,
-                    fingerprint TEXT NOT NULL, result TEXT NOT NULL,
-                    PRIMARY KEY(session_id, fingerprint));
-                CREATE TABLE IF NOT EXISTS ai_requests (
-                    id TEXT PRIMARY KEY, session_id TEXT, owner TEXT NOT NULL,
-                    kind TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
-                    location TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT,
-                    status TEXT NOT NULL, seconds REAL, audio_seconds REAL,
-                    input_tokens INTEGER, output_tokens INTEGER);
-            ''')
-            if 'source_id' not in {r[1] for r in db.execute('PRAGMA table_info(ai_requests)')}:
-                db.execute("ALTER TABLE ai_requests ADD COLUMN source_id TEXT NOT NULL DEFAULT ''")
-            db.execute("UPDATE ai_requests SET source_id=id WHERE source_id=''")
-            if 'seconds' not in {r[1] for r in db.execute('PRAGMA table_info(request_checkpoints)')}:
-                db.execute('ALTER TABLE request_checkpoints ADD COLUMN seconds REAL NOT NULL DEFAULT 0')
-        self.import_legacy()
-
-    def import_legacy(self):
-        """Only explicit provider-call records; aggregate old counters are ambiguous."""
-        with self.store.transaction() as db:
-            owners={r[0] for r in db.execute("SELECT DISTINCT owner FROM ai_requests WHERE id NOT LIKE 'legacy-%'")}
-            for table in ('transcription_runs','review_runs'):
-                for row in db.execute(f'SELECT * FROM {table}').fetchall():
-                    if row['recording_id'] in owners: continue
-                    try:
-                        metrics=json.loads(row['metrics'] or '{}')
-                        settings=json.loads(row['settings'] or '{}')
-                        config=settings.get('ai_settings',{}).get('llm',{})
-                        for index,call in enumerate(metrics.get('provider_calls',[])):
-                            if not call.get('provider') or not call.get('model'): continue
-                            provider=call['provider']
-                            location='local' if config.get('managed') else 'custom' if provider=='llama_cpp' else 'external'
-                            db.execute('INSERT OR IGNORE INTO ai_requests(id,owner,kind,provider,model,location,started_at,completed_at,status,seconds,input_tokens,output_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                                (f'legacy-{row["id"]}-{index}',row['recording_id'],'llm',provider,call['model'],location,row['started_at'],row['completed_at'],call.get('status','unknown'),call.get('seconds'),call.get('input_tokens'),call.get('output_tokens')))
-                    except (ValueError,TypeError,KeyError):
-                        continue
-            db.execute("UPDATE ai_requests SET source_id=id WHERE source_id=''")
-
     @contextmanager
     def scope(self, owner, kind):
         with self.store.transaction() as db:
@@ -132,7 +94,7 @@ class RequestHistory:
                            (f'앱 재시작으로 작업을 복구합니다. 완료된 AI 요청 {count}개를 재사용합니다.', row['id']))
 
     def capture_recovered(self, owner):
-        message='저장된 녹음 조각을 복구해 최종 전사에 사용합니다. 마이크는 재개되지 않았으며, 수집하지 못한 음성은 실시간 초안 생략과 달리 복구할 수 없습니다.'
+        message='저장된 녹음 조각을 복구해 최종 음성 변환에 사용합니다. 마이크는 재개되지 않았으며, 수집하지 못한 음성은 실시간 초안 생략과 달리 복구할 수 없습니다.'
         with self.store.transaction() as db:
             row=db.execute("SELECT id FROM recovery_sessions WHERE owner=? AND kind='capture'",(owner,)).fetchone()
             if row:
@@ -142,16 +104,16 @@ class RequestHistory:
                     (uuid.uuid4().hex,owner,'capture','completed',self.store.now(),message))
 
     def request(self, operation, config, kind, identity, token, audio_seconds=None, owner=''):
-        from .ai_transport import ProviderError
+        from web.backend.ai_transport import ProviderError
         marker = _tracking.set(True)
         try:
-            for attempt in range(2):
+            for attempt in range(runtime('LECORDER_AI_RETRIES')+1):
                 try:
                     return self._request(operation, config, kind, identity, token, audio_seconds, owner)
                 except ProviderError as error:
-                    if attempt or not error.retryable:
+                    if attempt >= runtime('LECORDER_AI_RETRIES') or not error.retryable:
                         raise
-                    until = time.monotonic()+1
+                    until = time.monotonic()+runtime('LECORDER_AI_RETRY_DELAY_SECONDS')
                     while time.monotonic()<until:
                         token.check()
                         time.sleep(.05)
@@ -167,10 +129,13 @@ class RequestHistory:
                 path=Path(config.get(name,''))
                 if path.is_file():
                     info=path.stat();assets[name]=[info.st_size,info.st_mtime_ns]
-        key = fingerprint([VERSION, config, assets, identity])
+        stage = scope[3] if scope and len(scope)>3 else ('live' if kind=='live_speech' else 'speech' if kind=='speech' else 'review')
+        policy = _policy.get() or {'study':'page','note':'page','transcribe':'speech'}.get(stage,stage)
+        result_format={'page':'note-page','overview':'overview','glossary':'glossary','live':'live-draft','speech':'segments','review':'approval'}.get(policy,'checkpoint')
+        key = fingerprint([FORMAT_VERSIONS['checkpoint'], FORMAT_VERSIONS[result_format], POLICIES.get(policy,policy), config, assets, identity])
         if session:
-            from .services import current_services
-            control = getattr(current_services(), 'ai_control', None)
+            from web.backend.execution_context import execution_resources
+            control = getattr(execution_resources(), 'ai_control', None)
             with (control.condition if control else nullcontext()), self.store.transaction() as db:
                 saved = db.execute('SELECT result,seconds FROM request_checkpoints WHERE session_id=? AND fingerprint=?', (session, key)).fetchone()
             if saved:
@@ -201,8 +166,8 @@ class RequestHistory:
             if token.cancelled:
                 status = 'cancelled'
             seconds = max(0, time.monotonic()-started-(current_trace()['waiting_seconds']-before))
-            from .services import current_services
-            control = getattr(current_services(), 'ai_control', None)
+            from web.backend.execution_context import execution_resources
+            control = getattr(execution_resources(), 'ai_control', None)
             with (control.condition if control else nullcontext()), self.store.transaction() as db:
                 if token.cancelled:
                     status = 'cancelled'
@@ -212,12 +177,12 @@ class RequestHistory:
                             result.get('output_tokens') if result else None, request_id))
                 if session and status == 'completed':
                     db.execute('INSERT OR REPLACE INTO request_checkpoints(session_id,fingerprint,result,seconds) VALUES (?,?,?,?)',
-                               (session, key, json.dumps(result, ensure_ascii=False),seconds))
+                               (session, key, result_dumps(result,"checkpoint",policy),seconds))
 
 
 def request(operation, config, kind, identity, token, audio_seconds=None, owner=''):
-    from .services import current_services
-    services = current_services()
+    from web.backend.execution_context import execution_resources
+    services = execution_resources()
     history = getattr(services, 'history', None)
     if history:
         return history.request(operation, config, kind, identity, token, audio_seconds, owner)
@@ -226,8 +191,8 @@ def request(operation, config, kind, identity, token, audio_seconds=None, owner=
 
 @contextmanager
 def execution(owner, kind):
-    from .services import current_services
-    history = getattr(current_services(), 'history', None)
+    from web.backend.execution_context import execution_resources
+    history = getattr(execution_resources(), 'history', None)
     if history:
         with history.scope(owner, kind) as session:
             yield lambda status: history.finish(session, status)

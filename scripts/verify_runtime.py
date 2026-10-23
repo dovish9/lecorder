@@ -12,10 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from web.backend.ai_settings import defaults, using
 from web.backend.ai_providers import generate
 from web.backend.ai_runtime import runtime_for, ModelRuntime
-from web.backend.engine import Transcriber
+from web.backend.speech.engine import Transcriber
 from web.backend.inference import inference
-from web.backend.services import Services, start_thread
-from web.backend.transcription import CancellationToken, Options, TranscriptionCancelled
+from web.backend.services import Services
+from web.backend.execution_context import start_thread
+from web.backend.speech.transcription import CancellationToken, Options, TranscriptionCancelled
 
 
 def verify(source, services, config):

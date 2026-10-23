@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .records import Recording
+from web.backend.library.records import Recording
 
 
 def clock(seconds: float) -> str:
@@ -71,7 +71,7 @@ def render_note(recording: Recording, segments: list[dict[str, Any]], breaks: se
         "",
         f"[녹음 듣기]({audio_target})",
         "",
-        "# 전사문",
+        "# 변환 텍스트",
         "",
     ]
     paragraph: list[str] = []

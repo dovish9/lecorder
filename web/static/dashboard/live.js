@@ -81,7 +81,7 @@ export function createLive(context) {
       }
       void drain(session);
     } catch (error) {
-      failures.set(recordingId, `실시간 전사 시작 실패: ${error.message} · 원음 녹음은 계속됩니다.`);
+      failures.set(recordingId, `실시간 음성 변환 시작 실패: ${error.message} · 원음 녹음은 계속됩니다.`);
       disconnect(session);
       if (session.id) void bounded(`${base(recordingId)}/${session.id}/control`, json({stop: true, reason: "start_failed"})).catch(() => {});
     }
@@ -103,11 +103,11 @@ export function createLive(context) {
   function livePreview(recording) {
     const panel = document.createElement('section'); panel.className = 'live-preview'; panel.dataset.liveRecording = recording.id;
     const header = document.createElement('header');
-    const title = document.createElement('h3'); title.textContent = '전사 내용 미리보기';
+    const title = document.createElement('h3'); title.textContent = '음성 변환 내용 미리보기';
     const status = document.createElement('span'); status.className = 'live-preview-status';
-    status.setAttribute('role', 'status'); status.textContent = '실시간 전사 준비 중 · 초안';
+    status.setAttribute('role', 'status'); status.textContent = '실시간 음성 변환 준비 중 · 초안';
     const body = document.createElement('div'); body.className = 'live-preview-text'; body.tabIndex = 0;
-    body.setAttribute('aria-label', '실시간 전사 초안');
+    body.setAttribute('aria-label', '실시간 음성 변환 초안');
     const viewport = document.createElement('div'); viewport.className = 'live-preview-viewport';
     const segments = document.createElement('div'); segments.className = 'live-preview-segments';
     const listening = document.createElement('div'); listening.className = 'live-preview-listening'; listening.hidden = true;
@@ -174,8 +174,8 @@ export function createLive(context) {
       if (!panel.isConnected) return;
       const status = panel.querySelector('.live-preview-status'), body = panel.querySelector('.live-preview-text');
       const recording = app.recordings.find(item => item.id === id);
-      const labels = {preparing: '실시간 전사 준비 중 · 기존 요청 종료 및 모델 로드 대기', streaming: '실시간 전사 중 · 초안', ai_paused: '실시간 받아쓰기 일시정지 · 원음 녹음 중', stopped: '최종 전사 대기/진행 중 · 초안', failed: '실시간 전사 실패 · 원음 보존'};
-      status.textContent = failures.get(id) || live?.error || labels[live?.state] || '실시간 전사 준비 중 · 초안';
+      const labels = {preparing: '실시간 음성 변환 준비 중 · 기존 요청 종료 및 모델 로드 대기', streaming: '실시간 음성 변환 중 · 초안', ai_paused: '실시간 받아쓰기 일시정지 · 원음 녹음 중', stopped: '최종 음성 변환 대기/진행 중 · 초안', failed: '실시간 음성 변환 실패 · 원음 보존'};
+      status.textContent = failures.get(id) || live?.error || labels[live?.state] || '실시간 음성 변환 준비 중 · 초안';
       if (['preparing', 'streaming'].includes(live?.state) && (live.paused || (current?.recordingId === id && current.paused))) status.textContent = '녹음 일시정지 · 초안';
       if (['failed','cancelled','recoverable'].includes(recording?.status)) status.textContent = '최종 결과 없음 · 실시간 초안';
       if (recording?.status === 'recording' && (live?.ai_paused || (current?.recordingId === id && app.aiControl?.enabled === false))) status.textContent = '실시간 받아쓰기 일시정지 · 원음 녹음 중';
