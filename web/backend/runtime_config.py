@@ -7,7 +7,7 @@ GROUPS = {
     '앱과 저장 경로 (상대 경로는 프로젝트 기준)': {
         'LECORDER_ENV_FILE': ('.env', None, None, '시작할 환경설정 파일. 다른 환경을 쓰려면 실행 전에 지정'),
         'LECORDER_DIR': ('.', None, None, '프로젝트 폴더'),
-        'LECORDER_OUTPUT_DIR': ('output', None, None, '원본 음성과 Markdown 결과 폴더'),
+        'LECORDER_OUTPUT_DIR': ('outputs', None, None, '원본 음성과 Markdown 결과 폴더'),
         'LECORDER_DATA_DIR': ('web/data', None, None, 'DB·녹음 조각·노트·실행 로그 폴더'),
         'LECORDER_AI_SETTINGS': ('', None, None, 'AI 설정 JSON 저장 파일. 비우면 DATA_DIR/ai-settings.json'),
         'LECORDER_DEPENDENCIES_DIR': ('dependencies', None, None, '로컬 도구·모델·토크나이저 폴더'),

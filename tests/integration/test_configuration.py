@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import tempfile
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from web.backend.config import EnvironmentStore
 from web.backend.library.store import LectureStore
@@ -10,6 +12,12 @@ from web.backend.library.store import LectureStore
 from tests.support import RecorderCase
 
 class ConfigurationTests(RecorderCase):
+    def test_unspecified_output_path_defaults_to_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {}, clear=True):
+            root = Path(temporary)
+            environment = EnvironmentStore(root / '.env', root).get()
+            self.assertEqual(Path(environment.output_dir), (root / 'outputs').resolve())
+
     def test_course_language_and_output_path_are_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

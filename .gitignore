@@ -30,6 +30,7 @@ dist/
 # Lecorder runtime data and personal output
 /web/data/
 /output/
+/outputs/
 /recordings/
 *.db
 *.db-shm

@@ -144,7 +144,7 @@ class EnvironmentStore:
             whisper_cpp_dir=str(resolve_path(values.get("LECORDER_DEPENDENCIES_DIR", os.getenv("LECORDER_DEPENDENCIES_DIR", "dependencies")), project) / "whisper.cpp"),
             output_dir=str(resolve_path(values.get(
                 "LECORDER_OUTPUT_DIR",
-                os.getenv("LECORDER_OUTPUT_DIR", "output"),
+                runtime("LECORDER_OUTPUT_DIR"),
             ), self.script_root)),
         )
 
